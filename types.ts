@@ -1,27 +1,31 @@
-export enum NodeType {
-  AI_INPUT = 'AI_INPUT',
-  AI_PROCESSOR = 'AI_PROCESSOR'
-}
+// 节点类型（动态从数据库加载，这里只定义常用的）
+export type NodeType = string;
+
+// 常用节点类型常量
+export const NODE_TYPES = {
+  MANUAL_TRIGGER: 'MANUAL_TRIGGER',
+  INPUT: 'INPUT',
+  AI_MODEL: 'AI_MODEL',
+} as const;
 
 export interface Position {
   x: number;
   y: number;
 }
 
+// 节点配置（动态，根据 config_schema 生成）
 export interface NodeConfig {
-  // AI Input 配置
-  inputType?: 'text' | 'file' | 'api';
-  placeholder?: string;
-  
-  // AI Processor 配置
-  model?: string;
-  systemPrompt?: string;
-  temperature?: number;
-  maxTokens?: number;
-  apiUrl?: string;
-  ignoreSSL?: boolean;
+  [key: string]: any;
 }
 
+// 连接点定义
+export interface HandleDefinition {
+  id: string;
+  type: string;
+  label?: string;
+}
+
+// 工作流中的节点实例
 export interface WorkflowNode {
   id: string;
   type: NodeType;
@@ -33,6 +37,7 @@ export interface WorkflowNode {
   };
 }
 
+// 工作流中的连线
 export interface WorkflowEdge {
   id: string;
   source: string;
@@ -41,6 +46,7 @@ export interface WorkflowEdge {
   targetHandle?: string;
 }
 
+// 工作流
 export interface Workflow {
   id: string;
   name: string;
@@ -51,67 +57,70 @@ export interface Workflow {
   updatedAt: string;
 }
 
-// 组件定义（用于右侧面板）
-export interface ComponentDefinition {
+// 节点模板（组件库中的定义，从数据库加载）
+export interface NodeTemplate {
+  id: string;
   type: NodeType;
   name: string;
   description: string;
+  category: 'trigger' | 'input' | 'processor' | 'output' | 'annotation';
+  // 外观
   icon: string;
+  iconSvg: string;
   color: string;
-  category: 'input' | 'processor' | 'output';
+  shape: 'diamond' | 'rounded' | 'hexagon' | 'rectangle' | 'circle' | 'sticky' | 'group';
+  // 连接点
+  inputHandles: HandleDefinition[];
+  outputHandles: HandleDefinition[];
+  // 配置
   defaultConfig: NodeConfig;
+  configSchema: any; // JSON Schema
+  // API 关联
+  requiresProvider: boolean;
+  // 元数据
+  sortOrder: number;
+  isSystem: boolean;
 }
 
-export const COMPONENT_DEFINITIONS: ComponentDefinition[] = [
-  {
-    type: NodeType.AI_INPUT,
-    name: 'AI 输入',
-    description: '接收用户输入或外部数据，作为工作流的起点',
-    icon: 'input',
-    color: 'green',
-    category: 'input',
-    defaultConfig: {
-      inputType: 'text',
-      placeholder: '请输入内容...'
-    }
-  },
-  {
-    type: NodeType.AI_PROCESSOR,
-    name: 'AI 处理器',
-    description: '配置 AI 提示词，处理输入流并生成输出流',
-    icon: 'processor',
-    color: 'blue',
-    category: 'processor',
-    defaultConfig: {
-      model: 'gpt-4o',
-      systemPrompt: 'You are a helpful assistant.',
-      temperature: 0.7,
-      maxTokens: 2048
-    }
-  }
-];
+// 兼容旧代码的别名
+export type ComponentDefinition = NodeTemplate;
 
-// Prompt 相关类型 - 动态分类
+// AI 提供商模板（系统预设）
+export interface AIProviderTemplate {
+  id: string;
+  providerKey: string;
+  name: string;
+  baseUrl: string;
+  models: { id: string; name: string }[];
+  color: string;
+  sortOrder: number;
+}
+
+// 用户的 AI 提供商配置
+export interface AIProvider {
+  id: string;
+  userId: string;
+  providerKey: string;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+  models: { id: string; name: string }[];
+  isEnabled: boolean;
+}
+
+// Prompt 相关类型
 export interface PromptCategory {
   id: string;
   name: string;
-  color: string; // Tailwind color class
+  color: string;
 }
 
 export interface Prompt {
   id: string;
   title: string;
   content: string;
-  categoryId: string; // 关联到 PromptCategory.id
+  categoryId: string;
   tags: string[];
   createdAt: string;
   updatedAt: string;
 }
-
-// 默认分类
-export const DEFAULT_PROMPT_CATEGORIES: PromptCategory[] = [
-  { id: 'creative', name: 'Creative', color: 'orange' },
-  { id: 'technical', name: 'Technical', color: 'blue' },
-  { id: 'business', name: 'Business', color: 'green' },
-  { id: 'academic', name: 'Academic', color: 'purple' }
-];

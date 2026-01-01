@@ -98,7 +98,7 @@ const App: React.FC = () => {
 
       <Sidebar currentView={currentView} onViewChange={handleNavigate} />
 
-      <main className="flex-1 relative z-0 flex flex-col h-full overflow-hidden">
+      <main className="flex-1 relative flex flex-col h-full overflow-hidden">
         {currentView !== 'WORKFLOW' && (
           <header className="h-14 flex items-center justify-end px-4 glass-panel border-b border-white/40 shrink-0 z-20">
             <div className="flex items-center gap-3">

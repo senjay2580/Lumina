@@ -1,12 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { User, updateUsername, updatePassword, saveUser } from '../lib/auth';
 import { ToastContainer } from '../shared/Toast';
 import { useToast } from '../shared/useToast';
+import { 
+  getProviderTemplates, 
+  getUserProviders, 
+  saveUserProvider,
+  AIProviderTemplate,
+  AIProvider 
+} from '../lib/ai-providers';
 
 interface SettingsPageProps {
   user: User;
   onUserUpdate: (user: User) => void;
 }
+
+// 颜色映射
+const colorMap: Record<string, string> = {
+  purple: 'bg-purple-500',
+  blue: 'bg-blue-500',
+  green: 'bg-green-500',
+  emerald: 'bg-emerald-500',
+  red: 'bg-red-500',
+  gray: 'bg-gray-500',
+};
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }) => {
   const [username, setUsername] = useState(user.username);
@@ -15,7 +32,105 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingUsername, setSavingUsername] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  
+  // AI 提供商状态
+  const [providerTemplates, setProviderTemplates] = useState<AIProviderTemplate[]>([]);
+  const [userProviders, setUserProviders] = useState<Map<string, AIProvider>>(new Map());
+  const [loadingProviders, setLoadingProviders] = useState(true);
+  const [savingProvider, setSavingProvider] = useState<string | null>(null);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState<Record<string, boolean>>({});
+  
+  // 编辑中的配置
+  const [editingConfigs, setEditingConfigs] = useState<Record<string, { apiKey: string; baseUrl: string; enabled: boolean }>>({});
+  
   const { toasts, removeToast, success, error } = useToast();
+
+  // 加载 AI 提供商模板和用户配置
+  useEffect(() => {
+    const loadProviders = async () => {
+      setLoadingProviders(true);
+      try {
+        const [templates, userConfigs] = await Promise.all([
+          getProviderTemplates(),
+          getUserProviders(user.id),
+        ]);
+        setProviderTemplates(templates);
+        
+        // 转换为 Map 方便查找
+        const configMap = new Map<string, AIProvider>();
+        userConfigs.forEach(c => configMap.set(c.providerKey, c));
+        setUserProviders(configMap);
+        
+        // 初始化编辑状态
+        const editConfigs: Record<string, { apiKey: string; baseUrl: string; enabled: boolean }> = {};
+        templates.forEach(t => {
+          const userConfig = configMap.get(t.providerKey);
+          editConfigs[t.providerKey] = {
+            apiKey: userConfig?.apiKey || '',
+            baseUrl: userConfig?.baseUrl || t.baseUrl || '',
+            enabled: userConfig?.isEnabled || false,
+          };
+        });
+        setEditingConfigs(editConfigs);
+      } catch (err) {
+        console.error('加载 AI 配置失败:', err);
+      } finally {
+        setLoadingProviders(false);
+      }
+    };
+    loadProviders();
+  }, [user.id]);
+
+  // 更新编辑中的配置
+  const updateEditingConfig = useCallback((providerKey: string, key: string, value: string | boolean) => {
+    setEditingConfigs(prev => ({
+      ...prev,
+      [providerKey]: {
+        ...prev[providerKey],
+        [key]: value,
+      },
+    }));
+  }, []);
+
+  // 保存 AI 提供商配置
+  const handleSaveProvider = useCallback(async (providerKey: string) => {
+    const template = providerTemplates.find(t => t.providerKey === providerKey);
+    if (!template) return;
+    
+    const config = editingConfigs[providerKey];
+    setSavingProvider(providerKey);
+    
+    try {
+      const saved = await saveUserProvider(user.id, providerKey, {
+        name: template.name,
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        models: template.models,
+      });
+      
+      if (saved) {
+        setUserProviders(prev => new Map(prev).set(providerKey, saved));
+        setEditingConfigs(prev => ({
+          ...prev,
+          [providerKey]: {
+            ...prev[providerKey],
+            enabled: saved.isEnabled,
+          },
+        }));
+        success(`${template.name} 配置已保存`);
+      }
+    } catch (err: any) {
+      error(err.message || '保存失败');
+    } finally {
+      setSavingProvider(null);
+    }
+  }, [user.id, providerTemplates, editingConfigs, success, error]);
+
+  // 切换显示 API Key
+  const toggleShowApiKey = (providerKey: string) => {
+    setShowApiKey(prev => ({ ...prev, [providerKey]: !prev[providerKey] }));
+  };
 
   const handleUpdateUsername = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,14 +245,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                     : 'bg-primary text-white hover:shadow-lg hover:shadow-primary/20 hover:-translate-y-0.5'
                 }`}
               >
-                {savingUsername ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                    </svg>
-                    保存中...
-                  </span>
-                ) : '保存更改'}
+                {savingUsername ? '保存中...' : '保存更改'}
               </button>
             </form>
           </div>
@@ -204,16 +312,151 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                     : 'bg-primary text-white hover:shadow-lg hover:shadow-primary/20 hover:-translate-y-0.5'
                 }`}
               >
-                {savingPassword ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                    </svg>
-                    更新中...
-                  </span>
-                ) : '更新密码'}
+                {savingPassword ? '更新中...' : '更新密码'}
               </button>
             </form>
+          </div>
+
+          {/* AI API 配置 */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">AI 模型配置</h3>
+                  <p className="text-xs text-gray-500">配置各 AI 厂商的 API Key</p>
+                </div>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {loadingProviders ? (
+                <div className="px-6 py-8 flex items-center justify-center">
+                  <div className="flex items-center gap-3 text-gray-500">
+                    <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                      <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                    </svg>
+                    <span className="text-sm">加载配置中...</span>
+                  </div>
+                </div>
+              ) : providerTemplates.map((template) => {
+                const config = editingConfigs[template.providerKey] || { apiKey: '', baseUrl: '', enabled: false };
+                const userConfig = userProviders.get(template.providerKey);
+                const isExpanded = expandedProvider === template.providerKey;
+                const isConfigured = userConfig?.isEnabled;
+                const bgColor = colorMap[template.color] || 'bg-gray-500';
+                
+                return (
+                  <div key={template.providerKey} className="overflow-hidden">
+                    {/* 厂商头部 */}
+                    <button
+                      onClick={() => setExpandedProvider(isExpanded ? null : template.providerKey)}
+                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl ${bgColor} flex items-center justify-center text-white`}>
+                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                          </svg>
+                        </div>
+                        <div className="text-left">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-gray-900">{template.name}</span>
+                            {isConfigured && (
+                              <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-600 rounded">已配置</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            {template.models.length > 0 
+                              ? template.models.map(m => m.name).join(', ')
+                              : '自定义模型服务'
+                            }
+                          </p>
+                        </div>
+                      </div>
+                      <svg 
+                        className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
+                        viewBox="0 0 24 24" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        strokeWidth="2"
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    
+                    {/* 配置表单 */}
+                    {isExpanded && (
+                      <div className="px-6 pb-6 pt-2 bg-gray-50/50 space-y-4">
+                        {/* API Key */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                          <div className="relative">
+                            <input
+                              type={showApiKey[template.providerKey] ? 'text' : 'password'}
+                              value={config.apiKey}
+                              onChange={(e) => updateEditingConfig(template.providerKey, 'apiKey', e.target.value)}
+                              className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:ring-2 ring-primary/20 outline-none transition-all pr-12"
+                              placeholder="sk-..."
+                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleShowApiKey(template.providerKey)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-gray-600"
+                            >
+                              {showApiKey[template.providerKey] ? (
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                                  <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                              ) : (
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        
+                        {/* Base URL */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Base URL (可选)</label>
+                          <input
+                            type="text"
+                            value={config.baseUrl}
+                            onChange={(e) => updateEditingConfig(template.providerKey, 'baseUrl', e.target.value)}
+                            className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:ring-2 ring-primary/20 outline-none transition-all"
+                            placeholder={template.baseUrl || 'https://api.example.com/v1'}
+                          />
+                        </div>
+                        
+                        {/* 保存按钮 */}
+                        <button
+                          onClick={() => handleSaveProvider(template.providerKey)}
+                          disabled={savingProvider === template.providerKey}
+                          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {savingProvider === template.providerKey ? (
+                            <>
+                              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                                <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                              </svg>
+                              保存中...
+                            </>
+                          ) : '保存配置'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* 关于 */}
@@ -239,7 +482,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
               </div>
               <div className="flex items-center justify-between py-3">
                 <span className="text-gray-600">构建</span>
-                <span className="text-gray-900 font-medium">2026.01.01</span>
+                <span className="text-gray-900 font-medium">2026.01.02</span>
               </div>
             </div>
           </div>

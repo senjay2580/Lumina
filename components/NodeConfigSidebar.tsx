@@ -1,5 +1,5 @@
 import React from 'react';
-import { WorkflowNode, NodeType } from '../types';
+import { WorkflowNode, NODE_TYPES } from '../types';
 
 interface NodeConfigSidebarProps {
   node: WorkflowNode | null;
@@ -17,7 +17,7 @@ export const NodeConfigSidebar: React.FC<NodeConfigSidebarProps> = ({ node, onCl
     });
   };
 
-  const isInput = node.type === NodeType.AI_INPUT;
+  const isInput = node.type === NODE_TYPES.INPUT || node.type === 'AI_INPUT';
   const colorClass = isInput ? 'from-green-400 to-green-600' : 'from-blue-400 to-blue-600';
 
   return (

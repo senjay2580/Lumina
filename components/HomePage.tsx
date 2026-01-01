@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ActivityCalendar } from 'react-activity-calendar';
 import { getStoredUser } from '../lib/auth';
 import * as workflowApi from '../lib/workflows';
 import { ViewType } from './Sidebar';
@@ -23,10 +24,71 @@ interface WorkflowItem {
   nodes: any[];
 }
 
+interface ActivityData {
+  date: string;
+  count: number;
+}
+
+// 生成空的活动数据（用于没有数据时显示）
+const generateEmptyData = () => {
+  const data = [];
+  const today = new Date();
+  // 从今天往前推约5个月
+  for (let i = 150; i >= 0; i--) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - i);
+    data.push({
+      date: date.toISOString().split('T')[0],
+      count: 0,
+      level: 0
+    });
+  }
+  return data;
+};
+
+// 获取本地日期字符串 (YYYY-MM-DD)
+const getLocalDateString = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// 补全活动数据（确保数据连续到今天）
+const fillActivityData = (rawData: ActivityData[]) => {
+  const today = new Date();
+  const dataMap = new Map<string, number>();
+  
+  // 先把原始数据放入 map
+  rawData.forEach(d => {
+    dataMap.set(d.date, d.count);
+  });
+  
+  // 生成完整的日期范围（使用本地时间）
+  // 从今天往前推 150 天
+  const result = [];
+  for (let i = 150; i >= 0; i--) {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const dateStr = getLocalDateString(date);
+    const count = dataMap.get(dateStr) || 0;
+    result.push({
+      date: dateStr,
+      count,
+      level: count === 0 ? 0 : count === 1 ? 1 : count <= 3 ? 2 : count <= 5 ? 3 : 4
+    });
+  }
+  
+  // 调试：打印最后几个日期
+  console.log('热力图日期范围:', result[0]?.date, '到', result[result.length - 1]?.date);
+  
+  return result;
+};
+
 export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpenWorkflow }) => {
   const user = getStoredUser();
   const [stats, setStats] = useState<Stats>({ workflows: 0, prompts: 0 });
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
+  const [activityData, setActivityData] = useState<ActivityData[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
   const contextMenu = useContextMenu();
@@ -35,12 +97,14 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
   const loadData = async () => {
     if (!user?.id) return;
     try {
-      const [statsData, workflowsData] = await Promise.all([
+      const [statsData, workflowsData, activity] = await Promise.all([
         workflowApi.getStats(user.id),
-        workflowApi.getWorkflows(user.id)
+        workflowApi.getWorkflows(user.id),
+        workflowApi.getWorkflowActivity(user.id)
       ]);
       setStats({ workflows: statsData.workflows, prompts: statsData.prompts });
       setWorkflows(workflowsData);
+      setActivityData(activity);
     } catch (err) {
       console.error('加载数据失败:', err);
     } finally {
@@ -110,13 +174,13 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
       <svg className="hidden">
         <defs>
           <symbol id="icon-workflow" viewBox="0 0 24 24">
-            <rect x="3" y="3" width="6" height="6" rx="1" fill="#3B82F6" />
-            <rect x="15" y="3" width="6" height="6" rx="1" fill="#10B981" />
-            <rect x="9" y="15" width="6" height="6" rx="1" fill="#F59E0B" />
-            <path d="M6 9v3a3 3 0 003 3h6a3 3 0 003-3V9" stroke="#94A3B8" strokeWidth="1.5" fill="none" />
+            <path fill="currentColor" d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
           </symbol>
-          <symbol id="icon-prompt" viewBox="0 0 24 24">
-            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill="none" stroke="currentColor" strokeWidth="2" />
+          <symbol id="icon-prompt" viewBox="0 0 14 14">
+            <g fill="none" fillRule="evenodd" clipRule="evenodd">
+              <path fill="#8fbffa" d="M6.035 2.507c-.653 1.073-.204 2.73 1.344 3c.545.095.978.51 1.096 1.05l.02.092c.454 2.073 3.407 2.086 3.878.017l.025-.108a1 1 0 0 1 .04-.139v5.791c0 .941-.764 1.704-1.705 1.704H1.734A1.704 1.704 0 0 1 .03 12.21V4.211c0-.941.763-1.704 1.704-1.704h4.3Z"/>
+              <path fill="#2859c5" d="M3.08 7.797a.625.625 0 1 0-.883.884L3.255 9.74l-1.058 1.058a.625.625 0 0 0 .884.884l1.5-1.5a.625.625 0 0 0 0-.884l-1.5-1.5Zm2.559 2.817a.625.625 0 1 0 0 1.25h1.5a.625.625 0 0 0 0-1.25zm.396-8.107c-.653 1.073-.204 2.73 1.344 3c.318.055.598.22.8.454H.028V4.21c0-.941.764-1.704 1.705-1.704h4.3ZM11.233.721C11.04-.13 9.825-.125 9.638.728l-.007.035l-.015.068A2.53 2.53 0 0 1 7.58 2.772c-.887.154-.887 1.428 0 1.582a2.53 2.53 0 0 1 2.038 1.952l.02.093c.187.852 1.401.858 1.595.007l.025-.108a2.55 2.55 0 0 1 2.046-1.942c.889-.155.889-1.43 0-1.585A2.55 2.55 0 0 1 11.26.844l-.018-.082l-.01-.041Z"/>
+            </g>
           </symbol>
         </defs>
       </svg>
@@ -224,29 +288,65 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
           </div>
         </section>
 
-        {/* 统计卡片 */}
+        {/* 统计卡片 + 热力图 */}
         <section className="mb-16">
-          <div className="grid grid-cols-2 gap-6">
-            <div className="group bg-white rounded-3xl p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 group-hover:scale-110 transition-transform">
-                  <svg className="w-7 h-7 text-white"><use href="#icon-workflow" /></svg>
+          <div className="flex gap-6">
+            {/* 左侧：纵向统计卡片 */}
+            <div className="flex flex-col gap-4 w-48 shrink-0">
+              <div className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center">
+                <div className="flex items-center gap-3">
+                  <svg className="w-10 h-10 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
+                  </svg>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900 tracking-tight">{loading ? '-' : stats.workflows}</p>
+                    <p className="text-xs text-gray-500">工作流</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-4xl font-bold text-gray-900 tracking-tight">{loading ? '-' : stats.workflows}</p>
-                  <p className="text-sm text-gray-500 font-medium">工作流</p>
+              </div>
+              <div className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center">
+                <div className="flex items-center gap-3">
+                  <svg className="w-10 h-10" viewBox="0 0 14 14">
+                    <g fill="none" fillRule="evenodd" clipRule="evenodd">
+                      <path fill="#8fbffa" d="M6.035 2.507c-.653 1.073-.204 2.73 1.344 3c.545.095.978.51 1.096 1.05l.02.092c.454 2.073 3.407 2.086 3.878.017l.025-.108a1 1 0 0 1 .04-.139v5.791c0 .941-.764 1.704-1.705 1.704H1.734A1.704 1.704 0 0 1 .03 12.21V4.211c0-.941.763-1.704 1.704-1.704h4.3Z"/>
+                      <path fill="#2859c5" d="M3.08 7.797a.625.625 0 1 0-.883.884L3.255 9.74l-1.058 1.058a.625.625 0 0 0 .884.884l1.5-1.5a.625.625 0 0 0 0-.884l-1.5-1.5Zm2.559 2.817a.625.625 0 1 0 0 1.25h1.5a.625.625 0 0 0 0-1.25zm.396-8.107c-.653 1.073-.204 2.73 1.344 3c.318.055.598.22.8.454H.028V4.21c0-.941.764-1.704 1.705-1.704h4.3ZM11.233.721C11.04-.13 9.825-.125 9.638.728l-.007.035l-.015.068A2.53 2.53 0 0 1 7.58 2.772c-.887.154-.887 1.428 0 1.582a2.53 2.53 0 0 1 2.038 1.952l.02.093c.187.852 1.401.858 1.595.007l.025-.108a2.55 2.55 0 0 1 2.046-1.942c.889-.155.889-1.43 0-1.585A2.55 2.55 0 0 1 11.26.844l-.018-.082l-.01-.041Z"/>
+                    </g>
+                  </svg>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900 tracking-tight">{loading ? '-' : stats.prompts}</p>
+                    <p className="text-xs text-gray-500">提示词</p>
+                  </div>
                 </div>
               </div>
             </div>
-            <div className="group bg-white rounded-3xl p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30 group-hover:scale-110 transition-transform">
-                  <svg className="w-7 h-7 text-white"><use href="#icon-prompt" /></svg>
-                </div>
-                <div>
-                  <p className="text-4xl font-bold text-gray-900 tracking-tight">{loading ? '-' : stats.prompts}</p>
-                  <p className="text-sm text-gray-500 font-medium">提示词</p>
-                </div>
+            
+            {/* 右侧：热力图 */}
+            <div className="flex-1 bg-white rounded-2xl p-5 shadow-sm border border-gray-100 overflow-hidden">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-gray-700">工作流活跃度</h3>
+                <span className="text-xs text-gray-400">
+                  {new Date().getFullYear()} 年
+                </span>
+              </div>
+              <div className="[&>div>footer]:hidden">
+                <ActivityCalendar
+                  data={fillActivityData(activityData)}
+                  theme={{
+                    light: ['#f0f0f0', '#ffedd5', '#fdba74', '#f97316', '#ea580c'],
+                  }}
+                  colorScheme="light"
+                  blockSize={12}
+                  blockMargin={3}
+                  blockRadius={2}
+                  fontSize={11}
+                  showWeekdayLabels={true}
+                  weekStart={1}
+                  labels={{
+                    months: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+                    weekdays: ['一', '二', '三', '四', '五', '六', '日'],
+                    totalCount: '{{count}} 次活动',
+                  }}
+                />
               </div>
             </div>
           </div>

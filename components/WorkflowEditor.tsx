@@ -14,18 +14,19 @@ import ReactFlow, {
   useReactFlow,
   ReactFlowProvider,
   ConnectionLineType,
-  Handle,
-  Position,
   Viewport,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { WorkflowNode, WorkflowEdge, NodeType, ComponentDefinition, Workflow } from '../types';
+import { WorkflowNode, WorkflowEdge, NodeType, NodeTemplate, Workflow } from '../types';
 import { generateId } from './utils';
 import { NodeConfigModal } from './NodeConfigModal';
 import { ComponentPanel } from './ComponentPanel';
 import { ContextMenu, useContextMenu, useToast, ToastContainer } from '../shared';
 import { getStoredUser } from '../lib/auth';
+import { getNodeTemplates } from '../lib/components';
+import { hasEnabledProvider } from '../lib/ai-providers';
 import * as workflowApi from '../lib/workflows';
+import { createNodeTypes } from './CustomNodes';
 
 interface WorkflowEditorProps {
   onBack?: () => void;
@@ -33,64 +34,26 @@ interface WorkflowEditorProps {
   onUnsavedChange?: (hasUnsaved: boolean) => void;
 }
 
-// 自定义节点组件 - 简化以提升性能
-const CustomNode: React.FC<{ data: any; selected: boolean; type: string }> = ({ data, selected, type }) => {
-  const isInput = type === 'AI_INPUT';
-  const iconBg = isInput ? 'bg-green-500' : 'bg-blue-500';
-  
-  return (
-    <div className="relative">
-      <div className={`relative w-14 h-14 rounded-xl bg-white border-2 flex items-center justify-center ${
-        selected ? 'border-primary shadow-[0_0_0_3px_rgba(255,107,0,0.2)]' : 'border-gray-200'
-      } shadow-md`}>
-        {/* 输入 Handle */}
-        {!isInput && (
-          <Handle
-            type="target"
-            position={Position.Left}
-            className="!w-3 !h-3 !rounded-full !bg-white !border-2 !border-gray-400 hover:!border-primary !-left-1.5"
-          />
-        )}
-        <div className={`w-8 h-8 rounded-lg ${iconBg} flex items-center justify-center text-white`}>
-          {isInput ? (
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-            </svg>
-          ) : (
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-            </svg>
-          )}
-        </div>
-        {/* 输出 Handle */}
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="!w-3 !h-3 !rounded-full !bg-white !border-2 !border-gray-400 hover:!border-primary !-right-1.5"
-        />
-      </div>
-      <div className="mt-2 text-center" style={{ width: '80px', marginLeft: '-13px' }}>
-        <p className="text-xs text-gray-700 font-medium truncate">{data.label}</p>
-        <p className="text-[10px] text-gray-400">manual</p>
-      </div>
-    </div>
-  );
-};
-
-const nodeTypes: NodeTypes = {
-  AI_INPUT: (props) => <CustomNode {...props} type="AI_INPUT" />,
-  AI_PROCESSOR: (props) => <CustomNode {...props} type="AI_PROCESSOR" />,
-};
-
 // 转换函数：内部格式 -> React Flow 格式
-const toReactFlowNodes = (nodes: WorkflowNode[]): Node[] => {
-  return nodes.map(node => ({
-    id: node.id,
-    type: node.type,
-    position: node.position,
-    data: node.data,
-    selected: false,
-  }));
+const toReactFlowNodes = (nodes: WorkflowNode[], templates: NodeTemplate[], hasProvider: boolean): Node[] => {
+  const templateMap = new Map(templates.map(t => [t.type, t]));
+  const annotationTypes = ['STICKY_NOTE', 'GROUP_BOX'];
+  
+  return nodes.map(node => {
+    const isAnnotation = annotationTypes.includes(node.type);
+    return {
+      id: node.id,
+      type: node.type,
+      position: node.position,
+      data: { 
+        ...node.data, 
+        template: isAnnotation ? undefined : templateMap.get(node.type),
+        hasProvider: isAnnotation ? undefined : hasProvider,
+        isAnnotation,
+      },
+      selected: false,
+    };
+  });
 };
 
 const toReactFlowEdges = (edges: WorkflowEdge[]): Edge[] => {
@@ -107,12 +70,16 @@ const toReactFlowEdges = (edges: WorkflowEdge[]): Edge[] => {
 
 // 转换函数：React Flow 格式 -> 内部格式
 const fromReactFlowNodes = (nodes: Node[]): WorkflowNode[] => {
-  return nodes.map(node => ({
-    id: node.id,
-    type: node.type as NodeType,
-    position: node.position,
-    data: node.data,
-  }));
+  return nodes.map(node => {
+    // 只保存需要持久化的字段，排除运行时字段
+    const { template, hasProvider, isAnnotation, nodeId, ...persistData } = node.data;
+    return {
+      id: node.id,
+      type: node.type as NodeType,
+      position: node.position,
+      data: persistData,
+    };
+  });
 };
 
 const fromReactFlowEdges = (edges: Edge[]): WorkflowEdge[] => {
@@ -140,6 +107,26 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   const contextMenu = useContextMenu();
   const { toasts, removeToast, success, error } = useToast();
   const reactFlowInstance = useReactFlow();
+
+  // 节点模板和 AI 提供商状态
+  const [templates, setTemplates] = useState<NodeTemplate[]>([]);
+  const [hasProvider, setHasProvider] = useState(false);
+
+  // 动态生成节点类型
+  const nodeTypes = useMemo(() => createNodeTypes(templates), [templates]);
+
+  // 加载节点模板和 AI 配置状态
+  useEffect(() => {
+    const loadTemplates = async () => {
+      const [templatesData, providerStatus] = await Promise.all([
+        getNodeTemplates(),
+        user?.id ? hasEnabledProvider(user.id) : Promise.resolve(false),
+      ]);
+      setTemplates(templatesData);
+      setHasProvider(providerStatus);
+    };
+    loadTemplates();
+  }, [user?.id]);
 
   // 获取存储的视口状态
   const getStoredViewport = useCallback((): Viewport | null => {
@@ -184,6 +171,111 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
   const markUnsaved = useCallback(() => setHasUnsavedChanges(true), []);
 
+  // 监听辅助工具节点的更新事件
+  useEffect(() => {
+    const handleStickyNoteUpdate = (e: CustomEvent) => {
+      const { nodeId, text } = e.detail;
+      setNodes(nds => nds.map(n => {
+        if (n.id === nodeId) {
+          return { ...n, data: { ...n.data, config: { ...n.data.config, text } } };
+        }
+        return n;
+      }));
+      setHasUnsavedChanges(true);
+    };
+
+    const handleGroupBoxUpdate = (e: CustomEvent) => {
+      const { nodeId, title } = e.detail;
+      setNodes(nds => nds.map(n => {
+        if (n.id === nodeId) {
+          return { ...n, data: { ...n.data, config: { ...n.data.config, title } } };
+        }
+        return n;
+      }));
+      setHasUnsavedChanges(true);
+    };
+
+    const handleStickyNoteResize = (e: CustomEvent) => {
+      const { nodeId, width, height } = e.detail;
+      setNodes(nds => nds.map(n => {
+        if (n.id === nodeId) {
+          return { ...n, data: { ...n.data, config: { ...n.data.config, width, height } } };
+        }
+        return n;
+      }));
+      setHasUnsavedChanges(true);
+    };
+
+    const handleGroupBoxResize = (e: CustomEvent) => {
+      const { nodeId, width, height } = e.detail;
+      setNodes(nds => nds.map(n => {
+        if (n.id === nodeId) {
+          return { ...n, data: { ...n.data, config: { ...n.data.config, width, height } } };
+        }
+        return n;
+      }));
+      setHasUnsavedChanges(true);
+    };
+
+    window.addEventListener('stickyNoteUpdate', handleStickyNoteUpdate as EventListener);
+    window.addEventListener('groupBoxUpdate', handleGroupBoxUpdate as EventListener);
+    window.addEventListener('stickyNoteResize', handleStickyNoteResize as EventListener);
+    window.addEventListener('groupBoxResize', handleGroupBoxResize as EventListener);
+    return () => {
+      window.removeEventListener('stickyNoteUpdate', handleStickyNoteUpdate as EventListener);
+      window.removeEventListener('groupBoxUpdate', handleGroupBoxUpdate as EventListener);
+      window.removeEventListener('stickyNoteResize', handleStickyNoteResize as EventListener);
+      window.removeEventListener('groupBoxResize', handleGroupBoxResize as EventListener);
+    };
+  }, [setNodes]);
+
+  // Undo/Redo 历史记录
+  const [history, setHistory] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isUndoRedoAction = React.useRef(false);
+
+  // 保存当前状态到历史记录
+  const saveToHistory = useCallback(() => {
+    if (isUndoRedoAction.current) {
+      isUndoRedoAction.current = false;
+      return;
+    }
+    setHistory(prev => {
+      // 如果当前不在最新位置，删除后面的历史
+      const newHistory = prev.slice(0, historyIndex + 1);
+      // 添加当前状态
+      newHistory.push({ nodes: [...nodes], edges: [...edges] });
+      // 限制历史记录数量
+      if (newHistory.length > 50) newHistory.shift();
+      return newHistory;
+    });
+    setHistoryIndex(prev => Math.min(prev + 1, 49));
+  }, [nodes, edges, historyIndex]);
+
+  // Undo
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      isUndoRedoAction.current = true;
+      const prevState = history[historyIndex - 1];
+      setNodes(prevState.nodes);
+      setEdges(prevState.edges);
+      setHistoryIndex(prev => prev - 1);
+      setHasUnsavedChanges(true);
+    }
+  }, [history, historyIndex, setNodes, setEdges]);
+
+  // Redo
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      isUndoRedoAction.current = true;
+      const nextState = history[historyIndex + 1];
+      setNodes(nextState.nodes);
+      setEdges(nextState.edges);
+      setHistoryIndex(prev => prev + 1);
+      setHasUnsavedChanges(true);
+    }
+  }, [history, historyIndex, setNodes, setEdges]);
+
   // 通知父组件未保存状态变化
   useEffect(() => {
     onUnsavedChange?.(hasUnsavedChanges);
@@ -192,11 +284,11 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   // 加载工作流
   useEffect(() => {
     const loadWorkflow = async () => {
-      if (workflowId) {
+      if (workflowId && templates.length > 0) {
         try {
           const workflow = await workflowApi.getWorkflow(workflowId);
           if (workflow) {
-            setNodes(toReactFlowNodes(workflow.nodes || []));
+            setNodes(toReactFlowNodes(workflow.nodes || [], templates, hasProvider));
             setEdges(toReactFlowEdges(workflow.edges || []));
             setWorkflowName(workflow.name);
             setCurrentWorkflowId(workflow.id);
@@ -207,7 +299,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       }
     };
     loadWorkflow();
-  }, [workflowId, setNodes, setEdges]);
+  }, [workflowId, templates, hasProvider, setNodes, setEdges]);
 
   // 保存工作流
   const saveWorkflow = useCallback(async () => {
@@ -232,39 +324,139 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     }
   }, [user?.id, currentWorkflowId, workflowName, nodes, edges, success, error]);
 
+  // 剪贴板状态（存储复制的节点和边）
+  const [clipboard, setClipboard] = useState<{ nodes: Node[]; edges: Edge[] } | null>(null);
+
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+S 保存
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      
+      // ========== 弹窗打开时的快捷键 ==========
+      if (editingNodeId) {
+        // Ctrl+S 保存节点配置提示
+        if (isCtrlOrCmd && e.key === 's') {
+          e.preventDefault();
+          success('节点配置已保存');
+        }
+        // Escape 关闭弹窗
+        if (e.key === 'Escape') {
+          setEditingNodeId(null);
+          document.body.focus();
+        }
+        // 弹窗打开时禁用其他所有快捷键
+        return;
+      }
+
+      // ========== 画布快捷键（弹窗关闭时） ==========
+      
+      // 检查是否在输入框中
+      const target = e.target as HTMLElement;
+      const isInInput = target.tagName === 'INPUT' || 
+                        target.tagName === 'TEXTAREA' || 
+                        target.getAttribute('contenteditable') === 'true';
+
+      // Ctrl+S 保存工作流（任何时候都可用）
+      if (isCtrlOrCmd && e.key === 's') {
         e.preventDefault();
         saveWorkflow();
+        return;
       }
-      // Delete 或 Backspace 删除选中节点
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        const selectedNodes = nodes.filter(n => n.selected);
-        const selectedEdges = edges.filter(e => e.selected);
-        if (selectedNodes.length > 0 || selectedEdges.length > 0) {
-          const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
-          setNodes(nds => nds.filter(n => !n.selected));
-          setEdges(eds => eds.filter(e => !e.selected && !selectedNodeIds.has(e.source) && !selectedNodeIds.has(e.target)));
-          markUnsaved();
-        }
+
+      // 以下快捷键在输入框中时禁用
+      if (isInInput) return;
+
+      // Ctrl+Z 撤销
+      if (isCtrlOrCmd && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
       }
-      // Ctrl+X 剪切（删除）
-      if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
+
+      // Ctrl+Y 或 Ctrl+Shift+Z 重做
+      if (isCtrlOrCmd && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // Ctrl+C 复制选中节点
+      if (isCtrlOrCmd && e.key === 'c') {
         const selectedNodes = nodes.filter(n => n.selected);
         if (selectedNodes.length > 0) {
           const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
+          const selectedEdges = edges.filter(
+            edge => selectedNodeIds.has(edge.source) && selectedNodeIds.has(edge.target)
+          );
+          setClipboard({ nodes: selectedNodes, edges: selectedEdges });
+        }
+        return;
+      }
+
+      // Ctrl+V 粘贴节点
+      if (isCtrlOrCmd && e.key === 'v') {
+        if (clipboard && clipboard.nodes.length > 0) {
+          e.preventDefault();
+          saveToHistory();
+          const idMap = new Map<string, string>();
+          clipboard.nodes.forEach(n => idMap.set(n.id, generateId()));
+          
+          const newNodes: Node[] = clipboard.nodes.map(n => ({
+            ...n,
+            id: idMap.get(n.id)!,
+            position: { x: n.position.x + 50, y: n.position.y + 50 },
+            selected: true,
+            data: { ...n.data },
+          }));
+          
+          const newEdges: Edge[] = clipboard.edges.map(edge => ({
+            ...edge,
+            id: generateId(),
+            source: idMap.get(edge.source)!,
+            target: idMap.get(edge.target)!,
+          }));
+          
+          setNodes(nds => [...nds.map(n => ({ ...n, selected: false })), ...newNodes]);
+          setEdges(eds => [...eds, ...newEdges]);
+          markUnsaved();
+        }
+        return;
+      }
+
+      // Ctrl+X 剪切
+      if (isCtrlOrCmd && e.key === 'x') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        if (selectedNodes.length > 0) {
+          saveToHistory();
+          const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
+          const selectedEdges = edges.filter(
+            edge => selectedNodeIds.has(edge.source) && selectedNodeIds.has(edge.target)
+          );
+          setClipboard({ nodes: selectedNodes, edges: selectedEdges });
           setNodes(nds => nds.filter(n => !n.selected));
-          setEdges(eds => eds.filter(e => !selectedNodeIds.has(e.source) && !selectedNodeIds.has(e.target)));
+          setEdges(eds => eds.filter(edge => !selectedNodeIds.has(edge.source) && !selectedNodeIds.has(edge.target)));
+          markUnsaved();
+        }
+        return;
+      }
+
+      // Delete 或 Backspace 删除选中节点
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        const selectedEdges = edges.filter(edge => edge.selected);
+        if (selectedNodes.length > 0 || selectedEdges.length > 0) {
+          saveToHistory();
+          const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
+          setNodes(nds => nds.filter(n => !n.selected));
+          setEdges(eds => eds.filter(edge => !edge.selected && !selectedNodeIds.has(edge.source) && !selectedNodeIds.has(edge.target)));
           markUnsaved();
         }
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [saveWorkflow, nodes, edges, setNodes, setEdges, markUnsaved]);
+  }, [saveWorkflow, nodes, edges, setNodes, setEdges, markUnsaved, clipboard, editingNodeId, success, undo, redo, saveToHistory]);
 
   // 连接节点
   const onConnect = useCallback((params: Connection) => {
@@ -280,12 +472,17 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
   // 节点变化时标记未保存
   const handleNodesChange = useCallback((changes: any) => {
+    // 位置变化结束时保存历史
+    const positionEnd = changes.some((c: any) => c.type === 'position' && c.dragging === false);
+    if (positionEnd) {
+      saveToHistory();
+    }
     onNodesChange(changes);
     // 只有位置变化或删除时才标记未保存
     if (changes.some((c: any) => c.type === 'position' && c.dragging === false || c.type === 'remove')) {
       markUnsaved();
     }
-  }, [onNodesChange, markUnsaved]);
+  }, [onNodesChange, markUnsaved, saveToHistory]);
 
   // 边变化时标记未保存
   const handleEdgesChange = useCallback((changes: any) => {
@@ -296,18 +493,24 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   }, [onEdgesChange, markUnsaved]);
 
   // 添加组件
-  const handleAddComponent = useCallback((component: ComponentDefinition) => {
+  const handleAddComponent = useCallback((component: NodeTemplate) => {
     const position = reactFlowInstance.screenToFlowPosition({ x: 200, y: 200 });
     const newNode: Node = {
       id: generateId(),
       type: component.type,
       position,
-      data: { label: component.name, description: component.description, config: { ...component.defaultConfig } },
+      data: { 
+        label: component.name, 
+        description: component.description, 
+        config: { ...component.defaultConfig },
+        template: component,
+        hasProvider,
+      },
     };
     setNodes(nds => [...nds, newNode]);
     setIsPanelOpen(false);
     markUnsaved();
-  }, [setNodes, markUnsaved, reactFlowInstance]);
+  }, [setNodes, markUnsaved, reactFlowInstance, hasProvider]);
 
   // 拖放添加组件
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -315,19 +518,32 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     const componentData = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('component');
     if (!componentData) return;
     try {
-      const component: ComponentDefinition = JSON.parse(componentData);
+      const component = JSON.parse(componentData);
       const position = reactFlowInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      
+      // 检查是否是辅助工具（批注节点）
+      const isAnnotation = component.isAnnotation === true;
+      const nodeId = generateId();
+      
       const newNode: Node = {
-        id: generateId(),
+        id: nodeId,
         type: component.type,
         position,
-        data: { label: component.name, description: component.description, config: { ...component.defaultConfig } },
+        data: { 
+          label: component.name, 
+          description: component.description, 
+          config: { ...component.defaultConfig },
+          template: isAnnotation ? undefined : component,
+          hasProvider: isAnnotation ? undefined : hasProvider,
+          isAnnotation,
+          nodeId, // 传递给节点组件用于事件通信
+        },
       };
       setNodes(nds => [...nds, newNode]);
       setIsPanelOpen(false);
       markUnsaved();
     } catch {}
-  }, [setNodes, markUnsaved, reactFlowInstance]);
+  }, [setNodes, markUnsaved, reactFlowInstance, hasProvider]);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -336,6 +552,10 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
   // 双击编辑节点
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
+    // 辅助工具节点不打开配置弹窗
+    if (node.data.isAnnotation) {
+      return;
+    }
     setEditingNodeId(node.id);
   }, []);
 
@@ -400,7 +620,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       try {
         const w: Workflow = JSON.parse(event.target?.result as string);
         if (w.nodes && w.edges) {
-          setNodes(toReactFlowNodes(w.nodes));
+          setNodes(toReactFlowNodes(w.nodes, templates, hasProvider));
           setEdges(toReactFlowEdges(w.edges));
           setWorkflowName(w.name || '导入的工作流');
           setCurrentWorkflowId(null);
@@ -423,7 +643,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     };
   }, [nodes, editingNodeId]);
 
-  const handleComponentDragStart = useCallback((e: React.DragEvent, component: ComponentDefinition) => {
+  const handleComponentDragStart = useCallback((e: React.DragEvent, component: NodeTemplate) => {
     e.dataTransfer.setData('component', JSON.stringify(component));
     e.dataTransfer.effectAllowed = 'copy';
   }, []);

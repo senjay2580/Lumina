@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { WorkflowNode, NodeType } from '../types';
+import { WorkflowNode, NODE_TYPES } from '../types';
 
 interface NodeConfigModalProps {
   node: WorkflowNode | null;
@@ -27,20 +27,27 @@ export const NodeConfigModal: React.FC<NodeConfigModalProps> = ({ node, onClose,
 
   const handleClose = () => {
     setIsVisible(false);
-    setTimeout(onClose, 200);
+    setTimeout(() => {
+      onClose();
+      // 关闭后将焦点移回 body，确保键盘事件可以正常触发
+      document.body.focus();
+    }, 200);
   };
 
   const handleDelete = () => {
     setIsVisible(false);
-    setTimeout(() => onDelete(node.id), 200);
+    setTimeout(() => {
+      onDelete(node.id);
+      document.body.focus();
+    }, 200);
   };
 
-  const isInput = node.type === NodeType.AI_INPUT;
+  const isInput = node.type === NODE_TYPES.INPUT || node.type === 'AI_INPUT';
   const nodeColor = isInput ? '#10B981' : '#3B82F6';
   const nodeIcon = isInput ? 'IN' : 'AI';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
       {/* Backdrop */}
       <div
         onClick={handleClose}

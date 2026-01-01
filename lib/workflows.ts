@@ -97,3 +97,40 @@ export async function getStats(userId: string): Promise<{ workflows: number; pro
     executions: executionsRes.count || 0
   };
 }
+
+// 获取本地日期字符串 (YYYY-MM-DD)
+const getLocalDateString = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// 获取工作流活动数据（用于热力图）
+export async function getWorkflowActivity(userId: string): Promise<{ date: string; count: number }[]> {
+  // 获取最近 365 天的工作流更新记录
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - 365);
+  
+  const { data, error } = await supabase
+    .from('workflows')
+    .select('updated_at')
+    .eq('user_id', userId)
+    .gte('updated_at', startDate.toISOString());
+  
+  if (error) {
+    console.error('获取活动数据失败:', error);
+    return [];
+  }
+  
+  // 按日期分组统计（使用本地时间）
+  const activityMap = new Map<string, number>();
+  
+  (data || []).forEach(item => {
+    const date = getLocalDateString(new Date(item.updated_at));
+    activityMap.set(date, (activityMap.get(date) || 0) + 1);
+  });
+  
+  // 转换为数组
+  return Array.from(activityMap.entries()).map(([date, count]) => ({ date, count }));
+}
