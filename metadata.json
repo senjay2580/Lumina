@@ -1,0 +1,5 @@
+{
+  "name": "Lumina - AI Workflow Orchestrator",
+  "description": "A high-performance, n8n-style visual workflow editor for AI agents with prompt management. Features a warm, glassmorphic design system.",
+  "requestFramePermissions": []
+}
