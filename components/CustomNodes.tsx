@@ -311,6 +311,7 @@ const StickyNoteNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const startPos = React.useRef({ x: 0, y: 0, width: 0, height: 0 });
+  const clickPos = React.useRef<{ x: number; y: number } | null>(null);
 
   React.useEffect(() => {
     setEditText(config.text || '');
@@ -319,12 +320,19 @@ const StickyNoteNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   React.useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
-      textareaRef.current.select();
+      // 不全选，让光标在末尾或点击位置
+      if (!clickPos.current) {
+        // 如果没有点击位置信息，光标放末尾
+        const len = textareaRef.current.value.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
+      clickPos.current = null;
     }
   }, [isEditing]);
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    clickPos.current = { x: e.clientX, y: e.clientY };
     setIsEditing(true);
   };
 
@@ -417,13 +425,13 @@ const StickyNoteNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
           <p className="text-gray-400 italic text-sm cursor-text">双击编辑内容...</p>
         )}
       </div>
-      {/* 缩放手柄 */}
+      {/* 缩放手柄 - 便签 */}
       {selected && (
         <div
-          className="nodrag absolute bottom-0 right-0 w-5 h-5 cursor-se-resize bg-primary/30 hover:bg-primary/50 rounded-tl-lg"
+          className="nodrag absolute bottom-0 right-0 w-5 h-5 cursor-se-resize opacity-0 hover:opacity-100 transition-opacity"
           onMouseDown={handleResizeStart}
         >
-          <svg className="w-3 h-3 text-primary absolute bottom-0.5 right-0.5" viewBox="0 0 24 24" fill="currentColor">
+          <svg className="w-3 h-3 text-gray-400 absolute bottom-0.5 right-0.5" viewBox="0 0 24 24" fill="currentColor">
             <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22Z" />
           </svg>
         </div>
@@ -436,7 +444,6 @@ const StickyNoteNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
 const GroupBoxNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const config = data.config || {};
   const title = config.title || '分组';
-  const backgroundColor = config.backgroundColor || '#F3F4F6';
   const initialWidth = config.width || 300;
   const initialHeight = config.height || 200;
   
@@ -520,15 +527,20 @@ const GroupBoxNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   return (
     <div 
       ref={containerRef}
-      className={`relative rounded-xl border-2 border-dashed transition-colors ${
-        selected ? 'border-primary' : 'border-gray-300'
-      }`}
-      style={{ width: initialWidth, height: initialHeight, backgroundColor: `${backgroundColor}80`, minWidth: 150, minHeight: 100 }}
+      className="relative"
+      style={{ width: initialWidth, height: initialHeight, minWidth: 150, minHeight: 100, pointerEvents: 'none' }}
     >
-      {/* 标题栏 */}
+      {/* 边框 - 只有边框可点击 */}
       <div 
-        className="absolute -top-3 left-3 px-2 py-0.5 rounded text-xs font-medium text-gray-600 cursor-text"
-        style={{ backgroundColor }}
+        className={`absolute inset-0 rounded-xl border-2 border-dashed transition-colors ${
+          selected ? 'border-primary' : 'border-gray-300'
+        }`}
+        style={{ pointerEvents: 'stroke' }}
+      />
+      {/* 标题栏 - 可点击 */}
+      <div 
+        className="absolute -top-3 left-3 px-2 py-0.5 rounded text-xs font-medium text-gray-600 cursor-text bg-[#fafafa]"
+        style={{ pointerEvents: 'auto' }}
         onDoubleClick={handleTitleDoubleClick}
       >
         {isEditingTitle ? (
@@ -542,13 +554,14 @@ const GroupBoxNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
           />
         ) : title}
       </div>
-      {/* 缩放手柄 */}
+      {/* 缩放手柄 - 分组框 */}
       {selected && (
         <div
-          className="nodrag absolute bottom-0 right-0 w-5 h-5 cursor-se-resize bg-primary/30 hover:bg-primary/50 rounded-tl-lg"
+          className="nodrag absolute bottom-0 right-0 w-5 h-5 cursor-se-resize opacity-0 hover:opacity-100 transition-opacity"
+          style={{ pointerEvents: 'auto' }}
           onMouseDown={handleResizeStart}
         >
-          <svg className="w-3 h-3 text-primary absolute bottom-0.5 right-0.5" viewBox="0 0 24 24" fill="currentColor">
+          <svg className="w-3 h-3 text-gray-400 absolute bottom-0.5 right-0.5" viewBox="0 0 24 24" fill="currentColor">
             <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22Z" />
           </svg>
         </div>

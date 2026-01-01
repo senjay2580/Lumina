@@ -41,10 +41,12 @@ const toReactFlowNodes = (nodes: WorkflowNode[], templates: NodeTemplate[], hasP
   
   return nodes.map(node => {
     const isAnnotation = annotationTypes.includes(node.type);
+    const isGroupBox = node.type === 'GROUP_BOX';
     return {
       id: node.id,
       type: node.type,
       position: node.position,
+      zIndex: isGroupBox ? -1 : undefined, // 分组框在底层
       data: { 
         ...node.data, 
         template: isAnnotation ? undefined : templateMap.get(node.type),
@@ -104,7 +106,8 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const moreMenuRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const contextMenu = useContextMenu();
+  const contextMenu = useContextMenu(); // 节点右键菜单
+  const edgeContextMenu = useContextMenu(); // 边右键菜单
   const { toasts, removeToast, success, error } = useToast();
   const reactFlowInstance = useReactFlow();
 
@@ -229,52 +232,73 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     };
   }, [setNodes]);
 
-  // Undo/Redo 历史记录
-  const [history, setHistory] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const isUndoRedoAction = React.useRef(false);
+  // Undo/Redo 历史记录 - 使用 past 和 future 栈
+  const pastRef = React.useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
+  const futureRef = React.useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
-  // 保存当前状态到历史记录
-  const saveToHistory = useCallback(() => {
-    if (isUndoRedoAction.current) {
-      isUndoRedoAction.current = false;
+  // 保存状态到历史（传入当前状态）
+  const pushToHistory = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
+    console.log('pushToHistory called with', currentNodes.length, 'nodes,', currentEdges.length, 'edges');
+    console.trace('pushToHistory stack trace');
+    pastRef.current.push({
+      nodes: JSON.parse(JSON.stringify(currentNodes)),
+      edges: JSON.parse(JSON.stringify(currentEdges))
+    });
+    futureRef.current = [];
+    if (pastRef.current.length > 50) {
+      pastRef.current.shift();
+    }
+  }, []);
+
+  // Undo - 回到上一个状态
+  const undo = useCallback(() => {
+    if (pastRef.current.length === 0) {
+      console.log('Undo: no history');
       return;
     }
-    setHistory(prev => {
-      // 如果当前不在最新位置，删除后面的历史
-      const newHistory = prev.slice(0, historyIndex + 1);
-      // 添加当前状态
-      newHistory.push({ nodes: [...nodes], edges: [...edges] });
-      // 限制历史记录数量
-      if (newHistory.length > 50) newHistory.shift();
-      return newHistory;
+    
+    // 获取当前最新状态
+    const currentNodes = reactFlowInstance.getNodes();
+    const currentEdges = reactFlowInstance.getEdges();
+    
+    // 保存当前状态到 future 栈
+    futureRef.current.push({
+      nodes: JSON.parse(JSON.stringify(currentNodes)),
+      edges: JSON.parse(JSON.stringify(currentEdges))
     });
-    setHistoryIndex(prev => Math.min(prev + 1, 49));
-  }, [nodes, edges, historyIndex]);
+    
+    // 从 past 栈取出上一个状态
+    const prevState = pastRef.current.pop()!;
+    console.log('Undo: restoring', prevState.nodes.length, 'nodes,', prevState.edges.length, 'edges');
+    setNodes(prevState.nodes);
+    setEdges(prevState.edges);
+    setHasUnsavedChanges(true);
+  }, [reactFlowInstance, setNodes, setEdges]);
 
-  // Undo
-  const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      isUndoRedoAction.current = true;
-      const prevState = history[historyIndex - 1];
-      setNodes(prevState.nodes);
-      setEdges(prevState.edges);
-      setHistoryIndex(prev => prev - 1);
-      setHasUnsavedChanges(true);
-    }
-  }, [history, historyIndex, setNodes, setEdges]);
-
-  // Redo
+  // Redo - 前进到下一个状态
   const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      isUndoRedoAction.current = true;
-      const nextState = history[historyIndex + 1];
-      setNodes(nextState.nodes);
-      setEdges(nextState.edges);
-      setHistoryIndex(prev => prev + 1);
-      setHasUnsavedChanges(true);
+    if (futureRef.current.length === 0) {
+      console.log('Redo: no future');
+      return;
     }
-  }, [history, historyIndex, setNodes, setEdges]);
+    
+    // 获取当前最新状态
+    const currentNodes = reactFlowInstance.getNodes();
+    const currentEdges = reactFlowInstance.getEdges();
+    
+    // 保存当前状态到 past 栈
+    pastRef.current.push({
+      nodes: JSON.parse(JSON.stringify(currentNodes)),
+      edges: JSON.parse(JSON.stringify(currentEdges))
+    });
+    
+    // 从 future 栈取出下一个状态
+    const nextState = futureRef.current.pop()!;
+    console.log('Redo: restoring', nextState.nodes.length, 'nodes,', nextState.edges.length, 'edges');
+    setNodes(nextState.nodes);
+    setEdges(nextState.edges);
+    setHasUnsavedChanges(true);
+  }, [reactFlowInstance, setNodes, setEdges]);
 
   // 通知父组件未保存状态变化
   useEffect(() => {
@@ -397,7 +421,9 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       if (isCtrlOrCmd && e.key === 'v') {
         if (clipboard && clipboard.nodes.length > 0) {
           e.preventDefault();
-          saveToHistory();
+          const currentNodes = reactFlowInstance.getNodes();
+          const currentEdges = reactFlowInstance.getEdges();
+          pushToHistory(currentNodes, currentEdges);
           const idMap = new Map<string, string>();
           clipboard.nodes.forEach(n => idMap.set(n.id, generateId()));
           
@@ -425,9 +451,11 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
       // Ctrl+X 剪切
       if (isCtrlOrCmd && e.key === 'x') {
-        const selectedNodes = nodes.filter(n => n.selected);
+        const currentNodes = reactFlowInstance.getNodes();
+        const currentEdges = reactFlowInstance.getEdges();
+        const selectedNodes = currentNodes.filter(n => n.selected);
         if (selectedNodes.length > 0) {
-          saveToHistory();
+          pushToHistory(currentNodes, currentEdges);
           const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
           const selectedEdges = edges.filter(
             edge => selectedNodeIds.has(edge.source) && selectedNodeIds.has(edge.target)
@@ -440,12 +468,17 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
         return;
       }
 
-      // Delete 或 Backspace 删除选中节点
+      // Delete 或 Backspace 删除选中节点和边
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const selectedNodes = nodes.filter(n => n.selected);
-        const selectedEdges = edges.filter(edge => edge.selected);
+        const currentNodes = reactFlowInstance.getNodes();
+        const currentEdges = reactFlowInstance.getEdges();
+        const selectedNodes = currentNodes.filter(n => n.selected);
+        const selectedEdges = currentEdges.filter(edge => edge.selected);
         if (selectedNodes.length > 0 || selectedEdges.length > 0) {
-          saveToHistory();
+          // 保存当前状态到历史（使用 reactFlowInstance 获取最新状态）
+          console.log('Delete: saving history with', currentNodes.length, 'nodes,', currentEdges.length, 'edges');
+          pushToHistory(currentNodes, currentEdges);
+          
           const selectedNodeIds = new Set(selectedNodes.map(n => n.id));
           setNodes(nds => nds.filter(n => !n.selected));
           setEdges(eds => eds.filter(edge => !edge.selected && !selectedNodeIds.has(edge.source) && !selectedNodeIds.has(edge.target)));
@@ -456,10 +489,13 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [saveWorkflow, nodes, edges, setNodes, setEdges, markUnsaved, clipboard, editingNodeId, success, undo, redo, saveToHistory]);
+  }, [saveWorkflow, nodes, edges, setNodes, setEdges, markUnsaved, clipboard, editingNodeId, success, undo, redo, pushToHistory, reactFlowInstance]);
 
   // 连接节点
   const onConnect = useCallback((params: Connection) => {
+    const currentNodes = reactFlowInstance.getNodes();
+    const currentEdges = reactFlowInstance.getEdges();
+    pushToHistory(currentNodes, currentEdges);
     setEdges(eds => addEdge({
       ...params,
       type: 'smoothstep',
@@ -468,29 +504,39 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       markerEnd: { type: MarkerType.ArrowClosed, color: '#FF6B00' },
     }, eds));
     markUnsaved();
-  }, [setEdges, markUnsaved]);
+  }, [setEdges, markUnsaved, pushToHistory, reactFlowInstance]);
 
   // 节点变化时标记未保存
   const handleNodesChange = useCallback((changes: any) => {
     // 位置变化结束时保存历史
     const positionEnd = changes.some((c: any) => c.type === 'position' && c.dragging === false);
     if (positionEnd) {
-      saveToHistory();
+      const currentNodes = reactFlowInstance.getNodes();
+      const currentEdges = reactFlowInstance.getEdges();
+      pushToHistory(currentNodes, currentEdges);
     }
     onNodesChange(changes);
     // 只有位置变化或删除时才标记未保存
     if (changes.some((c: any) => c.type === 'position' && c.dragging === false || c.type === 'remove')) {
       markUnsaved();
     }
-  }, [onNodesChange, markUnsaved, saveToHistory]);
+  }, [onNodesChange, markUnsaved, pushToHistory, reactFlowInstance]);
 
   // 边变化时标记未保存
   const handleEdgesChange = useCallback((changes: any) => {
+    // 如果有边被删除，先保存历史
+    const hasRemove = changes.some((c: any) => c.type === 'remove');
+    if (hasRemove) {
+      const currentNodes = reactFlowInstance.getNodes();
+      const currentEdges = reactFlowInstance.getEdges();
+      console.log('Edge remove detected, saving history with', currentNodes.length, 'nodes,', currentEdges.length, 'edges');
+      pushToHistory(currentNodes, currentEdges);
+    }
     onEdgesChange(changes);
-    if (changes.some((c: any) => c.type === 'remove')) {
+    if (hasRemove) {
       markUnsaved();
     }
-  }, [onEdgesChange, markUnsaved]);
+  }, [onEdgesChange, markUnsaved, pushToHistory, reactFlowInstance]);
 
   // 添加组件
   const handleAddComponent = useCallback((component: NodeTemplate) => {
@@ -525,10 +571,14 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       const isAnnotation = component.isAnnotation === true;
       const nodeId = generateId();
       
+      // 分组框放在最底层
+      const isGroupBox = component.type === 'GROUP_BOX';
+      
       const newNode: Node = {
         id: nodeId,
         type: component.type,
         position,
+        zIndex: isGroupBox ? -1 : undefined, // 分组框在底层
         data: { 
           label: component.name, 
           description: component.description, 
@@ -559,11 +609,19 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     setEditingNodeId(node.id);
   }, []);
 
-  // 右键菜单
+  // 右键菜单 - 节点
   const onNodeContextMenu = useCallback((e: React.MouseEvent, node: Node) => {
     e.preventDefault();
+    edgeContextMenu.close(); // 关闭边菜单
     contextMenu.open(e, node.id);
-  }, [contextMenu]);
+  }, [contextMenu, edgeContextMenu]);
+
+  // 右键菜单 - 边
+  const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: Edge) => {
+    e.preventDefault();
+    contextMenu.close(); // 关闭节点菜单
+    edgeContextMenu.open(e, edge.id);
+  }, [contextMenu, edgeContextMenu]);
 
   // 更新节点数据
   const updateNodeData = useCallback((id: string, newData: any) => {
@@ -577,6 +635,15 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
     markUnsaved();
   }, [setNodes, setEdges, markUnsaved]);
+
+  // 删除边
+  const deleteEdge = useCallback((id: string) => {
+    const currentNodes = reactFlowInstance.getNodes();
+    const currentEdges = reactFlowInstance.getEdges();
+    pushToHistory(currentNodes, currentEdges);
+    setEdges(eds => eds.filter(e => e.id !== id));
+    markUnsaved();
+  }, [setEdges, markUnsaved, pushToHistory, reactFlowInstance]);
 
   // 复制节点
   const duplicateNode = useCallback((id: string) => {
@@ -739,6 +806,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
           onDragOver={onDragOver}
           onNodeDoubleClick={onNodeDoubleClick}
           onNodeContextMenu={onNodeContextMenu}
+          onEdgeContextMenu={onEdgeContextMenu}
           onMoveEnd={onMoveEnd}
           nodeTypes={nodeTypes}
           selectionMode={SelectionMode.Partial}
@@ -747,6 +815,8 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
           selectNodesOnDrag
           defaultViewport={defaultViewport}
           snapToGrid={false}
+          edgesFocusable
+          edgesUpdatable
           defaultEdgeOptions={{
             type: 'smoothstep',
             animated: true,
@@ -784,13 +854,36 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       <ComponentPanel isOpen={isPanelOpen} onClose={() => setIsPanelOpen(false)} onDragStart={handleComponentDragStart} onAddComponent={handleAddComponent} />
       <NodeConfigModal node={editingNode} onClose={() => setEditingNodeId(null)} onUpdate={updateNodeData} onDelete={deleteNode} />
 
-      {contextMenu.isOpen && (
-        <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={contextMenu.close}
+      {contextMenu.isOpen && (() => {
+        const contextNode = nodes.find(n => n.id === contextMenu.data);
+        const isAnnotation = contextNode?.data?.isAnnotation;
+        const menuItems = [
+          // 编辑节点 - 辅助节点不显示
+          ...(!isAnnotation ? [{ 
+            label: '编辑节点', 
+            icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>, 
+            onClick: () => setEditingNodeId(contextMenu.data) 
+          }] : []),
+          { label: '复制', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>, onClick: () => duplicateNode(contextMenu.data) },
+          { divider: true, label: '', onClick: () => {} },
+          { label: '删除', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>, danger: true, onClick: () => deleteNode(contextMenu.data) }
+        ];
+        return <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={contextMenu.close} items={menuItems} />;
+      })()}
+
+      {/* 边右键菜单 */}
+      {edgeContextMenu.isOpen && (
+        <ContextMenu 
+          x={edgeContextMenu.x} 
+          y={edgeContextMenu.y} 
+          onClose={edgeContextMenu.close}
           items={[
-            { label: '编辑节点', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>, onClick: () => setEditingNodeId(contextMenu.data) },
-            { label: '复制节点', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>, onClick: () => duplicateNode(contextMenu.data) },
-            { divider: true, label: '', onClick: () => {} },
-            { label: '删除节点', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>, danger: true, onClick: () => deleteNode(contextMenu.data) }
+            { 
+              label: '删除连线', 
+              icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>, 
+              danger: true, 
+              onClick: () => deleteEdge(edgeContextMenu.data) 
+            }
           ]}
         />
       )}

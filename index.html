@@ -80,6 +80,17 @@
         background: #e5e5e5;
         border-radius: 3px;
       }
+      /* React Flow 边选中样式 */
+      .react-flow__edge.selected .react-flow__edge-path {
+        stroke: #FF6B00 !important;
+        stroke-width: 4px !important;
+      }
+      .react-flow__edge.selected {
+        filter: drop-shadow(0 0 6px rgba(255, 107, 0, 0.5));
+      }
+      .react-flow__edge:hover .react-flow__edge-path {
+        stroke-width: 3px;
+      }
     </style>
   <script type="importmap">
 {
