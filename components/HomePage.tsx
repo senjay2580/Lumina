@@ -139,6 +139,7 @@ interface WorkflowItem {
   description: string | null;
   updated_at: string;
   nodes: any[];
+  is_pinned?: boolean;
 }
 
 interface ActivityData {
@@ -182,6 +183,15 @@ const fillActivityData = (rawData: ActivityData[]) => {
   console.log('热力图日期范围:', result[0]?.date, '到', result[result.length - 1]?.date);
   
   return result;
+};
+
+// 辅助节点类型（不计入节点数量）
+const ANNOTATION_TYPES = ['STICKY_NOTE', 'GROUP_BOX', 'ARROW', 'STATE', 'ACTOR', 'TEXT_LABEL', 'IMAGE'];
+
+// 计算非辅助节点数量
+const countWorkflowNodes = (nodes: any[]) => {
+  if (!nodes) return 0;
+  return nodes.filter(n => !ANNOTATION_TYPES.includes(n.type)).length;
 };
 
 export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpenWorkflow }) => {
@@ -231,6 +241,29 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
       error('删除失败');
     }
     setDeleteConfirm({ open: false, id: null });
+  };
+
+  const handleTogglePin = async (id: string) => {
+    const workflow = workflows.find(w => w.id === id);
+    if (!workflow) return;
+    
+    const newPinned = !workflow.is_pinned;
+    try {
+      await workflowApi.togglePinWorkflow(id, newPinned);
+      // 更新本地状态并重新排序
+      setWorkflows(prev => {
+        const updated = prev.map(w => w.id === id ? { ...w, is_pinned: newPinned } : w);
+        // 重新排序：置顶的在前，然后按更新时间
+        return updated.sort((a, b) => {
+          if (a.is_pinned && !b.is_pinned) return -1;
+          if (!a.is_pinned && b.is_pinned) return 1;
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        });
+      });
+      success(newPinned ? '已置顶' : '已取消置顶');
+    } catch (err) {
+      error('操作失败');
+    }
   };
 
   const handleOpenWorkflow = (id: string) => {
@@ -688,13 +721,21 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
                   onClick={() => handleOpenWorkflow(workflow.id)}
                   onMouseEnter={() => workflowApi.preloadWorkflow(workflow.id)}
                   onContextMenu={(e) => contextMenu.open(e, workflow.id)}
-                  className="flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer transition-all group"
+                  className="relative flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer transition-all group"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
                 >
+                  {/* 置顶图钉 - 嵌入左边缘 */}
+                  {workflow.is_pinned && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-5 h-8 bg-amber-400 rounded-r-lg flex items-center justify-center shadow-sm">
+                      <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/>
+                      </svg>
+                    </div>
+                  )}
                   {/* 图标 */}
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                  <div className={`w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0 ${workflow.is_pinned ? 'ml-4' : ''}`}>
                     <svg className="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
                     </svg>
@@ -705,7 +746,7 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
                       {workflow.name}
                     </h3>
                     <p className="text-sm text-gray-400 truncate">
-                      {workflow.nodes?.length || 0} 个节点 · {formatRelativeTime(workflow.updated_at)}
+                      {countWorkflowNodes(workflow.nodes)} 个节点 · {formatRelativeTime(workflow.updated_at)}
                     </p>
                   </div>
                   {/* 操作按钮 */}
@@ -740,6 +781,12 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
           y={contextMenu.y} 
           onClose={contextMenu.close}
           items={[
+            { 
+              label: workflows.find(w => w.id === contextMenu.data)?.is_pinned ? '取消置顶' : '置顶', 
+              icon: <svg viewBox="0 0 24 24" fill="currentColor" className={workflows.find(w => w.id === contextMenu.data)?.is_pinned ? 'text-amber-500' : ''}><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>, 
+              onClick: () => handleTogglePin(contextMenu.data)
+            },
+            { divider: true, label: '', onClick: () => {} },
             { 
               label: '打开', 
               icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>, 

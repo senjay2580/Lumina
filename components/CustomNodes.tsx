@@ -336,26 +336,30 @@ const StickyNoteNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   );
 };
 
-// 箭头节点 - 简化版：固定起点，通过旋转和长度控制
+// 箭头节点 - 四边拖拽缩放，支持反转，对角固定
 const ArrowNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const config = data.config || {};
-  const length = config.length ?? 120;
-  const rotation = config.rotation ?? 0; // 角度制
-  const color = config.color || '#3B82F6';
+  const color = config.color || '#374151';
   const strokeWidth = config.strokeWidth || 2;
   const text = config.text ?? '';
+  const initialWidth = config.width || 200;
+  const initialHeight = config.height || 150;
+  const initialFlipX = config.flipX ?? false;
+  const initialFlipY = config.flipY ?? false;
   
+  const [size, setSize] = React.useState({ width: initialWidth, height: initialHeight });
+  const [flip, setFlip] = React.useState({ x: initialFlipX, y: initialFlipY });
   const [isEditing, setIsEditing] = React.useState(false);
   const [editText, setEditText] = React.useState(text);
-  const [localLength, setLocalLength] = React.useState(length);
-  const [localRotation, setLocalRotation] = React.useState(rotation);
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const isDragging = React.useRef(false);
-  const dragStart = React.useRef({ x: 0, y: 0, length: 0, rotation: 0 });
+  
+  // 拖拽状态
+  const isDragging = React.useRef<string | null>(null);
+  const dragStart = React.useRef({ mouseX: 0, mouseY: 0, width: 0, height: 0, flipX: false, flipY: false });
 
   React.useEffect(() => { setEditText(config.text ?? ''); }, [config.text]);
-  React.useEffect(() => { setLocalLength(config.length ?? 120); }, [config.length]);
-  React.useEffect(() => { setLocalRotation(config.rotation ?? 0); }, [config.rotation]);
+  React.useEffect(() => { setSize({ width: config.width || 200, height: config.height || 150 }); }, [config.width, config.height]);
+  React.useEffect(() => { setFlip({ x: config.flipX ?? false, y: config.flipY ?? false }); }, [config.flipX, config.flipY]);
   React.useEffect(() => { if (isEditing && inputRef.current) { inputRef.current.focus(); inputRef.current.select(); } }, [isEditing]);
 
   const handleDoubleClick = (e: React.MouseEvent) => { e.stopPropagation(); setIsEditing(true); };
@@ -366,81 +370,157 @@ const ArrowNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
     }
   };
 
-  // 拖拽末端手柄
-  const handleEndDrag = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    isDragging.current = true;
-    dragStart.current = { x: e.clientX, y: e.clientY, length: localLength, rotation: localRotation };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const dx = e.clientX - dragStart.current.x;
-      const dy = e.clientY - dragStart.current.y;
-      
-      // 计算新的角度和长度
-      const startRad = (dragStart.current.rotation * Math.PI) / 180;
-      const oldEndX = dragStart.current.length * Math.cos(startRad);
-      const oldEndY = dragStart.current.length * Math.sin(startRad);
-      const newEndX = oldEndX + dx;
-      const newEndY = oldEndY + dy;
-      
-      const newLength = Math.max(30, Math.sqrt(newEndX * newEndX + newEndY * newEndY));
-      const newRotation = (Math.atan2(newEndY, newEndX) * 180) / Math.PI;
-      
-      setLocalLength(newLength);
-      setLocalRotation(newRotation);
-    };
-    
-    const handleMouseUp = () => {
-      isDragging.current = false;
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      window.dispatchEvent(new CustomEvent('annotationUpdate', { 
-        detail: { nodeId: id, length: localLength, rotation: localRotation } 
-      }));
-    };
-    
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+  // 计算箭头起点和终点
+  const padding = 15;
+  const w = size.width;
+  const h = size.height;
+  const start = { 
+    x: flip.x ? w - padding : padding, 
+    y: flip.y ? h - padding : padding 
+  };
+  const end = { 
+    x: flip.x ? padding : w - padding, 
+    y: flip.y ? padding : h - padding 
   };
 
-  const arrowHeadSize = Math.min(14, localLength * 0.15);
-  const rad = (localRotation * Math.PI) / 180;
-  const endX = localLength * Math.cos(rad);
-  const endY = localLength * Math.sin(rad);
-  
-  // 箭头头部
-  const tipAngle1 = rad + Math.PI * 0.85;
-  const tipAngle2 = rad - Math.PI * 0.85;
-  const tip1X = endX + arrowHeadSize * Math.cos(tipAngle1);
-  const tip1Y = endY + arrowHeadSize * Math.sin(tipAngle1);
-  const tip2X = endX + arrowHeadSize * Math.cos(tipAngle2);
-  const tip2Y = endY + arrowHeadSize * Math.sin(tipAngle2);
+  // 计算箭头头部
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx);
+  const arrowHeadSize = Math.min(14, length * 0.12);
+  const tipAngle1 = angle + Math.PI * 0.85;
+  const tipAngle2 = angle - Math.PI * 0.85;
+  const tip1X = end.x + arrowHeadSize * Math.cos(tipAngle1);
+  const tip1Y = end.y + arrowHeadSize * Math.sin(tipAngle1);
+  const tip2X = end.x + arrowHeadSize * Math.cos(tipAngle2);
+  const tip2Y = end.y + arrowHeadSize * Math.sin(tipAngle2);
 
-  // 容器尺寸
-  const padding = 20;
-  const minX = Math.min(0, endX, tip1X, tip2X);
-  const maxX = Math.max(0, endX, tip1X, tip2X);
-  const minY = Math.min(0, endY, tip1Y, tip2Y);
-  const maxY = Math.max(0, endY, tip1Y, tip2Y);
-  const width = maxX - minX + padding * 2;
-  const height = maxY - minY + padding * 2;
-  const ox = -minX + padding;
-  const oy = -minY + padding;
+  // 开始拖拽
+  const handleResizeStart = (e: React.MouseEvent, handle: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isDragging.current = handle;
+    dragStart.current = { mouseX: e.clientX, mouseY: e.clientY, width: size.width, height: size.height, flipX: flip.x, flipY: flip.y };
+    document.body.style.userSelect = 'none';
+  };
+
+  React.useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const handle = isDragging.current;
+      const deltaX = e.clientX - dragStart.current.mouseX;
+      const deltaY = e.clientY - dragStart.current.mouseY;
+      
+      let newWidth = dragStart.current.width;
+      let newHeight = dragStart.current.height;
+      let newFlipX = dragStart.current.flipX;
+      let newFlipY = dragStart.current.flipY;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      // 处理水平方向
+      if (handle.includes('e')) {
+        newWidth = dragStart.current.width + deltaX;
+        if (newWidth < 0) { 
+          newWidth = Math.abs(newWidth); 
+          newFlipX = !dragStart.current.flipX;
+          offsetX = -newWidth; // 需要移动节点位置
+        }
+      } else if (handle.includes('w')) {
+        newWidth = dragStart.current.width - deltaX;
+        if (newWidth < 0) { 
+          newWidth = Math.abs(newWidth); 
+          newFlipX = !dragStart.current.flipX;
+        } else {
+          offsetX = deltaX; // 向左拖动时移动节点
+        }
+      }
+
+      // 处理垂直方向
+      if (handle.includes('s')) {
+        newHeight = dragStart.current.height + deltaY;
+        if (newHeight < 0) { 
+          newHeight = Math.abs(newHeight); 
+          newFlipY = !dragStart.current.flipY;
+          offsetY = -newHeight;
+        }
+      } else if (handle.includes('n')) {
+        newHeight = dragStart.current.height - deltaY;
+        if (newHeight < 0) { 
+          newHeight = Math.abs(newHeight); 
+          newFlipY = !dragStart.current.flipY;
+        } else {
+          offsetY = deltaY; // 向上拖动时移动节点
+        }
+      }
+
+      // 最小尺寸
+      const minSize = 30;
+      if (newWidth < minSize) {
+        if (handle.includes('w')) offsetX -= (minSize - newWidth);
+        newWidth = minSize;
+      }
+      if (newHeight < minSize) {
+        if (handle.includes('n')) offsetY -= (minSize - newHeight);
+        newHeight = minSize;
+      }
+
+      setSize({ width: newWidth, height: newHeight });
+      setFlip({ x: newFlipX, y: newFlipY });
+
+      // 移动节点位置以保持对角固定
+      if (offsetX !== 0 || offsetY !== 0) {
+        window.dispatchEvent(new CustomEvent('annotationMove', { 
+          detail: { nodeId: id, deltaX: offsetX, deltaY: offsetY } 
+        }));
+        // 更新拖拽起点，因为节点位置变了
+        dragStart.current.mouseX = e.clientX;
+        dragStart.current.mouseY = e.clientY;
+        dragStart.current.width = newWidth;
+        dragStart.current.height = newHeight;
+        dragStart.current.flipX = newFlipX;
+        dragStart.current.flipY = newFlipY;
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        window.dispatchEvent(new CustomEvent('annotationUpdate', { 
+          detail: { nodeId: id, width: size.width, height: size.height, flipX: flip.x, flipY: flip.y } 
+        }));
+        isDragging.current = null;
+        document.body.style.userSelect = '';
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [id, size, flip]);
+
+  const handleClass = "nodrag absolute w-2 h-2 bg-white border border-blue-400 rounded-sm hover:bg-blue-50 z-10";
 
   return (
-    <div className="relative" style={{ width, height }}>
-      <svg width={width} height={height} onDoubleClick={handleDoubleClick}>
-        <line x1={ox} y1={oy} x2={ox + endX - arrowHeadSize * 0.4 * Math.cos(rad)} y2={oy + endY - arrowHeadSize * 0.4 * Math.sin(rad)} 
-          stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-        <polygon points={`${ox + endX},${oy + endY} ${ox + tip1X},${oy + tip1Y} ${ox + tip2X},${oy + tip2Y}`} fill={color} />
+    <div className="relative" style={{ width: size.width, height: size.height }}>
+      <svg width={size.width} height={size.height} onDoubleClick={handleDoubleClick} className="cursor-move">
+        <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="transparent" strokeWidth={16} />
+        <line 
+          x1={start.x} y1={start.y} 
+          x2={end.x - arrowHeadSize * 0.4 * Math.cos(angle)} 
+          y2={end.y - arrowHeadSize * 0.4 * Math.sin(angle)} 
+          stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" 
+        />
+        <polygon points={`${end.x},${end.y} ${tip1X},${tip1Y} ${tip2X},${tip2Y}`} fill={color} />
       </svg>
       
-      {/* 文本 */}
+      {/* 文本标签 */}
       {(editText || isEditing) && (
         <div className="absolute flex items-center justify-center" 
-          style={{ left: ox + endX / 2, top: oy + endY / 2, transform: 'translate(-50%, -50%)', pointerEvents: isEditing ? 'auto' : 'none' }}>
+          style={{ left: (start.x + end.x) / 2, top: (start.y + end.y) / 2, transform: 'translate(-50%, -50%)', pointerEvents: isEditing ? 'auto' : 'none' }}>
           {isEditing ? (
             <input ref={inputRef} value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={handleBlur}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') inputRef.current?.blur(); }}
@@ -452,22 +532,33 @@ const ArrowNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
         </div>
       )}
 
-      {/* 起点 */}
-      {selected && <div className="absolute w-3 h-3 bg-white border-2 border-gray-400 rounded-full pointer-events-none" style={{ left: ox - 6, top: oy - 6 }} />}
-      
-      {/* 末端拖拽手柄 */}
+      {/* 选中时显示控制手柄 */}
       {selected && (
-        <div className="nodrag absolute w-4 h-4 bg-white border-2 border-primary rounded-full cursor-crosshair z-10 hover:scale-125 transition-transform" 
-          style={{ left: ox + endX - 8, top: oy + endY - 8 }} 
-          onMouseDown={handleEndDrag} />
+        <>
+          {/* 边框 */}
+          <div className="absolute inset-0 border border-blue-400 pointer-events-none" />
+          {/* 四角手柄 */}
+          <div className={`${handleClass} -top-1 -left-1 cursor-nw-resize`} onMouseDown={(e) => handleResizeStart(e, 'nw')} />
+          <div className={`${handleClass} -top-1 -right-1 cursor-ne-resize`} onMouseDown={(e) => handleResizeStart(e, 'ne')} />
+          <div className={`${handleClass} -bottom-1 -left-1 cursor-sw-resize`} onMouseDown={(e) => handleResizeStart(e, 'sw')} />
+          <div className={`${handleClass} -bottom-1 -right-1 cursor-se-resize`} onMouseDown={(e) => handleResizeStart(e, 'se')} />
+          {/* 四边手柄 */}
+          <div className={`${handleClass} -top-1 left-1/2 -translate-x-1/2 cursor-n-resize`} onMouseDown={(e) => handleResizeStart(e, 'n')} />
+          <div className={`${handleClass} -bottom-1 left-1/2 -translate-x-1/2 cursor-s-resize`} onMouseDown={(e) => handleResizeStart(e, 's')} />
+          <div className={`${handleClass} top-1/2 -left-1 -translate-y-1/2 cursor-w-resize`} onMouseDown={(e) => handleResizeStart(e, 'w')} />
+          <div className={`${handleClass} top-1/2 -right-1 -translate-y-1/2 cursor-e-resize`} onMouseDown={(e) => handleResizeStart(e, 'e')} />
+          {/* 起点终点标记 */}
+          <div className="absolute w-2.5 h-2.5 rounded-full bg-white border-2 border-blue-500 pointer-events-none" 
+            style={{ left: start.x - 5, top: start.y - 5 }} />
+          <div className="absolute w-2.5 h-2.5 rounded-full bg-white border-2 border-blue-500 pointer-events-none" 
+            style={{ left: end.x - 5, top: end.y - 5 }} />
+        </>
       )}
-
-      {selected && <div className="absolute inset-0 border-2 border-primary/20 rounded pointer-events-none" />}
     </div>
   );
 };
 
-// 图片节点 - 拍立得卡片风格
+// 图片节点 - 拍立得卡片风格，使用 Storage 上传
 const ImageNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const config = data.config || {};
   const src = config.src || '';
@@ -475,6 +566,7 @@ const ImageNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   const initialHeight = config.height || 150;
   
   const [size, setSize] = React.useState({ width: initialWidth, height: initialHeight });
+  const [isUploading, setIsUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => { 
@@ -484,26 +576,32 @@ const ImageNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   // 双击选择图片
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    fileInputRef.current?.click();
+    if (!isUploading) fileInputRef.current?.click();
   };
 
-  // 处理图片选择
+  // 处理图片选择 - 使用事件通知上传
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      if (base64) {
-        window.dispatchEvent(new CustomEvent('annotationUpdate', { 
-          detail: { nodeId: id, src: base64 } 
-        }));
+    setIsUploading(true);
+    // 通知 WorkflowEditor 上传图片
+    window.dispatchEvent(new CustomEvent('imageUpload', { 
+      detail: { nodeId: id, file } 
+    }));
+    e.target.value = '';
+  };
+
+  // 监听上传完成
+  React.useEffect(() => {
+    const handleUploadComplete = (e: CustomEvent) => {
+      if (e.detail.nodeId === id) {
+        setIsUploading(false);
       }
     };
-    reader.readAsDataURL(file);
-    e.target.value = ''; // 重置以便再次选择同一文件
-  };
+    window.addEventListener('imageUploadComplete', handleUploadComplete as EventListener);
+    return () => window.removeEventListener('imageUploadComplete', handleUploadComplete as EventListener);
+  }, [id]);
 
   // 拍立得卡片的底部留白
   const paddingBottom = Math.max(24, size.height * 0.15);
@@ -595,7 +693,15 @@ const ImageNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
       >
         {/* 图片区域 */}
         <div className="w-full h-full bg-gray-100 overflow-hidden flex items-center justify-center">
-          {src ? (
+          {isUploading ? (
+            <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 gap-2">
+              <svg className="w-8 h-8 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+              </svg>
+              <span className="text-xs">上传中...</span>
+            </div>
+          ) : src ? (
             <img src={src} alt="" className="max-w-full max-h-full object-contain" draggable={false} />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-gray-300 gap-2 cursor-pointer hover:text-gray-400 transition-colors">
@@ -641,14 +747,14 @@ const GroupBoxNode: React.FC<CustomNodeProps> = ({ id, data, selected }) => {
   };
 
   return (
-    <div className="relative" style={{ width: size.width, height: size.height, minWidth: 150, minHeight: 100, pointerEvents: 'none' }}>
+    <div className="relative" style={{ width: size.width, height: size.height, minWidth: 150, minHeight: 100 }}>
       <NodeResizer minWidth={150} minHeight={100} isVisible={selected} lineClassName="!border-primary" handleClassName="!w-2 !h-2 !bg-white !border-2 !border-primary !rounded"
         onResize={(_, params) => setSize({ width: params.width, height: params.height })}
         onResizeEnd={(_, params) => {
           window.dispatchEvent(new CustomEvent('annotationUpdate', { detail: { nodeId: id, width: params.width, height: params.height } }));
         }}
       />
-      <div className={`absolute inset-0 rounded-xl border-2 border-dashed ${selected ? 'border-primary' : ''}`} style={{ borderColor: selected ? undefined : borderColor, backgroundColor, pointerEvents: 'stroke' }} />
+      <div className={`absolute inset-0 rounded-xl border-2 border-dashed ${selected ? 'border-primary' : ''}`} style={{ borderColor: selected ? undefined : borderColor, backgroundColor, pointerEvents: 'none' }} />
       <div className="absolute -top-3 left-3 px-2 py-0.5 rounded text-xs text-gray-600 cursor-text bg-[#fafafa]" style={{ pointerEvents: 'auto', fontWeight }} onDoubleClick={handleTitleDoubleClick}>
         {isEditingTitle ? (
           <input ref={inputRef} value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onBlur={handleBlur}

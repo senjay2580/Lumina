@@ -15,18 +15,23 @@ import ReactFlow, {
   ReactFlowProvider,
   ConnectionLineType,
   Viewport,
+  getRectOfNodes,
+  getTransformForBounds,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 import { WorkflowNode, WorkflowEdge, NodeType, NodeTemplate, Workflow } from '../types';
 import { generateId } from './utils';
 import { NodeConfigModal } from './NodeConfigModal';
 import { ComponentPanel } from './ComponentPanel';
-import { ContextMenu, useContextMenu, useToast, ToastContainer, LoadingSpinner } from '../shared';
+import { ContextMenu, useContextMenu, useToast, ToastContainer, LoadingSpinner, Modal } from '../shared';
 import { getStoredUser } from '../lib/auth';
 import { getNodeTemplates } from '../lib/components';
 import { hasEnabledProvider } from '../lib/ai-providers';
 import * as workflowApi from '../lib/workflows';
 import { createNodeTypes, ThemeContext } from './CustomNodes';
+import { uploadWorkflowImage, getWorkflowImages, deleteWorkflowImage, WorkflowImage } from '../lib/supabase';
 
 // 画布主题配置 - 日间/夜间模式
 const canvasThemes = {
@@ -52,15 +57,22 @@ interface WorkflowEditorProps {
   onUnsavedChange?: (hasUnsaved: boolean) => void;
 }
 
+// 辅助节点类型（不计入节点数量）
+const ANNOTATION_TYPES = ['STICKY_NOTE', 'GROUP_BOX', 'ARROW', 'STATE', 'ACTOR', 'TEXT_LABEL', 'IMAGE'];
+
+// 计算非辅助节点数量
+const countWorkflowNodes = (nodes: Node[]) => {
+  return nodes.filter(n => !ANNOTATION_TYPES.includes(n.type || '')).length;
+};
+
 // 转换函数：内部格式 -> React Flow 格式
 const toReactFlowNodes = (nodes: WorkflowNode[], templates: NodeTemplate[], hasProvider: boolean): Node[] => {
   const templateMap = new Map(templates.map(t => [t.type, t]));
-  const annotationTypes = ['STICKY_NOTE', 'GROUP_BOX', 'ARROW', 'STATE', 'ACTOR', 'TEXT_LABEL'];
   
   return nodes.map(node => {
-    const isAnnotation = annotationTypes.includes(node.type);
+    const isAnnotation = ANNOTATION_TYPES.includes(node.type);
     const isGroupBox = node.type === 'GROUP_BOX';
-    const defaultZIndex = isGroupBox ? -1 : undefined;
+    const defaultZIndex = isGroupBox ? 0 : undefined;
     return {
       id: node.id,
       type: node.type,
@@ -139,6 +151,11 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   const { toasts, removeToast, success, error } = useToast();
   const reactFlowInstance = useReactFlow();
 
+  // 图片管理状态
+  const [showImageManager, setShowImageManager] = useState(false);
+  const [workflowImages, setWorkflowImages] = useState<WorkflowImage[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+
   // 节点模板和 AI 提供商状态
   const [templates, setTemplates] = useState<NodeTemplate[]>([]);
   const [hasProvider, setHasProvider] = useState(false);
@@ -215,62 +232,141 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       setHasUnsavedChanges(true);
     };
 
+    // 监听节点位置移动事件（用于箭头拖拽时保持对角固定）
+    const handleAnnotationMove = (e: CustomEvent) => {
+      const { nodeId, deltaX, deltaY } = e.detail;
+      setNodes(nds => nds.map(n => {
+        if (n.id === nodeId) {
+          return { ...n, position: { x: n.position.x + deltaX, y: n.position.y + deltaY } };
+        }
+        return n;
+      }));
+    };
+
+    // 监听图片上传事件
+    const handleImageUpload = async (e: CustomEvent) => {
+      const { nodeId, file } = e.detail;
+      const user = getStoredUser();
+      if (!user) return;
+      
+      try {
+        const url = await uploadWorkflowImage(user.id, file, currentWorkflowId || undefined);
+        // 更新节点
+        setNodes(nds => nds.map(n => {
+          if (n.id === nodeId) {
+            return { ...n, data: { ...n.data, config: { ...n.data.config, src: url } } };
+          }
+          return n;
+        }));
+        setHasUnsavedChanges(true);
+      } catch (err) {
+        console.error('Image upload failed:', err);
+        error('图片上传失败');
+      }
+      // 通知上传完成
+      window.dispatchEvent(new CustomEvent('imageUploadComplete', { detail: { nodeId } }));
+    };
+
     window.addEventListener('annotationUpdate', handleAnnotationUpdate as EventListener);
+    window.addEventListener('annotationMove', handleAnnotationMove as EventListener);
+    window.addEventListener('imageUpload', handleImageUpload as EventListener);
     return () => {
       window.removeEventListener('annotationUpdate', handleAnnotationUpdate as EventListener);
+      window.removeEventListener('annotationMove', handleAnnotationMove as EventListener);
+      window.removeEventListener('imageUpload', handleImageUpload as EventListener);
     };
-  }, [setNodes]);
+  }, [setNodes, error, currentWorkflowId]);
 
-  // 监听粘贴事件 - 支持粘贴图片
+  // 监听粘贴事件 - 只处理图片粘贴
   useEffect(() => {
+    console.log('=== Paste event listener registered ===');
+    
     const handlePaste = async (e: ClipboardEvent) => {
+      console.log('=== PASTE EVENT FIRED ===', { 
+        editingNodeId, 
+        itemsCount: e.clipboardData?.items?.length,
+        types: e.clipboardData?.types 
+      });
+      
       // 如果正在编辑节点，不处理粘贴
-      if (editingNodeId) return;
+      if (editingNodeId) {
+        console.log('Paste blocked: editingNodeId is set');
+        return;
+      }
       
       const items = e.clipboardData?.items;
-      if (!items) return;
+      if (!items) {
+        console.log('Paste blocked: no items in clipboard');
+        return;
+      }
       
+      console.log('Clipboard items:', Array.from(items).map(i => i.type));
+      
+      // 检查是否有图片
       for (const item of items) {
+        console.log('Checking item:', item.type);
         if (item.type.startsWith('image/')) {
+          console.log('Found image item, processing...');
           e.preventDefault();
+          e.stopPropagation();
           const file = item.getAsFile();
+          console.log('Got file:', file?.name, file?.size);
           if (!file) continue;
           
-          // 转换为 base64
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const base64 = event.target?.result as string;
-            if (!base64) return;
-            
-            // 获取画布中心位置
-            const viewport = reactFlowInstance?.getViewport();
-            const centerX = viewport ? (-viewport.x + window.innerWidth / 2) / viewport.zoom : 300;
-            const centerY = viewport ? (-viewport.y + window.innerHeight / 2) / viewport.zoom : 200;
-            
-            // 创建图片节点
-            const newNode: Node = {
-              id: generateId(),
-              type: 'IMAGE',
-              position: { x: centerX - 100, y: centerY - 75 },
-              data: {
-                label: '图片',
-                isAnnotation: true,
-                config: { src: base64, width: 200, height: 150 }
-              }
-            };
-            
-            setNodes(nds => [...nds, newNode]);
-            setHasUnsavedChanges(true);
+          const user = getStoredUser();
+          
+          // 获取画布中心位置
+          const viewport = reactFlowInstance?.getViewport();
+          const centerX = viewport ? (-viewport.x + window.innerWidth / 2) / viewport.zoom : 300;
+          const centerY = viewport ? (-viewport.y + window.innerHeight / 2) / viewport.zoom : 200;
+          
+          // 先创建本地预览 URL
+          const localPreviewUrl = URL.createObjectURL(file);
+          
+          // 创建图片节点（使用本地预览）
+          const nodeId = generateId();
+          const newNode: Node = {
+            id: nodeId,
+            type: 'IMAGE',
+            position: { x: centerX - 100, y: centerY - 75 },
+            data: {
+              label: '图片',
+              isAnnotation: true,
+              config: { src: localPreviewUrl, width: 200, height: 150 }
+            }
           };
-          reader.readAsDataURL(file);
-          break;
+          
+          setNodes(nds => [...nds, newNode]);
+          setHasUnsavedChanges(true);
+          
+          // 上传图片到 Storage，完成后替换为远程 URL
+          if (user) {
+            console.log('Starting upload for user:', user.id);
+            try {
+              const url = await uploadWorkflowImage(user.id, file, currentWorkflowId || undefined);
+              console.log('Upload successful:', url);
+              // 释放本地预览 URL
+              URL.revokeObjectURL(localPreviewUrl);
+              // 更新为远程 URL
+              setNodes(nds => nds.map(n => 
+                n.id === nodeId 
+                  ? { ...n, data: { ...n.data, config: { ...n.data.config, src: url } } }
+                  : n
+              ));
+            } catch (err) {
+              console.error('Image upload failed:', err);
+              error('图片上传失败');
+              // 上传失败时保留本地预览
+            }
+          }
+          return; // 处理完图片就返回
         }
       }
     };
 
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
-  }, [setNodes, editingNodeId, reactFlowInstance]);
+    document.addEventListener('paste', handlePaste, true); // Use capture phase
+    return () => document.removeEventListener('paste', handlePaste, true);
+  }, [setNodes, editingNodeId, reactFlowInstance, error, currentWorkflowId]);
 
   // Undo/Redo 历史记录 - 使用 past 和 future 栈
   const pastRef = React.useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -379,8 +475,6 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     try {
       const workflowNodes = fromReactFlowNodes(nodes);
       const workflowEdges = fromReactFlowEdges(edges);
-      // 调试：打印保存的节点数据
-      console.log('保存工作流 - 节点数据:', JSON.stringify(workflowNodes, null, 2));
       if (currentWorkflowId) {
         await workflowApi.updateWorkflow(currentWorkflowId, { name: workflowName, nodes: workflowNodes, edges: workflowEdges });
       } else {
@@ -396,6 +490,45 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       setSaving(false);
     }
   }, [user?.id, currentWorkflowId, workflowName, nodes, edges, success, error]);
+
+  // 加载工作流图片
+  const loadWorkflowImages = useCallback(async () => {
+    if (!user?.id || !currentWorkflowId) return;
+    setLoadingImages(true);
+    try {
+      const images = await getWorkflowImages(user.id, currentWorkflowId);
+      setWorkflowImages(images);
+    } catch (err) {
+      console.error('Load images failed:', err);
+    } finally {
+      setLoadingImages(false);
+    }
+  }, [user?.id, currentWorkflowId]);
+
+  // 删除工作流图片
+  const handleDeleteImage = useCallback(async (image: WorkflowImage) => {
+    try {
+      await deleteWorkflowImage(image.url);
+      setWorkflowImages(prev => prev.filter(i => i.url !== image.url));
+      // 检查是否有节点使用这张图片，如果有则清空
+      setNodes(nds => nds.map(n => {
+        if (n.data?.config?.src === image.url) {
+          return { ...n, data: { ...n.data, config: { ...n.data.config, src: '' } } };
+        }
+        return n;
+      }));
+      success('图片已删除');
+    } catch (err: any) {
+      error(err.message || '删除失败');
+    }
+  }, [setNodes, success, error]);
+
+  // 打开图片管理器时加载图片
+  useEffect(() => {
+    if (showImageManager) {
+      loadWorkflowImages();
+    }
+  }, [showImageManager, loadWorkflowImages]);
 
   // 剪贴板状态（存储复制的节点和边）
   const [clipboard, setClipboard] = useState<{ nodes: Node[]; edges: Edge[] } | null>(null);
@@ -474,7 +607,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
         return;
       }
 
-      // Ctrl+V 粘贴节点
+      // Ctrl+V 粘贴节点（图片粘贴由 paste 事件处理）
       if (isCtrlOrCmd && e.key === 'v') {
         if (clipboard && clipboard.nodes.length > 0) {
           e.preventDefault();
@@ -503,7 +636,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
           setEdges(eds => [...eds, ...newEdges]);
           markUnsaved();
         }
-        return;
+        // 不 return，让 paste 事件有机会处理图片
       }
 
       // Ctrl+X 剪切
@@ -630,7 +763,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       
       // 分组框放在底层
       const isGroupBox = component.type === 'GROUP_BOX';
-      const defaultZIndex = isGroupBox ? -1 : undefined;
+      const defaultZIndex = isGroupBox ? 0 : undefined;
       
       const newNode: Node = {
         id: nodeId,
@@ -779,6 +912,62 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     a.click();
   }, [currentWorkflowId, workflowName, nodes, edges]);
 
+  // 导出 PDF
+  const [exporting, setExporting] = useState(false);
+  const exportPDF = useCallback(async () => {
+    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
+    if (!viewport || nodes.length === 0) {
+      error('画布为空，无法导出');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      // 计算所有节点的边界
+      const nodesBounds = getRectOfNodes(nodes);
+      const padding = 50;
+      const width = nodesBounds.width + padding * 2;
+      const height = nodesBounds.height + padding * 2;
+
+      // 计算变换以适应所有节点
+      const transform = getTransformForBounds(
+        nodesBounds,
+        width,
+        height,
+        0.5,
+        2
+      );
+
+      // 生成图片
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: canvasTheme === 'dark' ? '#1e1e1e' : '#fafafa',
+        width,
+        height,
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          transform: `translate(${transform[0]}px, ${transform[1]}px) scale(${transform[2]})`,
+        },
+      });
+
+      // 创建 PDF
+      const pdf = new jsPDF({
+        orientation: width > height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [width, height],
+      });
+
+      pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
+      pdf.save(`${workflowName.replace(/\s+/g, '-')}.pdf`);
+      success('PDF 导出成功');
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      error('PDF 导出失败');
+    } finally {
+      setExporting(false);
+    }
+  }, [nodes, workflowName, canvasTheme, success, error]);
+
   // 导入工作流
   const importWorkflow = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -866,7 +1055,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
                 <rect x="3" y="3" width="7" height="7" rx="1" />
                 <rect x="14" y="14" width="7" height="7" rx="1" />
               </svg>
-              {nodes.length}
+              {countWorkflowNodes(nodes)}
               <span className="text-gray-300">·</span>
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 12h14" />
@@ -911,7 +1100,28 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
                   导出工作流
                 </button>
+                <button 
+                  onClick={() => { exportPDF(); setShowMoreMenu(false); }}
+                  disabled={exporting}
+                  className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+                >
+                  {exporting ? (
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>
+                  )}
+                  {exporting ? '导出中...' : '导出 PDF'}
+                </button>
                 <div className="h-px bg-gray-100 my-1" />
+                {currentWorkflowId && (
+                  <button 
+                    onClick={() => { setShowImageManager(true); setShowMoreMenu(false); }}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>
+                    管理图片
+                  </button>
+                )}
                 <button 
                   onClick={() => { 
                     const newTheme = canvasTheme === 'light' ? 'dark' : 'light';
@@ -1184,16 +1394,10 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
                   input.onchange = (e) => {
                     const file = (e.target as HTMLInputElement).files?.[0];
                     if (file) {
-                      const reader = new FileReader();
-                      reader.onload = (ev) => {
-                        const base64 = ev.target?.result as string;
-                        if (base64) {
-                          window.dispatchEvent(new CustomEvent('annotationUpdate', { 
-                            detail: { nodeId: contextMenu.data, src: base64 } 
-                          }));
-                        }
-                      };
-                      reader.readAsDataURL(file);
+                      // 使用 imageUpload 事件上传到 Storage
+                      window.dispatchEvent(new CustomEvent('imageUpload', { 
+                        detail: { nodeId: contextMenu.data, file } 
+                      }));
                     }
                   };
                   input.click();
@@ -1256,6 +1460,73 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
           ]}
         />
       )}
+
+      {/* 图片管理模态框 */}
+      <Modal isOpen={showImageManager} onClose={() => setShowImageManager(false)} title="图片管理">
+        <div className="min-h-[300px]">
+          {loadingImages ? (
+            <div className="flex items-center justify-center h-[300px]">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : workflowImages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-[300px] text-gray-400">
+              <svg className="w-16 h-16 mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+              <p>暂无图片</p>
+              <p className="text-sm mt-1">在画布中添加图片节点后会显示在这里</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-4">
+              {workflowImages.map((image) => {
+                const isUsed = nodes.some(n => n.data?.config?.src === image.url);
+                return (
+                  <div key={image.name} className="relative group">
+                    <div className="aspect-square rounded-lg overflow-hidden bg-gray-100 border border-gray-200">
+                      <img src={image.url} alt="" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => { setImagePreview({ src: image.url, open: true }); setShowImageManager(false); }}
+                        className="p-2 bg-white/20 hover:bg-white/30 rounded-lg text-white transition-colors"
+                        title="预览"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteImage(image)}
+                        className="p-2 bg-red-500/80 hover:bg-red-500 rounded-lg text-white transition-colors"
+                        title="删除"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+                    {isUsed && (
+                      <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-green-500 text-white text-[10px] rounded">
+                        使用中
+                      </div>
+                    )}
+                    <div className="mt-1 text-xs text-gray-500 truncate">
+                      {(image.size / 1024).toFixed(1)} KB
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center text-sm text-gray-500">
+            <span>共 {workflowImages.length} 张图片</span>
+            <span>总大小: {(workflowImages.reduce((sum, i) => sum + i.size, 0) / 1024 / 1024).toFixed(2)} MB</span>
+          </div>
+        </div>
+      </Modal>
 
       {/* 图片预览模态框 */}
       {imagePreview.open && (

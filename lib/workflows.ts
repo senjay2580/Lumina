@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, deleteWorkflowImages } from './supabase';
 import { getCached, setCache, invalidateCache, CACHE_KEYS } from './cache';
 
 export interface WorkflowRecord {
@@ -20,6 +20,7 @@ export interface WorkflowListItem {
   description: string | null;
   updated_at: string;
   nodes: any[]; // 只用于计算节点数量
+  is_pinned?: boolean;
 }
 
 // 计算列表数据版本（用于缓存一致性验证）
@@ -42,9 +43,10 @@ export async function getWorkflows(userId: string, forceRefresh = false): Promis
 
   const { data, error } = await supabase
     .from('workflows')
-    .select('id, name, description, updated_at, nodes')
+    .select('id, name, description, updated_at, nodes, is_pinned')
     .eq('user_id', userId)
     .is('deleted_at', null)
+    .order('is_pinned', { ascending: false })
     .order('updated_at', { ascending: false });
   
   if (error) throw error;
@@ -217,6 +219,11 @@ export async function permanentDeleteWorkflow(id: string): Promise<void> {
   
   if (error) throw error;
   
+  // 级联删除工作流图片
+  if (workflow) {
+    await deleteWorkflowImages(workflow.user_id, id);
+  }
+  
   // 使缓存失效
   if (workflow) {
     invalidateCache(CACHE_KEYS.WORKFLOWS, workflow.user_id);
@@ -247,6 +254,28 @@ export async function restoreWorkflow(id: string): Promise<void> {
     invalidateCache(CACHE_KEYS.WORKFLOWS, workflow.user_id);
     invalidateCache(CACHE_KEYS.STATS, workflow.user_id);
     invalidateCache(CACHE_KEYS.DELETED_WORKFLOWS, workflow.user_id);
+  }
+}
+
+// 置顶/取消置顶工作流
+export async function togglePinWorkflow(id: string, isPinned: boolean): Promise<void> {
+  // 先获取 user_id
+  const { data: workflow } = await supabase
+    .from('workflows')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+
+  const { error } = await supabase
+    .from('workflows')
+    .update({ is_pinned: isPinned })
+    .eq('id', id);
+  
+  if (error) throw error;
+  
+  // 使缓存失效
+  if (workflow) {
+    invalidateCache(CACHE_KEYS.WORKFLOWS, workflow.user_id);
   }
 }
 
