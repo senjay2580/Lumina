@@ -369,7 +369,7 @@ export const requestEmailVerification = async (email: string): Promise<void> => 
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (recentCode) {
     const createdAt = new Date(recentCode.created_at);
@@ -512,7 +512,7 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (recentCode) {
     const createdAt = new Date(recentCode.created_at);
@@ -843,7 +843,7 @@ export const resendEmailChangeVerification = async (email: string): Promise<void
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (recentCode) {
     const createdAt = new Date(recentCode.created_at);

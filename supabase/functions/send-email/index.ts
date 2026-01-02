@@ -1,7 +1,14 @@
 // Supabase Edge Function for sending emails via Resend API
 // Supports verification and password_reset email types
 
+// @ts-ignore - Deno types not available locally
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+};
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM_EMAIL = Deno.env.get('FROM_EMAIL') || 'Lumina <noreply@lumina.app>'
@@ -20,6 +27,7 @@ interface EmailTemplate {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 function getEmailTemplate(type: string, code: string): EmailTemplate {
@@ -74,7 +82,10 @@ function getEmailTemplate(type: string, code: string): EmailTemplate {
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response(null, { 
+      status: 204,
+      headers: corsHeaders 
+    })
   }
 
   try {
