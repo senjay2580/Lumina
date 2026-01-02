@@ -7,7 +7,8 @@ interface ConfirmProps {
   confirmText?: string;
   cancelText?: string;
   danger?: boolean;
-  onConfirm: () => void;
+  showPermanentDelete?: boolean;
+  onConfirm: (permanent?: boolean) => void;
   onCancel: () => void;
 }
 
@@ -18,6 +19,7 @@ export const Confirm: React.FC<ConfirmProps> = ({
   confirmText = '确定',
   cancelText = '取消',
   danger = false,
+  showPermanentDelete = false,
   onConfirm,
   onCancel
 }) => {
@@ -31,23 +33,48 @@ export const Confirm: React.FC<ConfirmProps> = ({
           <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
           <p className="text-gray-500 text-sm">{message}</p>
         </div>
-        <div className="flex border-t border-gray-100">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            {cancelText}
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`flex-1 py-3 text-sm font-medium border-l border-gray-100 transition-colors ${
-              danger 
-                ? 'text-red-500 hover:bg-red-50' 
-                : 'text-primary hover:bg-primary/5'
-            }`}
-          >
-            {confirmText}
-          </button>
+        <div className={`flex border-t border-gray-100 ${showPermanentDelete ? 'flex-col' : ''}`}>
+          {showPermanentDelete ? (
+            <>
+              <button
+                onClick={() => onConfirm(false)}
+                className="py-3 text-sm font-medium text-orange-500 hover:bg-orange-50 transition-colors border-b border-gray-100"
+              >
+                移到回收站
+              </button>
+              <button
+                onClick={() => onConfirm(true)}
+                className="py-3 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-b border-gray-100"
+              >
+                永久删除
+              </button>
+              <button
+                onClick={onCancel}
+                className="py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                {cancelText}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onCancel}
+                className="flex-1 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                {cancelText}
+              </button>
+              <button
+                onClick={() => onConfirm()}
+                className={`flex-1 py-3 text-sm font-medium border-l border-gray-100 transition-colors ${
+                  danger 
+                    ? 'text-red-500 hover:bg-red-50' 
+                    : 'text-primary hover:bg-primary/5'
+                }`}
+              >
+                {confirmText}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

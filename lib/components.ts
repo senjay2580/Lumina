@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getCached, setCache, CACHE_KEYS } from './cache';
 import { NodeTemplate, HandleDefinition } from '../types';
 
 // 数据库记录类型
@@ -21,8 +22,14 @@ interface NodeTemplateRecord {
   is_system: boolean;
 }
 
-// 获取所有节点模板（组件库）
-export async function getNodeTemplates(): Promise<NodeTemplate[]> {
+// 获取所有节点模板（组件库）- 带 localStorage 缓存
+export async function getNodeTemplates(forceRefresh = false): Promise<NodeTemplate[]> {
+  // 检查缓存（使用全局用户标识，10 分钟过期）
+  if (!forceRefresh) {
+    const cached = getCached<NodeTemplate[]>(CACHE_KEYS.NODE_TEMPLATES, 'global', 10 * 60 * 1000);
+    if (cached) return cached;
+  }
+
   const { data, error } = await supabase
     .from('node_templates')
     .select('*')
@@ -30,10 +37,12 @@ export async function getNodeTemplates(): Promise<NodeTemplate[]> {
 
   if (error) {
     console.error('获取节点模板失败:', error);
-    return [];
+    // 尝试返回过期缓存
+    const staleCache = getCached<NodeTemplate[]>(CACHE_KEYS.NODE_TEMPLATES, 'global', Infinity);
+    return staleCache || [];
   }
 
-  return (data || []).map((r: NodeTemplateRecord) => ({
+  const result = (data || []).map((r: NodeTemplateRecord) => ({
     id: r.id,
     type: r.type,
     name: r.name,
@@ -51,6 +60,11 @@ export async function getNodeTemplates(): Promise<NodeTemplate[]> {
     sortOrder: r.sort_order || 0,
     isSystem: r.is_system,
   }));
+
+  // 设置缓存
+  setCache(CACHE_KEYS.NODE_TEMPLATES, 'global', result);
+  
+  return result;
 }
 
 // 兼容旧代码

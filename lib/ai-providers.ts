@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getCached, setCache, invalidateCache, CACHE_KEYS } from './cache';
 
 // 类型定义
 export interface AIProviderTemplate {
@@ -22,8 +23,14 @@ export interface AIProvider {
   isEnabled: boolean;
 }
 
-// 获取 AI 提供商模板（系统预设）
-export async function getProviderTemplates(): Promise<AIProviderTemplate[]> {
+// 获取 AI 提供商模板（系统预设）- 带 localStorage 缓存
+export async function getProviderTemplates(forceRefresh = false): Promise<AIProviderTemplate[]> {
+  // 检查缓存（使用全局用户标识）
+  if (!forceRefresh) {
+    const cached = getCached<AIProviderTemplate[]>(CACHE_KEYS.PROVIDER_TEMPLATES, 'global', 10 * 60 * 1000);
+    if (cached) return cached;
+  }
+
   const { data, error } = await supabase
     .from('ai_provider_templates')
     .select('*')
@@ -31,10 +38,12 @@ export async function getProviderTemplates(): Promise<AIProviderTemplate[]> {
 
   if (error) {
     console.error('获取提供商模板失败:', error);
-    return [];
+    // 尝试返回过期缓存
+    const staleCache = getCached<AIProviderTemplate[]>(CACHE_KEYS.PROVIDER_TEMPLATES, 'global', Infinity);
+    return staleCache || [];
   }
 
-  return (data || []).map(r => ({
+  const result = (data || []).map(r => ({
     id: r.id,
     providerKey: r.provider_key,
     name: r.name,
@@ -43,10 +52,21 @@ export async function getProviderTemplates(): Promise<AIProviderTemplate[]> {
     color: r.color || 'gray',
     sortOrder: r.sort_order || 0,
   }));
+
+  // 设置缓存
+  setCache(CACHE_KEYS.PROVIDER_TEMPLATES, 'global', result);
+  
+  return result;
 }
 
-// 获取用户的 AI 提供商配置
-export async function getUserProviders(userId: string): Promise<AIProvider[]> {
+// 获取用户的 AI 提供商配置 - 带缓存
+export async function getUserProviders(userId: string, forceRefresh = false): Promise<AIProvider[]> {
+  // 检查缓存
+  if (!forceRefresh) {
+    const cached = getCached<AIProvider[]>(CACHE_KEYS.USER_PROVIDERS, userId);
+    if (cached) return cached;
+  }
+
   const { data, error } = await supabase
     .from('ai_providers')
     .select('*')
@@ -57,7 +77,7 @@ export async function getUserProviders(userId: string): Promise<AIProvider[]> {
     return [];
   }
 
-  return (data || []).map(r => ({
+  const result = (data || []).map(r => ({
     id: r.id,
     userId: r.user_id,
     providerKey: r.provider_key,
@@ -67,19 +87,16 @@ export async function getUserProviders(userId: string): Promise<AIProvider[]> {
     models: r.models || [],
     isEnabled: r.is_enabled || false,
   }));
+
+  setCache(CACHE_KEYS.USER_PROVIDERS, userId, result);
+  return result;
 }
 
-// 检查用户是否有已启用的 AI 提供商
+// 检查用户是否有已启用的 AI 提供商 - 使用缓存的 providers 数据
 export async function hasEnabledProvider(userId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('ai_providers')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_enabled', true)
-    .limit(1);
-
-  if (error) return false;
-  return (data?.length || 0) > 0;
+  // 优先使用缓存的 providers 数据
+  const providers = await getUserProviders(userId);
+  return providers.some(p => p.isEnabled);
 }
 
 // 保存用户的 AI 提供商配置
@@ -109,6 +126,9 @@ export async function saveUserProvider(
     return null;
   }
 
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.USER_PROVIDERS, userId);
+
   return {
     id: data.id,
     userId: data.user_id,
@@ -122,11 +142,16 @@ export async function saveUserProvider(
 }
 
 // 删除用户的 AI 提供商配置
-export async function deleteUserProvider(providerId: string): Promise<boolean> {
+export async function deleteUserProvider(userId: string, providerId: string): Promise<boolean> {
   const { error } = await supabase
     .from('ai_providers')
     .delete()
     .eq('id', providerId);
+
+  if (!error) {
+    // 使缓存失效
+    invalidateCache(CACHE_KEYS.USER_PROVIDERS, userId);
+  }
 
   return !error;
 }

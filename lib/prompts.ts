@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getCached, setCache, invalidateCache, CACHE_KEYS } from './cache';
 
 // 类型定义
 export interface PromptCategory {
@@ -18,11 +19,18 @@ export interface Prompt {
   user_id: string;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 }
 
 // ============ 分类 CRUD ============
 
-export async function getCategories(userId: string): Promise<PromptCategory[]> {
+export async function getCategories(userId: string, forceRefresh = false): Promise<PromptCategory[]> {
+  // 检查缓存
+  if (!forceRefresh) {
+    const cached = getCached<PromptCategory[]>(CACHE_KEYS.CATEGORIES, userId);
+    if (cached) return cached;
+  }
+
   const { data, error } = await supabase
     .from('prompt_categories')
     .select('*')
@@ -30,7 +38,10 @@ export async function getCategories(userId: string): Promise<PromptCategory[]> {
     .order('created_at', { ascending: true });
   
   if (error) throw error;
-  return data || [];
+  const result = data || [];
+  
+  setCache(CACHE_KEYS.CATEGORIES, userId, result);
+  return result;
 }
 
 export async function createCategory(userId: string, name: string, color: string): Promise<PromptCategory> {
@@ -58,6 +69,10 @@ export async function createCategory(userId: string, name: string, color: string
     console.error('Create category error:', error);
     throw new Error('创建分类失败: ' + error.message);
   }
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.CATEGORIES, userId);
+  
   return data;
 }
 
@@ -70,29 +85,55 @@ export async function updateCategory(id: string, updates: { name?: string; color
     .single();
   
   if (error) throw error;
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.CATEGORIES, data.user_id);
+  
   return data;
 }
 
 export async function deleteCategory(id: string): Promise<void> {
+  // 先获取 user_id
+  const { data: category } = await supabase
+    .from('prompt_categories')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+
   const { error } = await supabase
     .from('prompt_categories')
     .delete()
     .eq('id', id);
   
   if (error) throw error;
+  
+  // 使缓存失效
+  if (category) {
+    invalidateCache(CACHE_KEYS.CATEGORIES, category.user_id);
+  }
 }
 
 // ============ 提示词 CRUD ============
 
-export async function getPrompts(userId: string): Promise<Prompt[]> {
+export async function getPrompts(userId: string, forceRefresh = false): Promise<Prompt[]> {
+  // 检查缓存
+  if (!forceRefresh) {
+    const cached = getCached<Prompt[]>(CACHE_KEYS.PROMPTS, userId);
+    if (cached) return cached;
+  }
+
   const { data, error } = await supabase
     .from('prompts')
     .select('*')
     .eq('user_id', userId)
+    .is('deleted_at', null)
     .order('updated_at', { ascending: false });
   
   if (error) throw error;
-  return data || [];
+  const result = data || [];
+  
+  setCache(CACHE_KEYS.PROMPTS, userId, result);
+  return result;
 }
 
 export async function createPrompt(
@@ -129,6 +170,12 @@ export async function createPrompt(
     console.error('Create prompt error:', error);
     throw new Error('创建提示词失败: ' + error.message);
   }
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.PROMPTS, userId);
+  invalidateCache(CACHE_KEYS.STATS, userId);
+  invalidateCache(CACHE_KEYS.ACTIVITY, userId);
+  
   return data;
 }
 
@@ -144,16 +191,119 @@ export async function updatePrompt(
     .single();
   
   if (error) throw error;
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.PROMPTS, data.user_id);
+  invalidateCache(CACHE_KEYS.ACTIVITY, data.user_id);
+  
   return data;
 }
 
 export async function deletePrompt(id: string): Promise<void> {
+  // 先获取 user_id
+  const { data: prompt } = await supabase
+    .from('prompts')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+
+  const { error } = await supabase
+    .from('prompts')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id);
+  
+  if (error) throw error;
+  
+  // 使缓存失效
+  if (prompt) {
+    invalidateCache(CACHE_KEYS.PROMPTS, prompt.user_id);
+    invalidateCache(CACHE_KEYS.STATS, prompt.user_id);
+    invalidateCache(CACHE_KEYS.DELETED_PROMPTS, prompt.user_id);
+  }
+}
+
+// 永久删除提示词
+export async function permanentDeletePrompt(id: string): Promise<void> {
+  // 先获取 user_id
+  const { data: prompt } = await supabase
+    .from('prompts')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+
   const { error } = await supabase
     .from('prompts')
     .delete()
     .eq('id', id);
   
   if (error) throw error;
+  
+  // 使缓存失效
+  if (prompt) {
+    invalidateCache(CACHE_KEYS.PROMPTS, prompt.user_id);
+    invalidateCache(CACHE_KEYS.STATS, prompt.user_id);
+    invalidateCache(CACHE_KEYS.DELETED_PROMPTS, prompt.user_id);
+  }
+}
+
+// 恢复提示词
+export async function restorePrompt(id: string): Promise<void> {
+  // 先获取 user_id
+  const { data: prompt } = await supabase
+    .from('prompts')
+    .select('user_id')
+    .eq('id', id)
+    .single();
+
+  const { error } = await supabase
+    .from('prompts')
+    .update({ deleted_at: null })
+    .eq('id', id);
+  
+  if (error) throw error;
+  
+  // 使缓存失效
+  if (prompt) {
+    invalidateCache(CACHE_KEYS.PROMPTS, prompt.user_id);
+    invalidateCache(CACHE_KEYS.STATS, prompt.user_id);
+    invalidateCache(CACHE_KEYS.DELETED_PROMPTS, prompt.user_id);
+  }
+}
+
+// 获取已删除的提示词（回收站）
+export async function getDeletedPrompts(userId: string, forceRefresh = false): Promise<Prompt[]> {
+  // 检查缓存
+  if (!forceRefresh) {
+    const cached = getCached<Prompt[]>(CACHE_KEYS.DELETED_PROMPTS, userId);
+    if (cached) return cached;
+  }
+
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('id, title, deleted_at')
+    .eq('user_id', userId)
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false });
+  
+  if (error) throw error;
+  const result = data || [];
+  
+  setCache(CACHE_KEYS.DELETED_PROMPTS, userId, result);
+  return result as Prompt[];
+}
+
+// 清空回收站中的提示词
+export async function emptyPromptTrash(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('prompts')
+    .delete()
+    .eq('user_id', userId)
+    .not('deleted_at', 'is', null);
+  
+  if (error) throw error;
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.DELETED_PROMPTS, userId);
 }
 
 

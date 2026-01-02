@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { ContextMenu, useContextMenu, ContextMenuItem } from '../shared/ContextMenu';
 import { Modal } from '../shared/Modal';
 import { ToastContainer } from '../shared/Toast';
 import { useToast } from '../shared/useToast';
+import { LoadingSpinner } from '../shared/LoadingSpinner';
 import { getStoredUser } from '../lib/auth';
 import * as api from '../lib/prompts';
+import type { PromptBrowserHook } from '../lib/usePromptBrowser';
 
 type PromptCategory = api.PromptCategory;
 type Prompt = api.Prompt;
@@ -23,7 +26,12 @@ const getCategoryColors = (color: string) => {
   return colors[color] || colors.gray;
 };
 
-export const PromptManager: React.FC = () => {
+interface PromptManagerProps {
+  promptBrowser: PromptBrowserHook;
+  onPromptsChange?: (prompts: Prompt[]) => void;
+}
+
+export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser, onPromptsChange }) => {
   const user = getStoredUser();
   const userId = user?.id || '';
 
@@ -36,81 +44,23 @@ export const PromptManager: React.FC = () => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | 'ALL'>('ALL');
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; category?: PromptCategory }>({ open: false });
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; type: 'prompt' | 'category'; id: string }>({ open: false, type: 'prompt', id: '' });
-  
-  // 多标签页状态 - 单个浏览器窗口内的标签页
-  const [browserTabs, setBrowserTabs] = useState<Prompt[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [isBrowserMinimized, setIsBrowserMinimized] = useState(false);
-  const [autoEditId, setAutoEditId] = useState<string | null>(null);
-  const [newPromptIds, setNewPromptIds] = useState<Set<string>>(new Set()); // 跟踪未保存的新提示词
-  const [editedPromptIds, setEditedPromptIds] = useState<Set<string>>(new Set()); // 跟踪已编辑但未保存的提示词
-  const [unsavedConfirm, setUnsavedConfirm] = useState<{ open: boolean; promptId: string | null; action: 'close' | 'closeAll' }>({ open: false, promptId: null, action: 'close' });
 
   const promptMenu = useContextMenu();
   const categoryMenu = useContextMenu();
   const toast = useToast();
 
+  // 同步 categories 到 promptBrowser
+  useEffect(() => {
+    promptBrowser.setCategories(categories);
+  }, [categories, promptBrowser]);
+
   // 打开提示词详情（添加到标签页）
   const openPromptDetail = (prompt: Prompt) => {
-    const existingTab = browserTabs.find(t => t.id === prompt.id);
-    if (existingTab) {
-      // 已存在，激活该标签
-      setActiveTabId(prompt.id);
-      setIsBrowserMinimized(false);
-    } else {
-      // 新建标签页
-      setBrowserTabs(prev => [...prev, prompt]);
-      setActiveTabId(prompt.id);
-      setIsBrowserMinimized(false);
-    }
-  };
-
-  // 关闭标签页
-  const closeTab = (promptId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    // 检查是否是未保存的新提示词或已编辑的提示词
-    if (newPromptIds.has(promptId) || editedPromptIds.has(promptId)) {
-      setUnsavedConfirm({ open: true, promptId, action: 'close' });
-      return;
-    }
-    doCloseTab(promptId);
-  };
-
-  // 实际关闭标签页
-  const doCloseTab = (promptId: string) => {
-    const newTabs = browserTabs.filter(t => t.id !== promptId);
-    setBrowserTabs(newTabs);
-    // 如果是新提示词，从跟踪列表中移除
-    if (newPromptIds.has(promptId)) {
-      setNewPromptIds(prev => {
-        const next = new Set(prev);
-        next.delete(promptId);
-        return next;
-      });
-    }
-    // 如果是已编辑的提示词，从跟踪列表中移除
-    if (editedPromptIds.has(promptId)) {
-      setEditedPromptIds(prev => {
-        const next = new Set(prev);
-        next.delete(promptId);
-        return next;
-      });
-    }
-    if (activeTabId === promptId) {
-      setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
-    }
-  };
-
-  // 放弃未保存的提示词（新建或已编辑）
-  const discardNewPrompt = () => {
-    if (unsavedConfirm.promptId) {
-      doCloseTab(unsavedConfirm.promptId);
-    }
-    setUnsavedConfirm({ open: false, promptId: null, action: 'close' });
+    promptBrowser.openPrompt(prompt);
   };
 
   // 获取当前激活的提示词
-  const activePrompt = browserTabs.find(t => t.id === activeTabId);
+  const activePrompt = promptBrowser.browserTabs.find(t => t.id === promptBrowser.activeTabId);
 
   // 加载数据
   const loadData = useCallback(async () => {
@@ -153,21 +103,27 @@ export const PromptManager: React.FC = () => {
       tags: [],
       user_id: userId,
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      deleted_at: null
     };
     // 添加到标签页并标记为新提示词
-    setBrowserTabs(prev => [...prev, newPrompt]);
-    setActiveTabId(tempId);
-    setAutoEditId(tempId);
-    setNewPromptIds(prev => new Set(prev).add(tempId));
-    setIsBrowserMinimized(false);
+    promptBrowser.setBrowserTabs(prev => [...prev, newPrompt]);
+    promptBrowser.setActiveTabId(tempId);
+    promptBrowser.setAutoEditId(tempId);
+    promptBrowser.addNewPromptId(tempId);
+    promptBrowser.setIsBrowserMinimized(false);
   };
 
-  const handleDeletePrompt = async () => {
+  const handleDeletePrompt = async (permanent: boolean = false) => {
     try {
-      await api.deletePrompt(deleteConfirm.id);
+      if (permanent) {
+        await api.permanentDeletePrompt(deleteConfirm.id);
+        toast.info('提示词已永久删除');
+      } else {
+        await api.deletePrompt(deleteConfirm.id);
+        toast.info('提示词已移到回收站');
+      }
       setPrompts(prev => prev.filter(p => p.id !== deleteConfirm.id));
-      toast.info('提示词已删除');
     } catch (err: any) {
       toast.error(err.message || '删除失败');
     }
@@ -213,8 +169,32 @@ export const PromptManager: React.FC = () => {
     setDeleteConfirm({ open: false, type: 'category', id: '' });
   };
 
+  // 导出提示词为 Markdown 文件
+  const handleExportPrompt = (prompt: Prompt) => {
+    const categoryName = getCategoryName(prompt.category_id);
+    const tagsStr = prompt.tags?.length ? prompt.tags.map(t => `#${t}`).join(' ') : '';
+    const md = `# ${prompt.title}
+
+**分类**: ${categoryName}
+${tagsStr ? `**标签**: ${tagsStr}` : ''}
+**创建时间**: ${new Date(prompt.created_at).toLocaleString()}
+**更新时间**: ${new Date(prompt.updated_at).toLocaleString()}
+
+---
+
+${prompt.content}
+`;
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${prompt.title.replace(/\s+/g, '-')}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   const getPromptMenuItems = (prompt: Prompt): ContextMenuItem[] => [
     { label: '复制', icon: <CopyIcon />, onClick: () => handleDuplicatePrompt(prompt) },
+    { label: '导出', icon: <ExportIcon />, onClick: () => handleExportPrompt(prompt) },
     { label: '', divider: true, onClick: () => {} },
     { label: '删除', icon: <TrashIcon />, danger: true, onClick: () => setDeleteConfirm({ open: true, type: 'prompt', id: prompt.id }) }
   ];
@@ -225,7 +205,7 @@ export const PromptManager: React.FC = () => {
     { label: '删除', icon: <TrashIcon />, danger: true, onClick: () => setDeleteConfirm({ open: true, type: 'category', id: category.id }) }
   ];
 
-  if (loading) return <div className="w-full h-full flex items-center justify-center"><div className="flex flex-col items-center gap-3"><div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin"></div><p className="text-gray-500 text-sm">加载中...</p></div></div>;
+  if (loading) return <LoadingSpinner text="正在加载提示词..." />;
   if (error) return <div className="w-full h-full flex items-center justify-center"><div className="text-center"><p className="text-red-500 mb-4">{error}</p><button onClick={loadData} className="px-4 py-2 bg-primary text-white rounded-lg">重试</button></div></div>;
 
   return (
@@ -292,123 +272,22 @@ export const PromptManager: React.FC = () => {
       <CategoryEditModal open={categoryModal.open} category={categoryModal.category} onClose={() => setCategoryModal({ open: false })} onSave={handleSaveCategory} />
       
       <Modal isOpen={deleteConfirm.open} onClose={() => setDeleteConfirm({ open: false, type: 'prompt', id: '' })} title={`删除${deleteConfirm.type === 'prompt' ? '提示词' : '分类'}`}>
-        <p className="text-gray-600 mb-6">确定要删除吗？此操作无法撤销。</p>
-        <div className="flex justify-end gap-3">
-          <button onClick={() => setDeleteConfirm({ open: false, type: 'prompt', id: '' })} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
-          <button onClick={deleteConfirm.type === 'prompt' ? handleDeletePrompt : handleDeleteCategory} className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600">删除</button>
-        </div>
-      </Modal>
-
-      {/* 底部任务栏 - 显示最小化的浏览器 */}
-      {isBrowserMinimized && browserTabs.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 h-12 bg-gray-900/95 backdrop-blur-sm border-t border-gray-700 flex items-center px-4 gap-2 z-40">
-          <button
-            onClick={() => setIsBrowserMinimized(false)}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors group"
-          >
-            <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center">
-              <svg className="w-3 h-3 text-primary" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
+        <p className="text-gray-600 mb-6">
+          {deleteConfirm.type === 'prompt' ? '选择删除方式' : '确定要删除吗？此操作无法撤销。'}
+        </p>
+        <div className="flex flex-col gap-2">
+          {deleteConfirm.type === 'prompt' ? (
+            <>
+              <button onClick={() => handleDeletePrompt(false)} className="w-full px-4 py-3 rounded-lg text-orange-500 hover:bg-orange-50 font-medium">移到回收站</button>
+              <button onClick={() => handleDeletePrompt(true)} className="w-full px-4 py-3 rounded-lg text-red-500 hover:bg-red-50 font-medium">永久删除</button>
+              <button onClick={() => setDeleteConfirm({ open: false, type: 'prompt', id: '' })} className="w-full px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
+            </>
+          ) : (
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setDeleteConfirm({ open: false, type: 'prompt', id: '' })} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
+              <button onClick={handleDeleteCategory} className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600">删除</button>
             </div>
-            <span className="text-sm text-gray-300">Prompts</span>
-            <span className="text-xs text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded">{browserTabs.length}</span>
-          </button>
-        </div>
-      )}
-
-      {/* 浏览器窗口 - 包含多个标签页 */}
-      {browserTabs.length > 0 && !isBrowserMinimized && (
-        <PromptBrowserWindow
-          tabs={browserTabs}
-          activeTabId={activeTabId}
-          categories={categories}
-          autoEditId={autoEditId}
-          onTabChange={setActiveTabId}
-          onTabClose={closeTab}
-          onMinimize={() => setIsBrowserMinimized(true)}
-          onClose={() => {
-            // 检查是否有未保存的新提示词或已编辑的提示词
-            const hasUnsaved = browserTabs.some(t => newPromptIds.has(t.id) || editedPromptIds.has(t.id));
-            if (hasUnsaved) {
-              setUnsavedConfirm({ open: true, promptId: null, action: 'closeAll' });
-              return;
-            }
-            setBrowserTabs([]);
-            setActiveTabId(null);
-            setAutoEditId(null);
-          }}
-          onSave={async (prompt, data) => {
-            try {
-              // 检查是否是新提示词（临时ID）
-              if (newPromptIds.has(prompt.id)) {
-                // 创建新提示词
-                const created = await api.createPrompt(userId, data);
-                setPrompts(prev => [created, ...prev]);
-                // 更新标签页中的提示词（替换临时ID）
-                setBrowserTabs(prev => prev.map(t => t.id === prompt.id ? created : t));
-                setActiveTabId(created.id);
-                // 从新提示词跟踪列表中移除
-                setNewPromptIds(prev => {
-                  const next = new Set(prev);
-                  next.delete(prompt.id);
-                  return next;
-                });
-                toast.success('提示词已创建');
-              } else {
-                // 更新已有提示词
-                const updated = await api.updatePrompt(prompt.id, data);
-                setPrompts(prev => prev.map(p => p.id === updated.id ? updated : p));
-                setBrowserTabs(prev => prev.map(t => t.id === updated.id ? updated : t));
-                toast.success('提示词已更新');
-              }
-            } catch (err: any) {
-              toast.error(err.message || '保存失败');
-            }
-          }}
-          onCopy={async (content) => {
-            try {
-              await navigator.clipboard.writeText(content);
-              toast.success('已复制到剪贴板');
-            } catch {
-              toast.error('复制失败');
-            }
-          }}
-          onClearAutoEdit={() => setAutoEditId(null)}
-          onEditStateChange={(promptId, hasChanges) => {
-            setEditedPromptIds(prev => {
-              const next = new Set(prev);
-              if (hasChanges) {
-                next.add(promptId);
-              } else {
-                next.delete(promptId);
-              }
-              return next;
-            });
-          }}
-          getCategoryName={getCategoryName}
-          getCategoryColor={getCategoryColor}
-        />
-      )}
-
-      {/* 未保存确认对话框 */}
-      <Modal isOpen={unsavedConfirm.open} onClose={() => setUnsavedConfirm({ open: false, promptId: null, action: 'close' })} title="未保存的更改">
-        <p className="text-gray-600 mb-6">你有未保存的更改，确定要放弃吗？</p>
-        <div className="flex justify-end gap-3">
-          <button onClick={() => setUnsavedConfirm({ open: false, promptId: null, action: 'close' })} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
-          <button onClick={() => {
-            if (unsavedConfirm.action === 'closeAll') {
-              // 关闭所有标签页，清除未保存的新提示词和已编辑的提示词
-              setBrowserTabs([]);
-              setActiveTabId(null);
-              setAutoEditId(null);
-              setNewPromptIds(new Set());
-              setEditedPromptIds(new Set());
-            } else {
-              discardNewPrompt();
-            }
-            setUnsavedConfirm({ open: false, promptId: null, action: 'close' });
-          }} className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600">放弃</button>
+          )}
         </div>
       </Modal>
 
@@ -443,9 +322,10 @@ const MoreIcon: React.FC<{ className?: string }> = ({ className }) => <svg class
 const EditIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
 const CopyIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>;
 const TrashIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>;
+const ExportIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>;
 
 // 浏览器窗口组件 - 包含多个标签页，支持边缘拖拽缩放和内联编辑
-const PromptBrowserWindow: React.FC<{
+export const PromptBrowserWindow: React.FC<{
   tabs: Prompt[];
   activeTabId: string | null;
   categories: PromptCategory[];
@@ -453,6 +333,7 @@ const PromptBrowserWindow: React.FC<{
   onTabChange: (id: string) => void;
   onTabClose: (id: string, e?: React.MouseEvent) => void;
   onMinimize: () => void;
+  isMinimizing?: boolean;
   onClose: () => void;
   onSave: (prompt: Prompt, data: { title: string; content: string; category_id: string | null; tags: string[] }) => Promise<void>;
   onCopy: (content: string) => void;
@@ -460,10 +341,11 @@ const PromptBrowserWindow: React.FC<{
   onEditStateChange: (promptId: string, hasChanges: boolean) => void;
   getCategoryName: (id: string | null) => string;
   getCategoryColor: (id: string | null) => string;
-}> = ({ tabs, activeTabId, categories, autoEditId, onTabChange, onTabClose, onMinimize, onClose, onSave, onCopy, onClearAutoEdit, onEditStateChange, getCategoryName, getCategoryColor }) => {
+}> = ({ tabs, activeTabId, categories, autoEditId, isMinimizing: isMinimizingProp, onTabChange, onTabClose, onMinimize, onClose, onSave, onCopy, onClearAutoEdit, onEditStateChange, getCategoryName, getCategoryColor }) => {
   const windowRef = React.useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [size, setSize] = useState({ width: 1100, height: 750 });
+  const isMinimizing = isMinimizingProp ?? false;
   const isDragging = React.useRef(false);
   const isResizing = React.useRef<string | null>(null);
   const dragOffset = React.useRef({ x: 0, y: 0 });
@@ -584,6 +466,11 @@ const PromptBrowserWindow: React.FC<{
     setPosition({ x, y });
   }, []);
 
+  // 处理最小化动画
+  const handleMinimize = () => {
+    onMinimize();
+  };
+
   // 拖拽标题栏移动窗口
   const handleTitleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.window-controls') || (e.target as HTMLElement).closest('.tab-item')) return;
@@ -654,29 +541,62 @@ const PromptBrowserWindow: React.FC<{
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      // 确保在组件卸载时清理 body 样式
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
     };
   }, [position, size]);
 
   const resizeHandleClass = "absolute bg-transparent z-10";
 
+  // 计算最小化目标位置（底部中央按钮位置）
+  const minimizeTarget = {
+    x: window.innerWidth / 2,
+    y: window.innerHeight - 50,
+    scale: 0.1,
+  };
+
   return (
-    <div 
+    <motion.div 
       ref={windowRef}
+      initial={{ opacity: 0, scale: 0.9, y: 20 }}
+      animate={isMinimizing ? {
+        opacity: 0,
+        scale: 0.15,
+        x: minimizeTarget.x - position.x,
+        y: minimizeTarget.y - position.y,
+        borderRadius: 24,
+      } : {
+        opacity: 1,
+        scale: 1,
+        x: 0,
+        y: 0,
+      }}
+      exit={{ 
+        opacity: 0, 
+        scale: 0.9, 
+        y: 20,
+        transition: { duration: 0.2 }
+      }}
+      transition={isMinimizing ? {
+        duration: 0.35,
+        ease: [0.4, 0, 0.2, 1], // 流畅的 ease-out 曲线
+      } : {
+        type: "spring",
+        stiffness: 400,
+        damping: 30,
+      }}
       style={{ 
         width: size.width, 
         height: size.height, 
-        transform: `translate(${position.x}px, ${position.y}px)`,
-        willChange: 'transform, width, height',
-        animation: 'fadeInScale 0.2s ease-out'
+        left: position.x,
+        top: position.y,
+        willChange: 'transform, opacity',
+        pointerEvents: isMinimizing ? 'none' : 'auto',
+        zIndex: isMinimizing ? -1 : 50,
       }}
-      className="fixed top-0 left-0 bg-white rounded-xl shadow-2xl overflow-visible flex flex-col z-50"
+      className="fixed bg-white rounded-xl shadow-2xl overflow-visible flex flex-col"
     >
-      <style>{`
-        @keyframes fadeInScale {
-          from { opacity: 0; transform: translate(${position.x}px, ${position.y}px) scale(0.95); }
-          to { opacity: 1; transform: translate(${position.x}px, ${position.y}px) scale(1); }
-        }
-      `}</style>
       {/* 缩放手柄 */}
       <div className={`${resizeHandleClass} -top-1 -left-1 w-3 h-3 cursor-nw-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'nw')} />
       <div className={`${resizeHandleClass} -top-1 -right-1 w-3 h-3 cursor-ne-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'ne')} />
@@ -697,7 +617,7 @@ const PromptBrowserWindow: React.FC<{
             <button onClick={onClose} className="w-3 h-3 rounded-full bg-[#FF5F57] hover:bg-[#FF5F57]/80 transition-colors group flex items-center justify-center">
               <svg className="w-2 h-2 text-[#990000] opacity-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" /></svg>
             </button>
-            <button onClick={onMinimize} className="w-3 h-3 rounded-full bg-[#FEBC2E] hover:bg-[#FEBC2E]/80 transition-colors group flex items-center justify-center">
+            <button onClick={handleMinimize} className="w-3 h-3 rounded-full bg-[#FEBC2E] hover:bg-[#FEBC2E]/80 transition-colors group flex items-center justify-center">
               <svg className="w-2 h-2 text-[#995700] opacity-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14" /></svg>
             </button>
             <button className="w-3 h-3 rounded-full bg-[#28C840] hover:bg-[#28C840]/80 transition-colors" />
@@ -919,6 +839,6 @@ const PromptBrowserWindow: React.FC<{
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 };

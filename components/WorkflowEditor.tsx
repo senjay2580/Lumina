@@ -21,12 +21,30 @@ import { WorkflowNode, WorkflowEdge, NodeType, NodeTemplate, Workflow } from '..
 import { generateId } from './utils';
 import { NodeConfigModal } from './NodeConfigModal';
 import { ComponentPanel } from './ComponentPanel';
-import { ContextMenu, useContextMenu, useToast, ToastContainer } from '../shared';
+import { ContextMenu, useContextMenu, useToast, ToastContainer, LoadingSpinner } from '../shared';
 import { getStoredUser } from '../lib/auth';
 import { getNodeTemplates } from '../lib/components';
 import { hasEnabledProvider } from '../lib/ai-providers';
 import * as workflowApi from '../lib/workflows';
-import { createNodeTypes } from './CustomNodes';
+import { createNodeTypes, ThemeContext } from './CustomNodes';
+
+// 画布主题配置 - 日间/夜间模式
+const canvasThemes = {
+  light: {
+    name: '日间',
+    icon: '☀️',
+    bg: '#fafafa',
+    gridColor: '#e8e8e8',
+    containerBg: '#f8f8f8',
+  },
+  dark: {
+    name: '夜间',
+    icon: '🌙',
+    bg: '#1e1e1e',
+    gridColor: '#333333',
+    containerBg: '#252526',
+  },
+};
 
 interface WorkflowEditorProps {
   onBack?: () => void;
@@ -37,16 +55,17 @@ interface WorkflowEditorProps {
 // 转换函数：内部格式 -> React Flow 格式
 const toReactFlowNodes = (nodes: WorkflowNode[], templates: NodeTemplate[], hasProvider: boolean): Node[] => {
   const templateMap = new Map(templates.map(t => [t.type, t]));
-  const annotationTypes = ['STICKY_NOTE', 'GROUP_BOX'];
+  const annotationTypes = ['STICKY_NOTE', 'GROUP_BOX', 'ARROW', 'STATE', 'ACTOR', 'TEXT_LABEL'];
   
   return nodes.map(node => {
     const isAnnotation = annotationTypes.includes(node.type);
     const isGroupBox = node.type === 'GROUP_BOX';
+    const defaultZIndex = isGroupBox ? -1 : undefined;
     return {
       id: node.id,
       type: node.type,
       position: node.position,
-      zIndex: isGroupBox ? -1 : undefined, // 分组框在底层
+      zIndex: defaultZIndex,
       data: { 
         ...node.data, 
         template: isAnnotation ? undefined : templateMap.get(node.type),
@@ -102,8 +121,17 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
-  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [canvasTheme, setCanvasTheme] = useState<string>(() => {
+    return localStorage.getItem('canvas-theme') || 'light';
+  });
+  const [imagePreview, setImagePreview] = useState<{ src: string; open: boolean }>({ src: '', open: false });
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imagePan, setImagePan] = useState({ x: 0, y: 0 });
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const dragStartRef = React.useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const moreMenuRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const contextMenu = useContextMenu(); // 节点右键菜单
@@ -174,63 +202,75 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
   const markUnsaved = useCallback(() => setHasUnsavedChanges(true), []);
 
-  // 监听辅助工具节点的更新事件
+  // 监听辅助工具节点的更新事件 - 统一使用 annotationUpdate
   useEffect(() => {
-    const handleStickyNoteUpdate = (e: CustomEvent) => {
-      const { nodeId, text } = e.detail;
+    const handleAnnotationUpdate = (e: CustomEvent) => {
+      const { nodeId, ...updates } = e.detail;
       setNodes(nds => nds.map(n => {
         if (n.id === nodeId) {
-          return { ...n, data: { ...n.data, config: { ...n.data.config, text } } };
+          return { ...n, data: { ...n.data, config: { ...n.data.config, ...updates } } };
         }
         return n;
       }));
       setHasUnsavedChanges(true);
     };
 
-    const handleGroupBoxUpdate = (e: CustomEvent) => {
-      const { nodeId, title } = e.detail;
-      setNodes(nds => nds.map(n => {
-        if (n.id === nodeId) {
-          return { ...n, data: { ...n.data, config: { ...n.data.config, title } } };
-        }
-        return n;
-      }));
-      setHasUnsavedChanges(true);
-    };
-
-    const handleStickyNoteResize = (e: CustomEvent) => {
-      const { nodeId, width, height } = e.detail;
-      setNodes(nds => nds.map(n => {
-        if (n.id === nodeId) {
-          return { ...n, data: { ...n.data, config: { ...n.data.config, width, height } } };
-        }
-        return n;
-      }));
-      setHasUnsavedChanges(true);
-    };
-
-    const handleGroupBoxResize = (e: CustomEvent) => {
-      const { nodeId, width, height } = e.detail;
-      setNodes(nds => nds.map(n => {
-        if (n.id === nodeId) {
-          return { ...n, data: { ...n.data, config: { ...n.data.config, width, height } } };
-        }
-        return n;
-      }));
-      setHasUnsavedChanges(true);
-    };
-
-    window.addEventListener('stickyNoteUpdate', handleStickyNoteUpdate as EventListener);
-    window.addEventListener('groupBoxUpdate', handleGroupBoxUpdate as EventListener);
-    window.addEventListener('stickyNoteResize', handleStickyNoteResize as EventListener);
-    window.addEventListener('groupBoxResize', handleGroupBoxResize as EventListener);
+    window.addEventListener('annotationUpdate', handleAnnotationUpdate as EventListener);
     return () => {
-      window.removeEventListener('stickyNoteUpdate', handleStickyNoteUpdate as EventListener);
-      window.removeEventListener('groupBoxUpdate', handleGroupBoxUpdate as EventListener);
-      window.removeEventListener('stickyNoteResize', handleStickyNoteResize as EventListener);
-      window.removeEventListener('groupBoxResize', handleGroupBoxResize as EventListener);
+      window.removeEventListener('annotationUpdate', handleAnnotationUpdate as EventListener);
     };
   }, [setNodes]);
+
+  // 监听粘贴事件 - 支持粘贴图片
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      // 如果正在编辑节点，不处理粘贴
+      if (editingNodeId) return;
+      
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) continue;
+          
+          // 转换为 base64
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const base64 = event.target?.result as string;
+            if (!base64) return;
+            
+            // 获取画布中心位置
+            const viewport = reactFlowInstance?.getViewport();
+            const centerX = viewport ? (-viewport.x + window.innerWidth / 2) / viewport.zoom : 300;
+            const centerY = viewport ? (-viewport.y + window.innerHeight / 2) / viewport.zoom : 200;
+            
+            // 创建图片节点
+            const newNode: Node = {
+              id: generateId(),
+              type: 'IMAGE',
+              position: { x: centerX - 100, y: centerY - 75 },
+              data: {
+                label: '图片',
+                isAnnotation: true,
+                config: { src: base64, width: 200, height: 150 }
+              }
+            };
+            
+            setNodes(nds => [...nds, newNode]);
+            setHasUnsavedChanges(true);
+          };
+          reader.readAsDataURL(file);
+          break;
+        }
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [setNodes, editingNodeId, reactFlowInstance]);
 
   // Undo/Redo 历史记录 - 使用 past 和 future 栈
   const pastRef = React.useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -308,18 +348,25 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   // 加载工作流
   useEffect(() => {
     const loadWorkflow = async () => {
-      if (workflowId && templates.length > 0) {
-        try {
+      if (templates.length === 0) return; // 等待模板加载完成
+      
+      setIsLoading(true);
+      try {
+        if (workflowId) {
           const workflow = await workflowApi.getWorkflow(workflowId);
           if (workflow) {
+            // 调试：打印加载的节点数据
+            console.log('加载工作流 - 原始节点数据:', JSON.stringify(workflow.nodes, null, 2));
             setNodes(toReactFlowNodes(workflow.nodes || [], templates, hasProvider));
             setEdges(toReactFlowEdges(workflow.edges || []));
             setWorkflowName(workflow.name);
             setCurrentWorkflowId(workflow.id);
           }
-        } catch (err) {
-          console.error('加载工作流失败:', err);
         }
+      } catch (err) {
+        console.error('加载工作流失败:', err);
+      } finally {
+        setIsLoading(false);
       }
     };
     loadWorkflow();
@@ -332,6 +379,8 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     try {
       const workflowNodes = fromReactFlowNodes(nodes);
       const workflowEdges = fromReactFlowEdges(edges);
+      // 调试：打印保存的节点数据
+      console.log('保存工作流 - 节点数据:', JSON.stringify(workflowNodes, null, 2));
       if (currentWorkflowId) {
         await workflowApi.updateWorkflow(currentWorkflowId, { name: workflowName, nodes: workflowNodes, edges: workflowEdges });
       } else {
@@ -355,6 +404,14 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      
+      // ========== 图片预览打开时的快捷键 ==========
+      if (imagePreview.open) {
+        if (e.key === 'Escape') {
+          setImagePreview({ src: '', open: false });
+        }
+        return;
+      }
       
       // ========== 弹窗打开时的快捷键 ==========
       if (editingNodeId) {
@@ -489,7 +546,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [saveWorkflow, nodes, edges, setNodes, setEdges, markUnsaved, clipboard, editingNodeId, success, undo, redo, pushToHistory, reactFlowInstance]);
+  }, [saveWorkflow, nodes, edges, setNodes, setEdges, markUnsaved, clipboard, editingNodeId, success, undo, redo, pushToHistory, reactFlowInstance, imagePreview.open]);
 
   // 连接节点
   const onConnect = useCallback((params: Connection) => {
@@ -571,14 +628,15 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       const isAnnotation = component.isAnnotation === true;
       const nodeId = generateId();
       
-      // 分组框放在最底层
+      // 分组框放在底层
       const isGroupBox = component.type === 'GROUP_BOX';
+      const defaultZIndex = isGroupBox ? -1 : undefined;
       
       const newNode: Node = {
         id: nodeId,
         type: component.type,
         position,
-        zIndex: isGroupBox ? -1 : undefined, // 分组框在底层
+        zIndex: defaultZIndex,
         data: { 
           label: component.name, 
           description: component.description, 
@@ -661,8 +719,50 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     }
   }, [nodes, setNodes, markUnsaved]);
 
+  // 图层控制 - 置于顶层
+  const bringToFront = useCallback((id: string) => {
+    setNodes(nds => {
+      const maxZ = Math.max(...nds.map(n => n.zIndex ?? 0));
+      return nds.map(n => n.id === id ? { ...n, zIndex: maxZ + 1 } : n);
+    });
+    markUnsaved();
+  }, [setNodes, markUnsaved]);
+
+  // 图层控制 - 置于底层
+  const sendToBack = useCallback((id: string) => {
+    setNodes(nds => {
+      const minZ = Math.min(...nds.map(n => n.zIndex ?? 0));
+      return nds.map(n => n.id === id ? { ...n, zIndex: minZ - 1 } : n);
+    });
+    markUnsaved();
+  }, [setNodes, markUnsaved]);
+
+  // 图层控制 - 上移一层
+  const bringForward = useCallback((id: string) => {
+    setNodes(nds => {
+      const node = nds.find(n => n.id === id);
+      if (!node) return nds;
+      const currentZ = node.zIndex ?? 0;
+      return nds.map(n => n.id === id ? { ...n, zIndex: currentZ + 1 } : n);
+    });
+    markUnsaved();
+  }, [setNodes, markUnsaved]);
+
+  // 图层控制 - 下移一层
+  const sendBackward = useCallback((id: string) => {
+    setNodes(nds => {
+      const node = nds.find(n => n.id === id);
+      if (!node) return nds;
+      const currentZ = node.zIndex ?? 0;
+      return nds.map(n => n.id === id ? { ...n, zIndex: currentZ - 1 } : n);
+    });
+    markUnsaved();
+  }, [setNodes, markUnsaved]);
+
   // 导出工作流
   const exportWorkflow = useCallback(() => {
+    console.log('导出时的 edges:', edges);
+    console.log('导出时的 edges 数量:', edges.length);
     const w: Workflow = {
       id: currentWorkflowId || generateId(),
       name: workflowName,
@@ -671,6 +771,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+    console.log('导出的工作流:', w);
     const blob = new Blob([JSON.stringify(w, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -685,19 +786,39 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const w: Workflow = JSON.parse(event.target?.result as string);
-        if (w.nodes && w.edges) {
-          setNodes(toReactFlowNodes(w.nodes, templates, hasProvider));
-          setEdges(toReactFlowEdges(w.edges));
+        const content = event.target?.result as string;
+        console.log('导入文件内容长度:', content?.length);
+        const parsed = JSON.parse(content);
+        console.log('解析后的对象 keys:', Object.keys(parsed));
+        
+        // 兼容多种导出格式：直接的工作流对象，或包含 workflow 字段的对象
+        const w = parsed.workflow || parsed;
+        console.log('工作流对象 keys:', Object.keys(w));
+        console.log('nodes:', w.nodes?.length, 'edges:', w.edges?.length);
+        
+        if (w.nodes && Array.isArray(w.nodes)) {
+          const edgesArray = w.edges || [];
+          console.log('templates 数量:', templates.length, 'hasProvider:', hasProvider);
+          const reactFlowNodes = toReactFlowNodes(w.nodes, templates, hasProvider);
+          console.log('转换后的节点:', reactFlowNodes.length);
+          setNodes(reactFlowNodes);
+          setEdges(toReactFlowEdges(edgesArray));
           setWorkflowName(w.name || '导入的工作流');
           setCurrentWorkflowId(null);
           markUnsaved();
+          success('工作流导入成功');
+        } else {
+          console.error('工作流数据不完整:', { nodes: w.nodes, edges: w.edges, parsed });
+          error('无效的工作流文件：缺少 nodes 数组');
         }
-      } catch { error('无效的工作流文件'); }
+      } catch (err) { 
+        console.error('导入工作流失败:', err);
+        error('无效的工作流文件'); 
+      }
     };
     reader.readAsText(file);
     e.target.value = '';
-  }, [setNodes, setEdges, markUnsaved, error]);
+  }, [setNodes, setEdges, markUnsaved, error, success, templates, hasProvider]);
 
   const editingNode = useMemo(() => {
     const node = nodes.find(n => n.id === editingNodeId);
@@ -716,8 +837,11 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   }, []);
 
   return (
-    <div className="w-full h-full flex flex-col relative bg-[#f8f8f8]">
+    <div className="w-full h-full flex flex-col relative" style={{ backgroundColor: canvasThemes[canvasTheme as keyof typeof canvasThemes]?.containerBg || '#f8f8f8' }}>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      
+      {/* 加载动画 */}
+      {isLoading && <LoadingSpinner text="正在加载工作流..." />}
       
       {/* 顶部工具栏 */}
       <div className="h-14 shrink-0 bg-white border-b border-gray-200 px-4 flex items-center justify-between z-10">
@@ -772,7 +896,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
               </svg>
             </button>
             {showMoreMenu && (
-              <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50">
+              <div className="absolute right-0 top-full mt-2 w-44 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50">
                 <button 
                   onClick={() => { fileInputRef.current?.click(); setShowMoreMenu(false); }}
                   className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
@@ -787,6 +911,28 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
                   导出工作流
                 </button>
+                <div className="h-px bg-gray-100 my-1" />
+                <button 
+                  onClick={() => { 
+                    const newTheme = canvasTheme === 'light' ? 'dark' : 'light';
+                    setCanvasTheme(newTheme); 
+                    localStorage.setItem('canvas-theme', newTheme);
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  {canvasTheme === 'light' ? (
+                    <>
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+                      夜间模式
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>
+                      日间模式
+                    </>
+                  )}
+                </button>
               </div>
             )}
             <input ref={fileInputRef} type="file" className="hidden" accept=".json" onChange={importWorkflow} />
@@ -795,6 +941,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
       </div>
 
       {/* React Flow 画布 */}
+      <ThemeContext.Provider value={canvasTheme as 'light' | 'dark'}>
       <div className="flex-1 relative">
         <ReactFlow
           nodes={nodes}
@@ -824,7 +971,7 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
           }}
           connectionLineStyle={{ stroke: '#FF6B00', strokeWidth: 2 }}
           connectionLineType={ConnectionLineType.SmoothStep}
-          style={{ backgroundColor: '#fafafa' }}
+          style={{ backgroundColor: canvasThemes[canvasTheme as keyof typeof canvasThemes]?.bg || '#fafafa' }}
           nodesDraggable
           nodesConnectable
           elementsSelectable
@@ -832,38 +979,260 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
         >
-          <Background color="#e8e8e8" gap={10} />
+          <Background color={canvasThemes[canvasTheme as keyof typeof canvasThemes]?.gridColor || '#e8e8e8'} gap={10} />
           <Controls position="bottom-left" showInteractive={false} />
-          {nodes.length === 0 && (
+          {nodes.length === 0 && !isLoading && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="text-center">
-                <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-white shadow-sm flex items-center justify-center">
-                  <svg className="w-10 h-10 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <div className={`w-20 h-20 mx-auto mb-4 rounded-2xl shadow-sm flex items-center justify-center ${
+                  canvasTheme === 'dark' ? 'bg-white/10' : 'bg-white'
+                }`}>
+                  <svg className={`w-10 h-10 ${canvasTheme === 'dark' ? 'text-white/30' : 'text-gray-300'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
                     <rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />
                   </svg>
                 </div>
-                <p className="text-gray-400 text-sm mb-2">画布为空</p>
-                <p className="text-gray-300 text-xs">从右侧面板拖拽组件到这里，或框选多个节点</p>
+                <p className={`text-sm mb-2 ${canvasTheme === 'dark' ? 'text-white/40' : 'text-gray-400'}`}>画布为空</p>
+                <p className={`text-xs ${canvasTheme === 'dark' ? 'text-white/20' : 'text-gray-300'}`}>从右侧面板拖拽组件到这里，或框选多个节点</p>
               </div>
             </div>
           )}
         </ReactFlow>
       </div>
+      </ThemeContext.Provider>
 
       <ComponentPanel isOpen={isPanelOpen} onClose={() => setIsPanelOpen(false)} onDragStart={handleComponentDragStart} onAddComponent={handleAddComponent} />
       <NodeConfigModal node={editingNode} onClose={() => setEditingNodeId(null)} onUpdate={updateNodeData} onDelete={deleteNode} />
 
+      {/* 辅助节点样式工具栏 */}
+      {(() => {
+        const selectedNode = nodes.find(n => n.selected && n.data?.isAnnotation);
+        if (!selectedNode) return null;
+        
+        const config = selectedNode.data.config || {};
+        const nodeType = selectedNode.type;
+        
+        // 不同节点类型支持的样式选项
+        const supportsTextColor = ['STICKY_NOTE', 'TEXT_LABEL', 'STATE', 'ACTOR'].includes(nodeType || '');
+        const supportsBgColor = ['STICKY_NOTE', 'GROUP_BOX', 'STATE', 'TEXT_LABEL'].includes(nodeType || '');
+        const supportsStrokeColor = ['ARROW', 'STATE', 'GROUP_BOX'].includes(nodeType || '');
+        const supportsFontSize = ['STICKY_NOTE', 'TEXT_LABEL'].includes(nodeType || '');
+        const supportsBold = ['STICKY_NOTE', 'TEXT_LABEL', 'STATE', 'ACTOR', 'GROUP_BOX'].includes(nodeType || '');
+        
+        const updateStyle = (updates: Record<string, any>) => {
+          setNodes(nds => nds.map(n => {
+            if (n.id === selectedNode.id) {
+              return { ...n, data: { ...n.data, config: { ...n.data.config, ...updates } } };
+            }
+            return n;
+          }));
+          setHasUnsavedChanges(true);
+        };
+        
+        const colors = ['#374151', '#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899'];
+        const bgColors = ['transparent', '#FFFFFF', '#FEF3C7', '#DCFCE7', '#DBEAFE', '#F3E8FF', '#FCE7F3', '#F3F4F6'];
+        
+        return (
+          <div 
+            className="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-white rounded-xl shadow-lg border border-gray-200 px-3 py-2 flex items-center gap-3"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 字体颜色 */}
+            {(supportsTextColor || supportsStrokeColor) && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500">颜色</span>
+                <div className="flex gap-1">
+                  {colors.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${
+                        (config.color === c || config.borderColor === c) ? 'border-gray-800 scale-110' : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: c }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (supportsStrokeColor && nodeType === 'ARROW') updateStyle({ color: c });
+                        else if (supportsStrokeColor) updateStyle({ borderColor: c });
+                        else updateStyle({ color: c });
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* 分隔线 */}
+            {(supportsTextColor || supportsStrokeColor) && supportsBgColor && (
+              <div className="w-px h-6 bg-gray-200" />
+            )}
+            
+            {/* 填充颜色 */}
+            {supportsBgColor && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500">填充</span>
+                <div className="flex gap-1">
+                  {bgColors.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`w-5 h-5 rounded border-2 transition-transform hover:scale-110 ${
+                        config.backgroundColor === c ? 'border-gray-800 scale-110' : 'border-gray-300'
+                      } ${c === 'transparent' ? 'bg-white relative overflow-hidden' : ''}`}
+                      style={{ backgroundColor: c === 'transparent' ? undefined : c }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        updateStyle({ backgroundColor: c });
+                      }}
+                    >
+                      {c === 'transparent' && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="w-full h-0.5 bg-red-500 rotate-45" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* 分隔线 */}
+            {supportsBgColor && supportsFontSize && (
+              <div className="w-px h-6 bg-gray-200" />
+            )}
+            
+            {/* 字体大小 */}
+            {supportsFontSize && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500">字号</span>
+                <select
+                  value={config.fontSize || 14}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    updateStyle({ fontSize: parseInt(e.target.value) });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs border border-gray-200 rounded px-1.5 py-1 outline-none focus:border-primary"
+                >
+                  {[10, 12, 14, 16, 18, 20, 24, 28, 32].map(size => (
+                    <option key={size} value={size}>{size}px</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
+            {/* 分隔线 */}
+            {supportsFontSize && supportsBold && (
+              <div className="w-px h-6 bg-gray-200" />
+            )}
+            
+            {/* 加粗 */}
+            {supportsBold && (
+              <button
+                type="button"
+                className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${
+                  config.fontWeight === 'bold' ? 'bg-gray-200 text-gray-800' : 'hover:bg-gray-100 text-gray-600'
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  updateStyle({ fontWeight: config.fontWeight === 'bold' ? 'normal' : 'bold' });
+                }}
+                title="加粗"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6V4zm0 8h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6v-8z" stroke="currentColor" strokeWidth="2" fill="none"/>
+                </svg>
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
       {contextMenu.isOpen && (() => {
         const contextNode = nodes.find(n => n.id === contextMenu.data);
         const isAnnotation = contextNode?.data?.isAnnotation;
+        const isImageNode = contextNode?.type === 'IMAGE';
+        const imageSrc = contextNode?.data?.config?.src;
+        
+        // 图片节点的菜单
+        if (isImageNode) {
+          const menuItems = [
+            ...(imageSrc ? [
+              { 
+                label: '预览图片', 
+                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>, 
+                onClick: () => { setImagePreview({ src: imageSrc, open: true }); setImageZoom(1); setImagePan({ x: 0, y: 0 }); }
+              },
+              { 
+                label: '保存图片', 
+                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>, 
+                onClick: () => {
+                  const link = document.createElement('a');
+                  link.href = imageSrc;
+                  link.download = `image-${Date.now()}.png`;
+                  link.click();
+                }
+              },
+              { 
+                label: '更换图片', 
+                icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>, 
+                onClick: () => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const base64 = ev.target?.result as string;
+                        if (base64) {
+                          window.dispatchEvent(new CustomEvent('annotationUpdate', { 
+                            detail: { nodeId: contextMenu.data, src: base64 } 
+                          }));
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  };
+                  input.click();
+                }
+              },
+              { divider: true, label: '', onClick: () => {} },
+            ] : []),
+            { label: '复制', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>, onClick: () => duplicateNode(contextMenu.data) },
+            { divider: true, label: '', onClick: () => {} },
+            { label: '置于顶层', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>, onClick: () => bringToFront(contextMenu.data) },
+            { label: '置于底层', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>, onClick: () => sendToBack(contextMenu.data) },
+            { divider: true, label: '', onClick: () => {} },
+            { label: '删除', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>, danger: true, onClick: () => deleteNode(contextMenu.data) }
+          ];
+          return <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={contextMenu.close} items={menuItems} />;
+        }
+        
+        // 辅助节点的菜单
+        if (isAnnotation) {
+          const menuItems = [
+            { label: '复制', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>, onClick: () => duplicateNode(contextMenu.data) },
+            { divider: true, label: '', onClick: () => {} },
+            { label: '置于顶层', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>, onClick: () => bringToFront(contextMenu.data) },
+            { label: '上移一层', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 15V9M9 12l3-3 3 3"/></svg>, onClick: () => bringForward(contextMenu.data) },
+            { label: '下移一层', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 9v6M9 12l3 3 3-3"/></svg>, onClick: () => sendBackward(contextMenu.data) },
+            { label: '置于底层', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>, onClick: () => sendToBack(contextMenu.data) },
+            { divider: true, label: '', onClick: () => {} },
+            { label: '删除', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>, danger: true, onClick: () => deleteNode(contextMenu.data) }
+          ];
+          return <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={contextMenu.close} items={menuItems} />;
+        }
+        
+        // 普通节点的菜单（无图层控制）
         const menuItems = [
-          // 编辑节点 - 辅助节点不显示
-          ...(!isAnnotation ? [{ 
+          { 
             label: '编辑节点', 
             icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>, 
             onClick: () => setEditingNodeId(contextMenu.data) 
-          }] : []),
+          },
           { label: '复制', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>, onClick: () => duplicateNode(contextMenu.data) },
           { divider: true, label: '', onClick: () => {} },
           { label: '删除', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>, danger: true, onClick: () => deleteNode(contextMenu.data) }
@@ -886,6 +1255,101 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
             }
           ]}
         />
+      )}
+
+      {/* 图片预览模态框 */}
+      {imagePreview.open && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center overflow-hidden"
+        >
+          {/* 工具栏 */}
+          <div 
+            className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2 flex items-center gap-3 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button 
+              onClick={() => setImageZoom(z => Math.max(0.1, z - 0.25))}
+              className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors"
+              title="缩小"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M8 11h6" /></svg>
+            </button>
+            <span className="text-white text-sm min-w-[60px] text-center">{Math.round(imageZoom * 100)}%</span>
+            <button 
+              onClick={() => setImageZoom(z => Math.min(5, z + 0.25))}
+              className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors"
+              title="放大"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M11 8v6M8 11h6" /></svg>
+            </button>
+            <div className="w-px h-6 bg-white/20" />
+            <button 
+              onClick={() => { setImageZoom(1); setImagePan({ x: 0, y: 0 }); }}
+              className="px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm transition-colors"
+            >
+              重置
+            </button>
+            <button 
+              onClick={() => {
+                const link = document.createElement('a');
+                link.href = imagePreview.src;
+                link.download = `image-${Date.now()}.png`;
+                link.click();
+              }}
+              className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors"
+              title="保存图片"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+            </button>
+            <button 
+              onClick={() => setImagePreview({ src: '', open: false })}
+              className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors"
+              title="关闭 (Esc)"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          
+          {/* 图片容器 */}
+          <div 
+            className="w-full h-full flex items-center justify-center overflow-hidden"
+            style={{ cursor: isDraggingImage ? 'grabbing' : 'grab' }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsDraggingImage(true);
+              dragStartRef.current = { x: e.clientX, y: e.clientY, panX: imagePan.x, panY: imagePan.y };
+            }}
+            onMouseMove={(e) => {
+              if (!isDraggingImage) return;
+              const dx = e.clientX - dragStartRef.current.x;
+              const dy = e.clientY - dragStartRef.current.y;
+              setImagePan({ x: dragStartRef.current.panX + dx, y: dragStartRef.current.panY + dy });
+            }}
+            onMouseUp={() => setIsDraggingImage(false)}
+            onMouseLeave={() => setIsDraggingImage(false)}
+            onWheel={(e) => {
+              e.stopPropagation();
+              const delta = e.deltaY > 0 ? -0.1 : 0.1;
+              setImageZoom(z => Math.max(0.1, Math.min(5, z + delta)));
+            }}
+          >
+            <img 
+              src={imagePreview.src} 
+              alt="预览" 
+              className="max-w-none select-none"
+              style={{ 
+                transform: `translate(${imagePan.x}px, ${imagePan.y}px) scale(${imageZoom})`,
+                transition: isDraggingImage ? 'none' : 'transform 0.1s ease-out'
+              }}
+              draggable={false}
+            />
+          </div>
+          
+          {/* 提示 */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm pointer-events-none">
+            拖拽移动 · 滚轮缩放 · Esc 关闭
+          </div>
+        </div>
       )}
     </div>
   );

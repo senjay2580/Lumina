@@ -1,9 +1,126 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityCalendar } from 'react-activity-calendar';
+import { motion } from 'motion/react';
 import { getStoredUser } from '../lib/auth';
 import * as workflowApi from '../lib/workflows';
 import { ViewType } from './Sidebar';
 import { ContextMenu, useContextMenu, useToast, ToastContainer, Confirm } from '../shared';
+
+// 工作流节点组件 - 带发光效果
+const WorkflowNode: React.FC<{
+  x: number;
+  y: number;
+  bgColor: string;
+  borderColor: string;
+  icon: React.ReactNode;
+  label?: string;
+  delay?: number;
+  glowColor?: string;
+}> = ({ x, y, bgColor, borderColor, icon, label, delay = 0, glowColor }) => (
+  <motion.g
+    initial={{ opacity: 0, scale: 0.8 }}
+    animate={{ opacity: 1, scale: 1 }}
+    transition={{ duration: 0.5, delay, type: "spring", stiffness: 200, damping: 20 }}
+  >
+    <motion.g
+      animate={{ y: [0, -5, 0] }}
+      transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut", delay: delay * 2 }}
+    >
+      {/* 发光光晕 */}
+      <motion.rect
+        x={x - 4}
+        y={y - 4}
+        width={60}
+        height={60}
+        rx={16}
+        fill={glowColor || borderColor}
+        opacity={0}
+        animate={{ opacity: [0, 0.3, 0] }}
+        transition={{ duration: 2, repeat: Infinity, delay: delay + 1 }}
+        filter="url(#nodeGlow)"
+      />
+      {/* 节点背景 */}
+      <rect
+        x={x}
+        y={y}
+        width={52}
+        height={52}
+        rx={12}
+        fill={bgColor}
+        stroke={borderColor}
+        strokeWidth={2}
+        filter="url(#nodeShadow)"
+      />
+      {/* 节点图标 */}
+      <g transform={`translate(${x + 26}, ${y + 26})`}>
+        {icon}
+      </g>
+      {/* 标签 */}
+      {label && (
+        <text 
+          x={x + 26} 
+          y={y + 70} 
+          textAnchor="middle" 
+          fontSize="12" 
+          fontWeight="500" 
+          fill="#6B7280"
+          style={{ fontFamily: 'Inter, sans-serif' }}
+        >
+          {label}
+        </text>
+      )}
+    </motion.g>
+  </motion.g>
+);
+
+// 渐变连接线组件 - 带流光效果
+const GradientLine: React.FC<{
+  path: string;
+  gradientId: string;
+  delay?: number;
+}> = ({ path, gradientId, delay = 0 }) => (
+  <g>
+    {/* 底层光晕 - 呼吸效果 */}
+    <motion.path
+      d={path}
+      fill="none"
+      stroke={`url(#${gradientId})`}
+      strokeWidth={8}
+      strokeLinecap="round"
+      initial={{ pathLength: 0, opacity: 0 }}
+      animate={{ pathLength: 1, opacity: [0.1, 0.25, 0.1] }}
+      transition={{ 
+        pathLength: { duration: 1.2, delay, ease: "easeInOut" },
+        opacity: { duration: 2, delay: delay + 1, repeat: Infinity, ease: "easeInOut" }
+      }}
+    />
+    {/* 主线条 */}
+    <motion.path
+      d={path}
+      fill="none"
+      stroke={`url(#${gradientId})`}
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      initial={{ pathLength: 0, opacity: 0 }}
+      animate={{ pathLength: 1, opacity: 1 }}
+      transition={{ duration: 1.2, delay, ease: "easeInOut" }}
+    />
+    {/* 流光效果 */}
+    <motion.path
+      d={path}
+      fill="none"
+      stroke="white"
+      strokeWidth={2}
+      strokeLinecap="round"
+      initial={{ pathLength: 0, pathOffset: 0 }}
+      animate={{ pathLength: 0.15, pathOffset: 1 }}
+      transition={{ duration: 2, delay: delay + 0.8, ease: "easeInOut", repeat: Infinity, repeatDelay: 1 }}
+      opacity={0.6}
+    />
+  </g>
+);
+
+
 
 interface HomePageProps {
   username: string;
@@ -28,23 +145,6 @@ interface ActivityData {
   date: string;
   count: number;
 }
-
-// 生成空的活动数据（用于没有数据时显示）
-const generateEmptyData = () => {
-  const data = [];
-  const today = new Date();
-  // 从今天往前推约5个月
-  for (let i = 150; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    data.push({
-      date: date.toISOString().split('T')[0],
-      count: 0,
-      level: 0
-    });
-  }
-  return data;
-};
 
 // 获取本地日期字符串 (YYYY-MM-DD)
 const getLocalDateString = (date: Date) => {
@@ -116,12 +216,17 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
     loadData();
   }, [user?.id]);
 
-  const handleDeleteWorkflow = async (id: string) => {
+  const handleDeleteWorkflow = async (id: string, permanent: boolean = false) => {
     try {
-      await workflowApi.deleteWorkflow(id);
+      if (permanent) {
+        await workflowApi.permanentDeleteWorkflow(id);
+        success('工作流已永久删除');
+      } else {
+        await workflowApi.deleteWorkflow(id);
+        success('工作流已移到回收站');
+      }
       setWorkflows(prev => prev.filter(w => w.id !== id));
       setStats(prev => ({ ...prev, workflows: prev.workflows - 1 }));
-      success('工作流已删除');
     } catch (err) {
       error('删除失败');
     }
@@ -163,11 +268,10 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
       <Confirm
         isOpen={deleteConfirm.open}
         title="删除工作流"
-        message="确定要删除这个工作流吗？此操作无法撤销。"
-        confirmText="删除"
+        message="选择删除方式"
         cancelText="取消"
-        danger
-        onConfirm={() => deleteConfirm.id && handleDeleteWorkflow(deleteConfirm.id)}
+        showPermanentDelete
+        onConfirm={(permanent) => deleteConfirm.id && handleDeleteWorkflow(deleteConfirm.id, permanent)}
         onCancel={() => setDeleteConfirm({ open: false, id: null })}
       />
       
@@ -185,7 +289,7 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
         </defs>
       </svg>
 
-      <div className="max-w-6xl mx-auto px-8 py-12">
+      <div className="max-w-6xl mx-auto px-8 pt-20 pb-12">
         {/* Hero 区域 - 带神经网络背景 */}
         <section className="mb-20 relative">
           {/* 神经网络背景 */}
@@ -250,39 +354,202 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
               </button>
             </div>
 
-            {/* 流水线 SVG - 清晰线条 */}
-            <div className="relative w-[520px] h-[340px]">
-              <svg viewBox="0 0 420 280" className="w-full h-full">
+            {/* 工作流 SVG */}
+            <div className="relative w-[580px] h-[260px] mt-8">
+              <svg viewBox="0 0 560 260" className="w-full h-full overflow-visible">
                 <defs>
-                  <linearGradient id="flowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#FF6B00" stopOpacity="0.2" />
-                    <stop offset="50%" stopColor="#FF6B00" stopOpacity="0.6" />
-                    <stop offset="100%" stopColor="#FF6B00" stopOpacity="0.2" />
+                  {/* 节点阴影 */}
+                  <filter id="nodeShadow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feDropShadow dx="0" dy="4" stdDeviation="8" floodColor="#000" floodOpacity="0.06" />
+                  </filter>
+                  {/* 节点发光效果 */}
+                  <filter id="nodeGlow" x="-100%" y="-100%" width="300%" height="300%">
+                    <feGaussianBlur stdDeviation="8" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="blur" />
+                    </feMerge>
+                  </filter>
+                  {/* 渐变色 - 绿到蓝 */}
+                  <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#6EE7B7" />
+                    <stop offset="100%" stopColor="#93C5FD" />
+                  </linearGradient>
+                  {/* 渐变色 - 绿到青 */}
+                  <linearGradient id="grad1b" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#6EE7B7" />
+                    <stop offset="100%" stopColor="#7DD3FC" />
+                  </linearGradient>
+                  {/* 渐变色 - 蓝到紫 */}
+                  <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#93C5FD" />
+                    <stop offset="100%" stopColor="#C4B5FD" />
+                  </linearGradient>
+                  {/* 渐变色 - 青到紫 */}
+                  <linearGradient id="grad2b" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#7DD3FC" />
+                    <stop offset="100%" stopColor="#C4B5FD" />
+                  </linearGradient>
+                  {/* 渐变色 - 紫到橙 */}
+                  <linearGradient id="grad3" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#C4B5FD" />
+                    <stop offset="100%" stopColor="#FDBA74" />
                   </linearGradient>
                 </defs>
                 
-                <path d="M 20 140 L 70 140 L 100 70 L 160 70 L 190 140 L 240 140 L 270 70 L 330 70 L 360 140 L 400 140" fill="none" stroke="#D1D5DB" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M 190 140 L 220 200 L 250 200" fill="none" stroke="#D1D5DB" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M 20 140 L 70 140 L 100 70 L 160 70 L 190 140 L 240 140 L 270 70 L 330 70 L 360 140 L 400 140" fill="none" stroke="#FF6B00" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="30 370" strokeDashoffset="0">
-                  <animate attributeName="stroke-dashoffset" from="400" to="0" dur="2.5s" repeatCount="indefinite" />
-                </path>
+                {/* 连接线 - 开始到Cloud (上分支) */}
+                <GradientLine 
+                  path="M 72 130 C 95 130, 105 55, 140 55"
+                  gradientId="grad1"
+                  delay={0}
+                />
+                {/* 连接线 - 开始到Database (下分支) */}
+                <GradientLine 
+                  path="M 72 130 C 95 130, 105 185, 140 185"
+                  gradientId="grad1b"
+                  delay={0.1}
+                />
+                {/* 连接线 - Cloud到AI Process */}
+                <GradientLine 
+                  path="M 192 55 C 240 55, 270 120, 310 120"
+                  gradientId="grad2"
+                  delay={0.3}
+                />
+                {/* 连接线 - Database到AI Process */}
+                <GradientLine 
+                  path="M 192 185 C 240 185, 270 120, 310 120"
+                  gradientId="grad2b"
+                  delay={0.35}
+                />
+                {/* 连接线 - AI Process到Publish */}
+                <GradientLine 
+                  path="M 362 120 C 390 120, 420 120, 448 120"
+                  gradientId="grad3"
+                  delay={0.6}
+                />
+                
+                {/* WiFi 信号波效果 - 向右发射 */}
+                <g transform="translate(405, 120)">
+                  {/* 第一层信号波 - 最内层 */}
+                  <motion.path
+                    d="M 0 -8 Q 10 0, 0 8"
+                    fill="none"
+                    stroke="#C4B5FD"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    initial={{ opacity: 0, x: -5 }}
+                    animate={{ opacity: [0, 0.7, 0], x: 0 }}
+                    transition={{ duration: 1.2, delay: 0.8, repeat: Infinity, repeatDelay: 0.5 }}
+                  />
+                  {/* 第二层信号波 */}
+                  <motion.path
+                    d="M 8 -14 Q 22 0, 8 14"
+                    fill="none"
+                    stroke="#DDD6FE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    initial={{ opacity: 0, x: -5 }}
+                    animate={{ opacity: [0, 0.5, 0], x: 0 }}
+                    transition={{ duration: 1.2, delay: 1.0, repeat: Infinity, repeatDelay: 0.5 }}
+                  />
+                  {/* 第三层信号波 - 最外层 */}
+                  <motion.path
+                    d="M 16 -20 Q 34 0, 16 20"
+                    fill="none"
+                    stroke="#FDBA74"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    initial={{ opacity: 0, x: -5 }}
+                    animate={{ opacity: [0, 0.35, 0], x: 0 }}
+                    transition={{ duration: 1.2, delay: 1.2, repeat: Infinity, repeatDelay: 0.5 }}
+                  />
+                </g>
+                
+                {/* 汇聚连接点 */}
+                <motion.circle cx="310" cy="120" r="4" fill="#C4B5FD"
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: 0.5 }}
+                />
+                
+                {/* 节点1: 播放/触发器 - 绿色 */}
+                <WorkflowNode
+                  x={20}
+                  y={104}
+                  bgColor="#D1FAE5"
+                  borderColor="#6EE7B7"
+                  glowColor="#10B981"
+                  delay={0.2}
+                  icon={
+                    <polygon points="-10,-12 -10,12 12,0" fill="#10B981" />
+                  }
+                />
+                
+                {/* 节点2a: Cloud - 蓝色 (上分支) */}
+                <WorkflowNode
+                  x={140}
+                  y={29}
+                  bgColor="#DBEAFE"
+                  borderColor="#93C5FD"
+                  glowColor="#3B82F6"
+                  delay={0.3}
+                  label="Cloud"
+                  icon={
+                    <g transform="scale(1.1)">
+                      <path d="M7.35 -1.96A7.49 7.49 0 0 0 0 -8C-2.89 -8 -5.4 -6.36 -6.65 -3.96A5.994 5.994 0 0 0 -12 2c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5c0-2.64-2.05-4.78-4.65-4.96M7 6H-6c-2.21 0-4-1.79-4-4s1.79-4 4-4h.71C-4.63 -4.31 -2.52 -6 0 -6c3.04 0 5.5 2.46 5.5 5.5v.5H7c1.66 0 3 1.34 3 3s-1.34 3-3 3" fill="#3B82F6" />
+                    </g>
+                  }
+                />
 
-                <g><rect x="5" y="125" width="30" height="30" rx="6" fill="white" stroke="#10B981" strokeWidth="2" /><polygon points="15,133 15,147 25,140" fill="#10B981" /></g>
-                <g><rect x="145" y="55" width="30" height="30" rx="6" fill="white" stroke="#3B82F6" strokeWidth="2" /><circle cx="160" cy="70" r="6" fill="none" stroke="#3B82F6" strokeWidth="2" /><circle cx="160" cy="70" r="2" fill="#3B82F6" /></g>
-                <g><rect x="225" y="125" width="30" height="30" rx="6" fill="white" stroke="#8B5CF6" strokeWidth="2" /><polygon points="243,132 236,142 241,142 237,150 244,140 239,140 243,132" fill="#8B5CF6" /></g>
-                <g><rect x="315" y="55" width="30" height="30" rx="6" fill="white" stroke="#F59E0B" strokeWidth="2" /><ellipse cx="330" cy="65" rx="8" ry="3" fill="none" stroke="#F59E0B" strokeWidth="1.5" /><path d="M322 65 L322 77 Q330 82 338 77 L338 65" fill="none" stroke="#F59E0B" strokeWidth="1.5" /><ellipse cx="330" cy="71" rx="8" ry="3" fill="none" stroke="#F59E0B" strokeWidth="1.5" /></g>
-                <g><rect x="385" y="125" width="30" height="30" rx="6" fill="white" stroke="#FF6B00" strokeWidth="2" /><path d="M395 140 L400 135 L405 140 M400 135 L400 148" fill="none" stroke="#FF6B00" strokeWidth="2" strokeLinecap="round" /><path d="M393 145 L393 150 L407 150 L407 145" fill="none" stroke="#FF6B00" strokeWidth="1.5" /></g>
-                <g><rect x="235" y="185" width="30" height="30" rx="6" fill="white" stroke="#EC4899" strokeWidth="2" /><path d="M243 193 L243 207 L257 207 L257 196 L253 193 Z" fill="none" stroke="#EC4899" strokeWidth="1.5" /><path d="M243 196 L253 196" stroke="#EC4899" strokeWidth="1.5" /></g>
-
-                <circle r="4" fill="#FF6B00"><animateMotion dur="2.5s" repeatCount="indefinite" path="M 20 140 L 70 140 L 100 70 L 160 70 L 190 140 L 240 140 L 270 70 L 330 70 L 360 140 L 400 140" /></circle>
-                <circle r="3" fill="#3B82F6" opacity="0.8"><animateMotion dur="2.5s" repeatCount="indefinite" begin="0.6s" path="M 20 140 L 70 140 L 100 70 L 160 70 L 190 140 L 240 140 L 270 70 L 330 70 L 360 140 L 400 140" /></circle>
-                <circle r="3" fill="#10B981" opacity="0.8"><animateMotion dur="2.5s" repeatCount="indefinite" begin="1.2s" path="M 20 140 L 70 140 L 100 70 L 160 70 L 190 140 L 240 140 L 270 70 L 330 70 L 360 140 L 400 140" /></circle>
-                <circle r="2.5" fill="#EC4899" opacity="0.7"><animateMotion dur="1.5s" repeatCount="indefinite" begin="0.8s" path="M 190 140 L 220 200 L 250 200" /></circle>
-
-                <circle cx="70" cy="140" r="3" fill="#E5E7EB" />
-                <circle cx="190" cy="140" r="3" fill="#E5E7EB" />
-                <circle cx="240" cy="140" r="3" fill="#E5E7EB" />
-                <circle cx="360" cy="140" r="3" fill="#E5E7EB" />
+                {/* 节点2b: Database - 青色 (下分支) */}
+                <WorkflowNode
+                  x={140}
+                  y={159}
+                  bgColor="#E0F2FE"
+                  borderColor="#7DD3FC"
+                  glowColor="#0EA5E9"
+                  delay={0.35}
+                  label="Database"
+                  icon={
+                    <g transform="scale(1.05)">
+                      <path d="M0 -1q3.75 0 6.375-1.175T9 -5t-2.625-2.825T0 -9T-6.375 -7.825T-9 -5t2.625 2.825T0 -1m0 2.5q1.025 0 2.563-.213t2.962-.687t2.45-1.237T9 -2.5V0q0 1.1-1.025 1.863t-2.45 1.237t-2.962.688T0 4t-2.562-.213t-2.963-.687t-2.45-1.237T-9 0V-2.5q0 1.1 1.025 1.863t2.45 1.237t2.963.688T0 1.5m0 5q1.025 0 2.563-.213t2.962-.687t2.45-1.237T9 2.5V5q0 1.1-1.025 1.863t-2.45 1.237t-2.962.688T0 9t-2.562-.213t-2.963-.687t-2.45-1.237T-9 5v-2.5q0 1.1 1.025 1.863t2.45 1.237t2.963.688T0 6.5" fill="#0EA5E9" />
+                    </g>
+                  }
+                />
+                
+                {/* 节点3: AI Process - 紫色 */}
+                <WorkflowNode
+                  x={310}
+                  y={94}
+                  bgColor="#EDE9FE"
+                  borderColor="#C4B5FD"
+                  glowColor="#8B5CF6"
+                  delay={0.5}
+                  label="AI Process"
+                  icon={
+                    <path d="M 3 -14 L -10 3 L 0 3 L -3 14 L 10 -3 L 0 -3 Z" fill="#8B5CF6" />
+                  }
+                />
+                
+                {/* 节点4: 分享/发布 - 橙色 */}
+                <WorkflowNode
+                  x={448}
+                  y={94}
+                  bgColor="#FFEDD5"
+                  glowColor="#FF6B00"
+                  borderColor="#FDBA74"
+                  delay={0.7}
+                  label="Publish"
+                  icon={
+                    <g transform="scale(1.3)">
+                      <circle cx="-5" cy="-5" r="3.5" fill="#FF6B00" />
+                      <circle cx="5" cy="-5" r="3.5" fill="#FF6B00" />
+                      <circle cx="0" cy="5" r="3.5" fill="#FF6B00" />
+                      <line x1="-2.5" y1="-2.5" x2="-1" y2="2.5" stroke="#FF6B00" strokeWidth="2" />
+                      <line x1="2.5" y1="-2.5" x2="1" y2="2.5" stroke="#FF6B00" strokeWidth="2" />
+                    </g>
+                  }
+                />
               </svg>
             </div>
           </div>
@@ -290,21 +557,43 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
 
         {/* 统计卡片 + 热力图 */}
         <section className="mb-16">
-          <div className="flex gap-6">
+          <motion.div 
+            className="flex gap-6"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.3 }}
+          >
             {/* 左侧：纵向统计卡片 */}
             <div className="flex flex-col gap-4 w-48 shrink-0">
-              <div className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center">
+              <motion.div 
+                className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.5, delay: 0.4 }}
+              >
                 <div className="flex items-center gap-3">
                   <svg className="w-10 h-10 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
                   </svg>
                   <div>
-                    <p className="text-2xl font-bold text-gray-900 tracking-tight">{loading ? '-' : stats.workflows}</p>
+                    <motion.p 
+                      className="text-2xl font-bold text-gray-900 tracking-tight"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3, delay: 0.6 }}
+                    >
+                      {loading ? '-' : stats.workflows}
+                    </motion.p>
                     <p className="text-xs text-gray-500">工作流</p>
                   </div>
                 </div>
-              </div>
-              <div className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center">
+              </motion.div>
+              <motion.div 
+                className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
+              >
                 <div className="flex items-center gap-3">
                   <svg className="w-10 h-10" viewBox="0 0 14 14">
                     <g fill="none" fillRule="evenodd" clipRule="evenodd">
@@ -313,17 +602,29 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
                     </g>
                   </svg>
                   <div>
-                    <p className="text-2xl font-bold text-gray-900 tracking-tight">{loading ? '-' : stats.prompts}</p>
+                    <motion.p 
+                      className="text-2xl font-bold text-gray-900 tracking-tight"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3, delay: 0.7 }}
+                    >
+                      {loading ? '-' : stats.prompts}
+                    </motion.p>
                     <p className="text-xs text-gray-500">提示词</p>
                   </div>
                 </div>
-              </div>
+              </motion.div>
             </div>
             
             {/* 右侧：热力图 */}
-            <div className="flex-1 bg-white rounded-2xl p-5 shadow-sm border border-gray-100 overflow-hidden">
+            <motion.div 
+              className="flex-1 bg-white rounded-2xl p-5 shadow-sm border border-gray-100 overflow-hidden"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5, delay: 0.5 }}
+            >
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-gray-700">工作流活跃度</h3>
+                <h3 className="text-sm font-semibold text-gray-700">活跃度</h3>
                 <span className="text-xs text-gray-400">
                   {new Date().getFullYear()} 年
                 </span>
@@ -348,12 +649,17 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
                   }}
                 />
               </div>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         </section>
 
         {/* 工作流列表 - 卡片样式 */}
-        <section className="mb-8">
+        <motion.section 
+          className="mb-8"
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.6 }}
+        >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold text-gray-900 tracking-tight">我的工作流</h2>
             <button onClick={() => onNavigate('WORKFLOW')} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:shadow-lg transition-all flex items-center gap-2">
@@ -375,42 +681,45 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
               <button onClick={() => onNavigate('WORKFLOW')} className="px-6 py-3 bg-primary text-white rounded-xl font-medium hover:shadow-lg transition-all">立即创建</button>
             </div>
           ) : (
-            <div className="space-y-3">
-              {workflows.map(workflow => (
-                <div 
+            <div className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-100">
+              {workflows.map((workflow: any) => (
+                <motion.div 
                   key={workflow.id} 
                   onClick={() => handleOpenWorkflow(workflow.id)}
+                  onMouseEnter={() => workflowApi.preloadWorkflow(workflow.id)}
                   onContextMenu={(e) => contextMenu.open(e, workflow.id)}
-                  className="bg-white rounded-2xl p-5 border border-gray-100 hover:shadow-lg hover:border-gray-200 cursor-pointer transition-all group"
+                  className="flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer transition-all group"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4 min-w-0 flex-1">
-                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-blue-50 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                        <svg className="w-6 h-6 text-blue-500"><use href="#icon-workflow" /></svg>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-3 mb-1">
-                          <h3 className="font-semibold text-gray-900 truncate group-hover:text-primary transition-colors">{workflow.name}</h3>
-                        </div>
-                        <div className="flex items-center gap-4 text-sm text-gray-400">
-                          <span>{workflow.nodes?.length || 0} 个节点</span>
-                          <span>·</span>
-                          <span>{formatRelativeTime(workflow.updated_at)}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); contextMenu.open(e, workflow.id); }}
-                      className="w-9 h-9 rounded-xl hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                    >
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                        <circle cx="12" cy="6" r="2" />
-                        <circle cx="12" cy="12" r="2" />
-                        <circle cx="12" cy="18" r="2" />
-                      </svg>
-                    </button>
+                  {/* 图标 */}
+                  <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
+                    </svg>
                   </div>
-                </div>
+                  {/* 信息 */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium text-gray-900 truncate group-hover:text-primary transition-colors">
+                      {workflow.name}
+                    </h3>
+                    <p className="text-sm text-gray-400 truncate">
+                      {workflow.nodes?.length || 0} 个节点 · {formatRelativeTime(workflow.updated_at)}
+                    </p>
+                  </div>
+                  {/* 操作按钮 */}
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); contextMenu.open(e, workflow.id); }}
+                    className="w-8 h-8 rounded-lg hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="6" r="2" />
+                      <circle cx="12" cy="12" r="2" />
+                      <circle cx="12" cy="18" r="2" />
+                    </svg>
+                  </button>
+                </motion.div>
               ))}
             </div>
           )}
@@ -421,7 +730,7 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
               共 {workflows.length} 个工作流
             </div>
           )}
-        </section>
+        </motion.section>
       </div>
 
       {/* 右键菜单 */}
@@ -451,6 +760,32 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
                     loadData();
                     success('工作流已复制');
                   } catch { error('复制失败'); }
+                }
+              }
+            },
+            { 
+              label: '导出', 
+              icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>, 
+              onClick: async () => {
+                const workflow = workflows.find(w => w.id === contextMenu.data);
+                if (workflow) {
+                  try {
+                    const exportData = {
+                      name: workflow.name,
+                      description: workflow.description,
+                      nodes: workflow.nodes,
+                      exportedAt: new Date().toISOString(),
+                      version: '1.0'
+                    };
+                    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${workflow.name || 'workflow'}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    success('工作流已导出');
+                  } catch { error('导出失败'); }
                 }
               }
             },
