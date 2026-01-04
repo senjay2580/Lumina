@@ -21,6 +21,8 @@ export const usePromptBrowser = () => {
   const [autoEditId, setAutoEditId] = useState<string | null>(null);
   const [newPromptIds, setNewPromptIds] = useState<Set<string>>(new Set());
   const [editedPromptIds, setEditedPromptIds] = useState<Set<string>>(new Set());
+  // 用于通知 PromptManager 更新本地列表
+  const [lastSavedPrompt, setLastSavedPrompt] = useState<{ type: 'create' | 'update'; prompt: Prompt } | null>(null);
   const minimizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const openPrompt = useCallback((prompt: Prompt) => {
@@ -90,6 +92,21 @@ export const usePromptBrowser = () => {
     setEditedPromptIds(prev => { const n = new Set(prev); n.delete(id); return n; });
   }, []);
 
+  // 通知列表新增提示词
+  const notifyPromptCreated = useCallback((prompt: Prompt) => {
+    setLastSavedPrompt({ type: 'create', prompt });
+  }, []);
+
+  // 通知列表更新提示词
+  const notifyPromptUpdated = useCallback((prompt: Prompt) => {
+    setLastSavedPrompt({ type: 'update', prompt });
+  }, []);
+
+  // 清除通知
+  const clearLastSavedPrompt = useCallback(() => {
+    setLastSavedPrompt(null);
+  }, []);
+
   return {
     browserTabs,
     activeTabId,
@@ -99,6 +116,7 @@ export const usePromptBrowser = () => {
     autoEditId,
     newPromptIds,
     editedPromptIds,
+    lastSavedPrompt,
     setBrowserTabs,
     setActiveTabId,
     setIsBrowserMinimized,
@@ -113,6 +131,9 @@ export const usePromptBrowser = () => {
     removeNewPromptId,
     addEditedPromptId,
     removeEditedPromptId,
+    notifyPromptCreated,
+    notifyPromptUpdated,
+    clearLastSavedPrompt,
   };
 };
 

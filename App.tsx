@@ -242,6 +242,7 @@ const App: React.FC = () => {
             activeTabId={promptBrowser.activeTabId}
             categories={promptBrowser.categories}
             autoEditId={promptBrowser.autoEditId}
+            unsavedIds={new Set([...promptBrowser.newPromptIds, ...promptBrowser.editedPromptIds])}
             isMinimizing={promptBrowser.isMinimizing}
             onTabChange={promptBrowser.setActiveTabId}
             onTabClose={(promptId, e) => {
@@ -271,10 +272,13 @@ const App: React.FC = () => {
                   const created = await promptApi.createPrompt(userId, data);
                   promptBrowser.updateTabPrompt(prompt.id, created);
                   promptBrowser.removeNewPromptId(prompt.id);
+                  promptBrowser.notifyPromptCreated(created); // 通知列表新增
                   toast.success('提示词已创建');
                 } else {
                   const updated = await promptApi.updatePrompt(prompt.id, data);
                   promptBrowser.updateTabPrompt(prompt.id, updated);
+                  promptBrowser.removeEditedPromptId(prompt.id); // 清除编辑状态
+                  promptBrowser.notifyPromptUpdated(updated); // 通知列表更新
                   toast.success('提示词已更新');
                 }
               } catch (err: any) {

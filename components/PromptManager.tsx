@@ -1,5 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Placeholder from '@tiptap/extension-placeholder';
+import Image from '@tiptap/extension-image';
+import { Table } from '@tiptap/extension-table';
+import { TableRow } from '@tiptap/extension-table-row';
+import { TableCell } from '@tiptap/extension-table-cell';
+import { TableHeader } from '@tiptap/extension-table-header';
+import Link from '@tiptap/extension-link';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import Highlight from '@tiptap/extension-highlight';
+import Typography from '@tiptap/extension-typography';
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import { common, createLowlight } from 'lowlight';
 import { ContextMenu, useContextMenu, ContextMenuItem } from '../shared/ContextMenu';
 import { Modal } from '../shared/Modal';
 import { ToastContainer } from '../shared/Toast';
@@ -8,6 +25,8 @@ import { LoadingSpinner } from '../shared/LoadingSpinner';
 import { getStoredUser } from '../lib/auth';
 import * as api from '../lib/prompts';
 import type { PromptBrowserHook } from '../lib/usePromptBrowser';
+
+const lowlight = createLowlight(common);
 
 type PromptCategory = api.PromptCategory;
 type Prompt = api.Prompt;
@@ -31,7 +50,7 @@ interface PromptManagerProps {
   onPromptsChange?: (prompts: Prompt[]) => void;
 }
 
-export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser, onPromptsChange }) => {
+export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) => {
   const user = getStoredUser();
   const userId = user?.id || '';
 
@@ -44,6 +63,11 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser, onP
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | 'ALL'>('ALL');
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; category?: PromptCategory }>({ open: false });
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; type: 'prompt' | 'category'; id: string }>({ open: false, type: 'prompt', id: '' });
+
+  // 批量选择模式
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedPromptIds, setSelectedPromptIds] = useState<Set<string>>(new Set());
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const promptMenu = useContextMenu();
   const categoryMenu = useContextMenu();
@@ -81,6 +105,19 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser, onP
       setLoading(false);
     }
   }, [userId]);
+
+  // 监听保存事件，直接更新本地列表（不重新加载）
+  useEffect(() => {
+    if (promptBrowser.lastSavedPrompt) {
+      const { type, prompt } = promptBrowser.lastSavedPrompt;
+      if (type === 'create') {
+        setPrompts(prev => [prompt, ...prev]);
+      } else {
+        setPrompts(prev => prev.map(p => p.id === prompt.id ? prompt : p));
+      }
+      promptBrowser.clearLastSavedPrompt();
+    }
+  }, [promptBrowser.lastSavedPrompt]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -169,27 +206,164 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser, onP
     setDeleteConfirm({ open: false, type: 'category', id: '' });
   };
 
-  // 导出提示词为 Markdown 文件
+  // 导出单个提示词为 Markdown 文件
   const handleExportPrompt = (prompt: Prompt) => {
-    const categoryName = getCategoryName(prompt.category_id);
-    const tagsStr = prompt.tags?.length ? prompt.tags.map(t => `#${t}`).join(' ') : '';
-    const md = `# ${prompt.title}
-
-**分类**: ${categoryName}
-${tagsStr ? `**标签**: ${tagsStr}` : ''}
-**创建时间**: ${new Date(prompt.created_at).toLocaleString()}
-**更新时间**: ${new Date(prompt.updated_at).toLocaleString()}
-
----
-
-${prompt.content}
-`;
+    const md = `# ${prompt.title}\n\n\`\`\`css\n${prompt.content}\n\`\`\``;
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `${prompt.title.replace(/\s+/g, '-')}.md`;
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  // 切换选择模式
+  const toggleSelectMode = () => {
+    if (isSelectMode) {
+      setSelectedPromptIds(new Set());
+    }
+    setIsSelectMode(!isSelectMode);
+  };
+
+  // 切换选中状态
+  const togglePromptSelection = (promptId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedPromptIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(promptId)) {
+        newSet.delete(promptId);
+      } else {
+        newSet.add(promptId);
+      }
+      return newSet;
+    });
+  };
+
+  // 批量导出为 MD
+  const handleBatchExportMD = () => {
+    if (selectedPromptIds.size === 0) {
+      toast.error('请先选择要导出的提示词');
+      return;
+    }
+    const selectedPrompts = prompts.filter(p => selectedPromptIds.has(p.id));
+    const md = selectedPrompts.map(p => `# ${p.title}\n\n\`\`\`css\n${p.content}\n\`\`\``).join('\n\n---\n\n');
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `prompts-export-${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success(`已导出 ${selectedPromptIds.size} 个提示词`);
+    setIsSelectMode(false);
+    setSelectedPromptIds(new Set());
+  };
+
+  // 批量导出为 PDF（支持中文）
+  const handleBatchExportPDF = async () => {
+    if (selectedPromptIds.size === 0) {
+      toast.error('请先选择要导出的提示词');
+      return;
+    }
+    const selectedPrompts = prompts.filter(p => selectedPromptIds.has(p.id));
+    
+    try {
+      toast.info('正在生成 PDF...');
+      
+      // 创建临时容器
+      const container = document.createElement('div');
+      container.style.cssText = 'position: absolute; left: -9999px; top: 0; width: 800px; background: white;';
+      document.body.appendChild(container);
+
+      // 生成 HTML 内容
+      container.innerHTML = selectedPrompts.map((prompt, index) => `
+        <div style="padding: 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; ${index > 0 ? 'page-break-before: always;' : ''}">
+          <h1 style="font-size: 24px; font-weight: 600; color: #1a1a1a; margin: 0 0 16px 0;">${prompt.title}</h1>
+          <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 12px; color: #888;">
+            <span>分类: ${getCategoryName(prompt.category_id)}</span>
+            ${prompt.tags?.length ? `<span>标签: ${prompt.tags.join(', ')}</span>` : ''}
+            <span>创建于: ${new Date(prompt.created_at).toLocaleDateString('zh-CN')}</span>
+          </div>
+          <div style="height: 1px; background: #eee; margin: 16px 0;"></div>
+          <div style="font-size: 14px; line-height: 1.8; color: #333; white-space: pre-wrap; word-break: break-word;">${prompt.content}</div>
+        </div>
+      `).join('<div style="height: 40px;"></div>');
+
+      // 使用 html2canvas 渲染
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      // 创建 PDF
+      const imgWidth = 210; // A4 宽度 mm
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      
+      // 分页处理
+      const pageHeight = 297; // A4 高度 mm
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      // 清理
+      document.body.removeChild(container);
+
+      pdf.save(`prompts-export-${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.success(`已导出 ${selectedPromptIds.size} 个提示词为 PDF`);
+    } catch (err) {
+      console.error('PDF 导出失败:', err);
+      toast.error('PDF 导出失败');
+    }
+    
+    setIsSelectMode(false);
+    setSelectedPromptIds(new Set());
+  };
+
+  // 导入 MD 文件 - 直接将整个文件作为一个提示词
+  const handleImportMD = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const content = event.target?.result as string;
+      if (!content?.trim()) {
+        toast.error('文件内容为空');
+        return;
+      }
+
+      // 用文件名（去掉扩展名）作为标题
+      const title = file.name.replace(/\.md$/i, '');
+
+      try {
+        const created = await api.createPrompt(userId, {
+          title,
+          content: content.trim(),
+          category_id: categories[0]?.id || null,
+          tags: []
+        });
+        setPrompts(prev => [created, ...prev]);
+        toast.success('导入成功');
+      } catch (err: any) {
+        console.error('导入失败:', err);
+        toast.error(err.message || '导入失败');
+      }
+    };
+    reader.readAsText(file);
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const getPromptMenuItems = (prompt: Prompt): ContextMenuItem[] => [
@@ -222,6 +396,30 @@ ${prompt.content}
             <div><h2 className="text-3xl font-bold text-gray-900 mb-1">提示词库</h2><p className="text-gray-500">管理和组织你的 AI 提示词模板</p></div>
           </div>
           <div className="flex gap-3">
+            {/* 导入按钮 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".md"
+              onChange={handleImportMD}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2.5 rounded-xl bg-white border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-all"
+              title="导入提示词"
+            >
+              <ImportIcon className="w-5 h-5" />
+            </button>
+            {/* 导出按钮 */}
+            <button
+              onClick={toggleSelectMode}
+              className={`p-2.5 rounded-xl border transition-all ${isSelectMode ? 'bg-primary/10 border-primary text-primary' : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+              title="批量导出"
+            >
+              <ExportIcon className="w-5 h-5" />
+            </button>
+            <div className="w-px bg-gray-200" />
             <button onClick={() => setCategoryModal({ open: true })} className="px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 font-medium hover:bg-gray-50 transition-all flex items-center gap-2"><FolderIcon className="w-4 h-4" />管理分类</button>
             <button onClick={handleCreatePrompt} className="px-6 py-2.5 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all flex items-center gap-2"><PlusIcon className="w-4 h-4" />新建提示词</button>
           </div>
@@ -244,12 +442,28 @@ ${prompt.content}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredPrompts.map(prompt => {
             const colors = getCategoryColors(getCategoryColor(prompt.category_id));
+            const isSelected = selectedPromptIds.has(prompt.id);
             return (
-              <div key={prompt.id} className="group bg-white rounded-2xl p-6 border border-gray-100 cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300"
-                onClick={() => openPromptDetail(prompt)} onContextMenu={(e) => promptMenu.open(e, prompt)}>
+              <div key={prompt.id} className={`group bg-white rounded-2xl p-6 border cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300 relative ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'}`}
+                onClick={(e) => isSelectMode ? togglePromptSelection(prompt.id, e) : openPromptDetail(prompt)} onContextMenu={(e) => promptMenu.open(e, prompt)}>
+                {/* 选择模式下的复选框 */}
+                {isSelectMode && (
+                  <div 
+                    className={`absolute top-3 right-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}
+                    onClick={(e) => togglePromptSelection(prompt.id, e)}
+                  >
+                    {isSelected && (
+                      <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                    )}
+                  </div>
+                )}
                 <div className="flex justify-between items-start mb-4">
                   <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
-                  <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
+                  {!isSelectMode && (
+                    <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
+                  )}
                 </div>
                 <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-primary transition-colors">{prompt.title}</h3>
                 <p className="text-sm text-gray-500 line-clamp-3 mb-4">{prompt.content}</p>
@@ -257,10 +471,12 @@ ${prompt.content}
               </div>
             );
           })}
-          <div onClick={handleCreatePrompt} className="border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all cursor-pointer min-h-[200px]">
-            <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><PlusIcon className="w-6 h-6" /></div>
-            <span className="font-medium">新建提示词</span>
-          </div>
+          {!isSelectMode && (
+            <div onClick={handleCreatePrompt} className="border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all cursor-pointer min-h-[200px]">
+              <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><PlusIcon className="w-6 h-6" /></div>
+              <span className="font-medium">新建提示词</span>
+            </div>
+          )}
         </div>
 
         {filteredPrompts.length === 0 && <div className="text-center py-16"><p className="text-gray-500 mb-2">暂无提示词</p><p className="text-gray-400 text-sm">点击上方按钮创建</p></div>}
@@ -292,6 +508,72 @@ ${prompt.content}
       </Modal>
 
       <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+
+      {/* 选择模式底部操作栏 */}
+      <AnimatePresence>
+        {isSelectMode && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="fixed bottom-6 left-0 right-0 flex justify-center z-50 pointer-events-none"
+          >
+            <div className="flex items-center gap-3 px-5 py-3 bg-gray-900/95 backdrop-blur-sm rounded-2xl shadow-2xl border border-gray-700 pointer-events-auto">
+              <div className="flex items-center gap-2 pr-4 border-r border-gray-700">
+                <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                  <span className="text-sm font-bold text-primary">{selectedPromptIds.size}</span>
+                </div>
+                <span className="text-sm text-gray-300">已选择</span>
+              </div>
+              
+              <button
+                onClick={() => {
+                  if (selectedPromptIds.size === filteredPrompts.length) {
+                    setSelectedPromptIds(new Set());
+                  } else {
+                    setSelectedPromptIds(new Set(filteredPrompts.map(p => p.id)));
+                  }
+                }}
+                className="px-4 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 transition-colors"
+              >
+                {selectedPromptIds.size === filteredPrompts.length ? '取消全选' : '全选'}
+              </button>
+
+              <div className="w-px h-6 bg-gray-700" />
+
+              <button
+                onClick={handleBatchExportMD}
+                disabled={selectedPromptIds.size === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ExportIcon className="w-4 h-4" />
+                导出 MD
+              </button>
+
+              <button
+                onClick={handleBatchExportPDF}
+                disabled={selectedPromptIds.size === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <PdfIcon className="w-4 h-4" />
+                导出 PDF
+              </button>
+
+              <div className="w-px h-6 bg-gray-700" />
+
+              <button
+                onClick={toggleSelectMode}
+                className="p-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -322,7 +604,151 @@ const MoreIcon: React.FC<{ className?: string }> = ({ className }) => <svg class
 const EditIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
 const CopyIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>;
 const TrashIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>;
-const ExportIcon = () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>;
+const ExportIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>;
+const ImportIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>;
+const PdfIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>;
+
+// Tiptap 编辑器组件 - 完整 MD 功能
+const TiptapEditor: React.FC<{
+  content: string;
+  onChange: (content: string) => void;
+  placeholder?: string;
+  onReady?: () => void;
+}> = ({ content, onChange, placeholder, onReady }) => {
+  const isUpdatingFromProps = React.useRef(false);
+  
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3, 4, 5, 6] },
+        codeBlock: false, // 用 CodeBlockLowlight 替代
+      }),
+      Placeholder.configure({
+        placeholder: placeholder || '输入内容...',
+      }),
+      Image.configure({
+        inline: true,
+        allowBase64: true,
+      }),
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableCell,
+      TableHeader,
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+      }),
+      TaskList,
+      TaskItem.configure({
+        nested: true,
+      }),
+      Highlight.configure({
+        multicolor: true,
+      }),
+      Typography,
+      CodeBlockLowlight.configure({
+        lowlight,
+      }),
+    ],
+    content,
+    onUpdate: ({ editor }) => {
+      // 如果是从 props 更新的，不触发 onChange
+      if (isUpdatingFromProps.current) {
+        return;
+      }
+      onChange(editor.getText());
+    },
+    editorProps: {
+      attributes: {
+        class: 'outline-none min-h-full',
+      },
+      handleKeyDown: (view, event) => {
+        // 在空标题行按 Backspace 时转换为段落
+        if (event.key === 'Backspace') {
+          const { state } = view;
+          const { selection, doc } = state;
+          const { $from } = selection;
+          const node = $from.parent;
+          
+          // 如果是标题节点且内容为空，转换为段落
+          if (node.type.name === 'heading' && node.textContent === '') {
+            const tr = state.tr.setBlockType($from.before(), $from.after(), state.schema.nodes.paragraph);
+            view.dispatch(tr);
+            return true;
+          }
+        }
+        return false;
+      },
+    },
+    onCreate: () => {
+      onReady?.();
+    },
+  });
+
+  // 当外部 content 变化时更新编辑器
+  useEffect(() => {
+    if (editor && content !== editor.getText()) {
+      isUpdatingFromProps.current = true;
+      editor.commands.setContent(content);
+      // 使用 requestAnimationFrame 确保在下一帧重置标志
+      requestAnimationFrame(() => {
+        isUpdatingFromProps.current = false;
+      });
+    }
+  }, [content, editor]);
+
+  return (
+    <>
+      <EditorContent editor={editor} className="h-full" />
+      <style>{`
+        .ProseMirror { padding: 20px; min-height: 100%; font-size: 14px; line-height: 1.8; color: #374151; }
+        .ProseMirror:focus { outline: none; }
+        .ProseMirror p { margin: 0.5em 0; }
+        .ProseMirror h1 { font-size: 1.75em; font-weight: 700; margin: 0.75em 0 0.5em; color: #111827; }
+        .ProseMirror h2 { font-size: 1.4em; font-weight: 600; margin: 0.75em 0 0.5em; color: #111827; }
+        .ProseMirror h3 { font-size: 1.15em; font-weight: 600; margin: 0.75em 0 0.5em; color: #111827; }
+        .ProseMirror h4, .ProseMirror h5, .ProseMirror h6 { font-size: 1em; font-weight: 600; margin: 0.75em 0 0.5em; color: #111827; }
+        .ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin: 0.5em 0; }
+        .ProseMirror li { margin: 0.25em 0; }
+        .ProseMirror li p { margin: 0; }
+        .ProseMirror code { background: #f3f4f6; padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; }
+        .ProseMirror pre { background: #1f2937; color: #e5e7eb; padding: 1em; border-radius: 8px; overflow-x: auto; margin: 1em 0; font-family: ui-monospace, SFMono-Regular, monospace; }
+        .ProseMirror pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+        .ProseMirror blockquote { border-left: 3px solid #f97316; padding-left: 1em; margin: 1em 0; color: #6b7280; }
+        .ProseMirror hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.5em 0; }
+        .ProseMirror strong { font-weight: 600; }
+        .ProseMirror em { font-style: italic; }
+        .ProseMirror a { color: #f97316; text-decoration: underline; cursor: pointer; }
+        .ProseMirror img { max-width: 100%; height: auto; border-radius: 8px; margin: 1em 0; }
+        .ProseMirror table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+        .ProseMirror th, .ProseMirror td { border: 1px solid #e5e7eb; padding: 0.5em 1em; text-align: left; }
+        .ProseMirror th { background: #f9fafb; font-weight: 600; }
+        .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+        .ProseMirror ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
+        .ProseMirror ul[data-type="taskList"] li > label { margin-top: 0.25em; }
+        .ProseMirror ul[data-type="taskList"] li > div { flex: 1; }
+        .ProseMirror mark { background: #fef08a; padding: 0.1em 0.2em; border-radius: 2px; }
+        .ProseMirror p.is-editor-empty:first-child::before {
+          content: attr(data-placeholder);
+          float: left;
+          color: #9ca3af;
+          pointer-events: none;
+          height: 0;
+        }
+        .ProseMirror ::selection { background: rgba(249, 115, 22, 0.2); }
+        /* 代码高亮 */
+        .ProseMirror .hljs-comment, .ProseMirror .hljs-quote { color: #6b7280; }
+        .ProseMirror .hljs-keyword, .ProseMirror .hljs-selector-tag { color: #c084fc; }
+        .ProseMirror .hljs-string, .ProseMirror .hljs-attr { color: #86efac; }
+        .ProseMirror .hljs-number, .ProseMirror .hljs-literal { color: #fbbf24; }
+        .ProseMirror .hljs-title, .ProseMirror .hljs-section { color: #60a5fa; }
+        .ProseMirror .hljs-built_in { color: #f472b6; }
+      `}</style>
+    </>
+  );
+};
 
 // 浏览器窗口组件 - 包含多个标签页，支持边缘拖拽缩放和内联编辑
 export const PromptBrowserWindow: React.FC<{
@@ -330,6 +756,7 @@ export const PromptBrowserWindow: React.FC<{
   activeTabId: string | null;
   categories: PromptCategory[];
   autoEditId?: string | null;
+  unsavedIds?: Set<string>;
   onTabChange: (id: string) => void;
   onTabClose: (id: string, e?: React.MouseEvent) => void;
   onMinimize: () => void;
@@ -341,83 +768,137 @@ export const PromptBrowserWindow: React.FC<{
   onEditStateChange: (promptId: string, hasChanges: boolean) => void;
   getCategoryName: (id: string | null) => string;
   getCategoryColor: (id: string | null) => string;
-}> = ({ tabs, activeTabId, categories, autoEditId, isMinimizing: isMinimizingProp, onTabChange, onTabClose, onMinimize, onClose, onSave, onCopy, onClearAutoEdit, onEditStateChange, getCategoryName, getCategoryColor }) => {
+}> = ({ tabs, activeTabId, categories, autoEditId, unsavedIds = new Set(), isMinimizing: isMinimizingProp, onTabChange, onTabClose, onMinimize, onClose, onSave, onCopy, onClearAutoEdit, onEditStateChange, getCategoryName, getCategoryColor }) => {
   const windowRef = React.useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
+  
+  // 使用 useState 存储位置和大小
+  const [position, setPosition] = useState(() => {
+    const width = 1100;
+    const height = 750;
+    const x = Math.max(20, (window.innerWidth - width) / 2);
+    const y = Math.max(20, (window.innerHeight - height) / 2 - 20);
+    return { x, y };
+  });
   const [size, setSize] = useState({ width: 1100, height: 750 });
+  
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  const [savedPosition, setSavedPosition] = useState(() => ({ ...position }));
+  const [savedSize, setSavedSize] = useState(() => ({ ...size }));
+  
   const isMinimizing = isMinimizingProp ?? false;
   const isDragging = React.useRef(false);
   const isResizing = React.useRef<string | null>(null);
   const dragOffset = React.useRef({ x: 0, y: 0 });
   const resizeStart = React.useRef({ x: 0, y: 0, width: 0, height: 0, posX: 0, posY: 0 });
 
-  // 内联编辑状态
-  const [isEditing, setIsEditing] = useState(false);
+  const activePrompt = tabs.find(t => t.id === activeTabId);
+  const activeColors = activePrompt ? getCategoryColors(getCategoryColor(activePrompt.category_id)) : { bg: 'bg-gray-100', text: 'text-gray-600' };
+
+  // 编辑状态 - 始终可编辑
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
   const [editCategoryId, setEditCategoryId] = useState('');
   const [editTags, setEditTags] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  
+  // 用于追踪原始值，判断是否有变化
+  const originalValues = React.useRef<{ title: string; content: string; categoryId: string; tags: string } | null>(null);
+  // 标记是否是用户主动编辑（而非从 props 同步）
+  const isUserEditing = React.useRef(false);
 
-  const activePrompt = tabs.find(t => t.id === activeTabId);
-  const activeColors = activePrompt ? getCategoryColors(getCategoryColor(activePrompt.category_id)) : { bg: 'bg-gray-100', text: 'text-gray-600' };
+  // 全屏切换
+  const [isFullscreenTransitioning, setIsFullscreenTransitioning] = useState(false);
+  
+  const toggleFullscreen = () => {
+    setIsFullscreenTransitioning(true);
+    if (isFullscreen) {
+      setPosition(savedPosition);
+      setSize(savedSize);
+      setIsFullscreen(false);
+    } else {
+      setSavedPosition({ ...position });
+      setSavedSize({ ...size });
+      setPosition({ x: 0, y: 0 });
+      setSize({ width: window.innerWidth, height: window.innerHeight });
+      setIsFullscreen(true);
+    }
+    // 动画结束后重置状态
+    setTimeout(() => setIsFullscreenTransitioning(false), 350);
+  };
+
+  // 复制并显示反馈
+  const handleCopy = () => {
+    onCopy(editContent);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
 
   // 检查是否有未保存的更改
   const checkHasChanges = useCallback(() => {
-    if (!activePrompt || !isEditing) return false;
-    // 新提示词不在这里检查（由 newPromptIds 跟踪）
+    if (!activePrompt || !originalValues.current) return false;
     if (activePrompt.id.startsWith('temp_')) return false;
-    const tagsChanged = editTags.split(',').map(t => t.trim()).filter(Boolean).join(',') !== (activePrompt.tags || []).join(',');
-    return editTitle !== activePrompt.title || 
-           editContent !== activePrompt.content || 
-           editCategoryId !== (activePrompt.category_id || '') ||
-           tagsChanged;
-  }, [activePrompt, isEditing, editTitle, editContent, editCategoryId, editTags]);
+    
+    const orig = originalValues.current;
+    const currentTags = editTags.split(',').map(t => t.trim()).filter(Boolean).join(',');
+    const origTags = orig.tags;
+    
+    return editTitle !== orig.title || 
+           editContent !== orig.content || 
+           editCategoryId !== orig.categoryId ||
+           currentTags !== origTags;
+  }, [activePrompt, editTitle, editContent, editCategoryId, editTags]);
 
-  // 当编辑状态变化时通知父组件
+  // 当用户编辑时检查变化
+  const handleUserEdit = useCallback((field: 'title' | 'content' | 'categoryId' | 'tags', value: string) => {
+    isUserEditing.current = true;
+    
+    if (field === 'title') setEditTitle(value);
+    else if (field === 'content') setEditContent(value);
+    else if (field === 'categoryId') setEditCategoryId(value);
+    else if (field === 'tags') setEditTags(value);
+  }, []);
+
+  // 当用户编辑后检查变化状态
   useEffect(() => {
+    if (!isUserEditing.current) return;
+    isUserEditing.current = false;
+    
     if (activePrompt && !activePrompt.id.startsWith('temp_')) {
       const hasChanges = checkHasChanges();
       onEditStateChange(activePrompt.id, hasChanges);
     }
-  }, [editTitle, editContent, editCategoryId, editTags, isEditing, activePrompt]);
+  }, [editTitle, editContent, editCategoryId, editTags, activePrompt, checkHasChanges, onEditStateChange]);
 
-  // 自动进入编辑模式
+  // 切换标签页或 activePrompt 更新时同步数据
   useEffect(() => {
-    if (autoEditId && activePrompt && activePrompt.id === autoEditId && !isEditing) {
-      setEditTitle(activePrompt.title);
-      setEditContent(activePrompt.content);
-      setEditCategoryId(activePrompt.category_id || categories[0]?.id || '');
-      setEditTags(activePrompt.tags?.join(', ') || '');
-      setIsEditing(true);
-      onClearAutoEdit();
-    }
-  }, [autoEditId, activePrompt, isEditing]);
-
-  // 进入编辑模式
-  const enterEditMode = () => {
     if (activePrompt) {
-      setEditTitle(activePrompt.title);
-      setEditContent(activePrompt.content);
-      setEditCategoryId(activePrompt.category_id || categories[0]?.id || '');
-      setEditTags(activePrompt.tags?.join(', ') || '');
-      setIsEditing(true);
+      const title = activePrompt.title;
+      const content = activePrompt.content;
+      const categoryId = activePrompt.category_id || categories[0]?.id || '';
+      const tags = activePrompt.tags?.join(', ') || '';
+      
+      // 保存原始值
+      originalValues.current = {
+        title,
+        content,
+        categoryId,
+        tags: activePrompt.tags?.join(',') || ''
+      };
+      
+      // 同步到编辑状态（不触发变化检测）
+      setEditTitle(title);
+      setEditContent(content);
+      setEditCategoryId(categoryId);
+      setEditTags(tags);
+      
+      if (autoEditId && activePrompt.id === autoEditId) {
+        onClearAutoEdit();
+      }
     }
-  };
+  }, [activeTabId, activePrompt?.id, activePrompt?.title, activePrompt?.content, activePrompt?.category_id, JSON.stringify(activePrompt?.tags)]);
 
-  // 取消编辑
-  const cancelEdit = () => {
-    if (activePrompt && !activePrompt.id.startsWith('temp_')) {
-      onEditStateChange(activePrompt.id, false);
-    }
-    setIsEditing(false);
-    setEditTitle('');
-    setEditContent('');
-    setEditCategoryId('');
-    setEditTags('');
-  };
-
-  // 保存编辑
+  // 保存
   const handleSave = useCallback(async () => {
     if (!activePrompt || !editTitle.trim() || !editContent.trim()) return;
     setIsSaving(true);
@@ -432,39 +913,24 @@ export const PromptBrowserWindow: React.FC<{
       if (!activePrompt.id.startsWith('temp_')) {
         onEditStateChange(activePrompt.id, false);
       }
-      setIsEditing(false);
     } finally {
       setIsSaving(false);
     }
   }, [activePrompt, editTitle, editContent, editCategoryId, editTags, onSave, onEditStateChange]);
-
-  // 切换标签页时退出编辑模式
-  useEffect(() => {
-    if (isEditing) {
-      cancelEdit();
-    }
-  }, [activeTabId]);
 
   // Ctrl+S 保存快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        if (isEditing && !isSaving && editTitle.trim() && editContent.trim()) {
+        if (!isSaving && editTitle.trim() && editContent.trim()) {
           handleSave();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isEditing, isSaving, editTitle, editContent, handleSave]);
-
-  // 初始化居中位置
-  useEffect(() => {
-    const x = Math.max(20, (window.innerWidth - size.width) / 2);
-    const y = Math.max(20, (window.innerHeight - size.height) / 2 - 20);
-    setPosition({ x, y });
-  }, []);
+  }, [isSaving, editTitle, editContent, handleSave]);
 
   // 处理最小化动画
   const handleMinimize = () => {
@@ -513,15 +979,37 @@ export const PromptBrowserWindow: React.FC<{
         let newX = resizeStart.current.posX;
         let newY = resizeStart.current.posY;
 
-        if (dir.includes('e')) newWidth = Math.max(minW, resizeStart.current.width + dx);
-        if (dir.includes('w')) {
-          newWidth = Math.max(minW, resizeStart.current.width - dx);
-          if (newWidth > minW) newX = resizeStart.current.posX + dx;
+        // 右侧边界
+        if (dir.includes('e')) {
+          newWidth = Math.max(minW, resizeStart.current.width + dx);
         }
-        if (dir.includes('s')) newHeight = Math.max(minH, resizeStart.current.height + dy);
+        // 左侧边界 - 需要同时调整位置和宽度
+        if (dir.includes('w')) {
+          const potentialWidth = resizeStart.current.width - dx;
+          if (potentialWidth >= minW) {
+            newWidth = potentialWidth;
+            newX = resizeStart.current.posX + dx;
+          } else {
+            // 达到最小宽度时，固定右边界位置
+            newWidth = minW;
+            newX = resizeStart.current.posX + resizeStart.current.width - minW;
+          }
+        }
+        // 下侧边界
+        if (dir.includes('s')) {
+          newHeight = Math.max(minH, resizeStart.current.height + dy);
+        }
+        // 上侧边界 - 需要同时调整位置和高度
         if (dir.includes('n')) {
-          newHeight = Math.max(minH, resizeStart.current.height - dy);
-          if (newHeight > minH) newY = resizeStart.current.posY + dy;
+          const potentialHeight = resizeStart.current.height - dy;
+          if (potentialHeight >= minH) {
+            newHeight = potentialHeight;
+            newY = resizeStart.current.posY + dy;
+          } else {
+            // 达到最小高度时，固定下边界位置
+            newHeight = minH;
+            newY = resizeStart.current.posY + resizeStart.current.height - minH;
+          }
         }
 
         setSize({ width: newWidth, height: newHeight });
@@ -541,75 +1029,107 @@ export const PromptBrowserWindow: React.FC<{
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      // 确保在组件卸载时清理 body 样式
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
     };
-  }, [position, size]);
+  }, []);
 
   const resizeHandleClass = "absolute bg-transparent z-10";
 
+  // 入场动画状态
+  const [animationState, setAnimationState] = useState<'entering' | 'visible' | 'minimizing'>('entering');
+  
+  useEffect(() => {
+    // 入场动画 - 稍微延迟让浏览器准备好
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setAnimationState('visible');
+      });
+    });
+  }, []);
+
+  // 监听最小化状态
+  useEffect(() => {
+    if (isMinimizing) {
+      setAnimationState('minimizing');
+    }
+  }, [isMinimizing]);
+
   // 计算最小化目标位置（底部中央按钮位置）
-  const minimizeTarget = {
-    x: window.innerWidth / 2,
-    y: window.innerHeight - 50,
-    scale: 0.1,
+  const minimizeTargetX = window.innerWidth / 2;
+  const minimizeTargetY = window.innerHeight - 50;
+
+  // 根据动画状态计算 transform 和 opacity
+  const getAnimationStyles = () => {
+    if (animationState === 'entering') {
+      return {
+        opacity: 0,
+        transform: 'translateY(50px) scale(0.96)',
+      };
+    }
+    if (animationState === 'minimizing') {
+      const centerX = position.x + size.width / 2;
+      const centerY = position.y + size.height / 2;
+      const dx = minimizeTargetX - centerX;
+      const dy = minimizeTargetY - centerY;
+      return {
+        opacity: 0,
+        transform: `translate(${dx}px, ${dy}px) scale(0.1)`,
+      };
+    }
+    return {
+      opacity: 1,
+      transform: 'translateY(0) scale(1)',
+    };
+  };
+
+  const animStyles = getAnimationStyles();
+
+  // 计算 transition - 始终保持 opacity 和 transform 的 transition
+  const getTransition = () => {
+    const baseTransition = 'opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)';
+    
+    if (isFullscreenTransitioning) {
+      return `${baseTransition}, width 0.35s cubic-bezier(0.16, 1, 0.3, 1), height 0.35s cubic-bezier(0.16, 1, 0.3, 1), left 0.35s cubic-bezier(0.16, 1, 0.3, 1), top 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-radius 0.35s ease`;
+    }
+    return baseTransition;
   };
 
   return (
-    <motion.div 
+    <div 
       ref={windowRef}
-      initial={{ opacity: 0, scale: 0.9, y: 20 }}
-      animate={isMinimizing ? {
-        opacity: 0,
-        scale: 0.15,
-        x: minimizeTarget.x - position.x,
-        y: minimizeTarget.y - position.y,
-        borderRadius: 24,
-      } : {
-        opacity: 1,
-        scale: 1,
-        x: 0,
-        y: 0,
-      }}
-      exit={{ 
-        opacity: 0, 
-        scale: 0.9, 
-        y: 20,
-        transition: { duration: 0.2 }
-      }}
-      transition={isMinimizing ? {
-        duration: 0.35,
-        ease: [0.4, 0, 0.2, 1], // 流畅的 ease-out 曲线
-      } : {
-        type: "spring",
-        stiffness: 400,
-        damping: 30,
-      }}
       style={{ 
-        width: size.width, 
-        height: size.height, 
+        position: 'fixed',
+        width: size.width,
+        height: size.height,
         left: position.x,
         top: position.y,
-        willChange: 'transform, opacity',
+        borderRadius: isFullscreen ? 0 : 12,
         pointerEvents: isMinimizing ? 'none' : 'auto',
         zIndex: isMinimizing ? -1 : 50,
+        opacity: animStyles.opacity,
+        transform: animStyles.transform,
+        transition: getTransition(),
       }}
-      className="fixed bg-white rounded-xl shadow-2xl overflow-visible flex flex-col"
+      className="bg-white shadow-2xl overflow-visible flex flex-col"
     >
-      {/* 缩放手柄 */}
-      <div className={`${resizeHandleClass} -top-1 -left-1 w-3 h-3 cursor-nw-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'nw')} />
-      <div className={`${resizeHandleClass} -top-1 -right-1 w-3 h-3 cursor-ne-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'ne')} />
-      <div className={`${resizeHandleClass} -bottom-1 -left-1 w-3 h-3 cursor-sw-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'sw')} />
-      <div className={`${resizeHandleClass} -bottom-1 -right-1 w-3 h-3 cursor-se-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'se')} />
-      <div className={`${resizeHandleClass} -top-1 left-2 right-2 h-2 cursor-n-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'n')} />
-      <div className={`${resizeHandleClass} -bottom-1 left-2 right-2 h-2 cursor-s-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 's')} />
-      <div className={`${resizeHandleClass} -left-1 top-2 bottom-2 w-2 cursor-w-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'w')} />
-      <div className={`${resizeHandleClass} -right-1 top-2 bottom-2 w-2 cursor-e-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'e')} />
+      {/* 缩放手柄 - 全屏时隐藏 */}
+      {!isFullscreen && (
+        <>
+          <div className={`${resizeHandleClass} -top-1 -left-1 w-3 h-3 cursor-nw-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'nw')} />
+          <div className={`${resizeHandleClass} -top-1 -right-1 w-3 h-3 cursor-ne-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'ne')} />
+          <div className={`${resizeHandleClass} -bottom-1 -left-1 w-3 h-3 cursor-sw-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'sw')} />
+          <div className={`${resizeHandleClass} -bottom-1 -right-1 w-3 h-3 cursor-se-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'se')} />
+          <div className={`${resizeHandleClass} -top-1 left-2 right-2 h-2 cursor-n-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'n')} />
+          <div className={`${resizeHandleClass} -bottom-1 left-2 right-2 h-2 cursor-s-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 's')} />
+          <div className={`${resizeHandleClass} -left-1 top-2 bottom-2 w-2 cursor-w-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'w')} />
+          <div className={`${resizeHandleClass} -right-1 top-2 bottom-2 w-2 cursor-e-resize`} onMouseDown={(e) => handleResizeMouseDown(e, 'e')} />
+        </>
+      )}
       {/* 标题栏 + 标签页 */}
       <div 
-        onMouseDown={handleTitleMouseDown}
-        className="bg-gradient-to-b from-gray-100 to-gray-200 border-b border-gray-300 cursor-grab active:cursor-grabbing select-none shrink-0 rounded-t-xl"
+        onMouseDown={!isFullscreen ? handleTitleMouseDown : undefined}
+        className={`bg-gradient-to-b from-gray-100 to-gray-200 border-b border-gray-300 select-none shrink-0 ${isFullscreen ? 'rounded-t-none' : 'rounded-t-xl cursor-grab active:cursor-grabbing'}`}
       >
         {/* 顶部控制栏 */}
         <div className="h-11 flex items-center px-3">
@@ -620,7 +1140,15 @@ export const PromptBrowserWindow: React.FC<{
             <button onClick={handleMinimize} className="w-3 h-3 rounded-full bg-[#FEBC2E] hover:bg-[#FEBC2E]/80 transition-colors group flex items-center justify-center">
               <svg className="w-2 h-2 text-[#995700] opacity-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14" /></svg>
             </button>
-            <button className="w-3 h-3 rounded-full bg-[#28C840] hover:bg-[#28C840]/80 transition-colors" />
+            <button onClick={toggleFullscreen} className="w-3 h-3 rounded-full bg-[#28C840] hover:bg-[#28C840]/80 transition-colors group flex items-center justify-center">
+              <svg className="w-2 h-2 text-[#006500] opacity-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                {isFullscreen ? (
+                  <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
+                ) : (
+                  <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
+                )}
+              </svg>
+            </button>
           </div>
           <div className="flex-1 text-center">
             <span className="text-xs text-gray-500 font-medium">Prompts</span>
@@ -632,6 +1160,7 @@ export const PromptBrowserWindow: React.FC<{
         <div className="h-9 flex items-end px-2 gap-1 overflow-x-auto">
           {tabs.map(tab => {
             const isActive = tab.id === activeTabId;
+            const isUnsaved = unsavedIds.has(tab.id);
             const colors = getCategoryColors(getCategoryColor(tab.category_id));
             return (
               <div
@@ -646,7 +1175,13 @@ export const PromptBrowserWindow: React.FC<{
                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                   </svg>
                 </div>
-                <span className={`text-xs truncate ${isActive ? 'text-gray-800 font-medium' : 'text-gray-600'}`}>{tab.title}</span>
+                <span className={`text-xs truncate relative ${isActive ? 'text-gray-800 font-medium' : 'text-gray-600'}`}>
+                  {tab.title}
+                  {/* 未保存指示器 - 标题右上角闪动 */}
+                  {isUnsaved && (
+                    <span className="absolute -top-1 -right-2.5 w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" />
+                  )}
+                </span>
                 <button
                   onClick={(e) => onTabClose(tab.id, e)}
                   className={`shrink-0 p-0.5 rounded hover:bg-gray-300 transition-opacity ${isActive ? 'text-gray-400 hover:text-gray-600' : 'text-gray-400 opacity-0 group-hover:opacity-100'}`}
@@ -678,53 +1213,43 @@ export const PromptBrowserWindow: React.FC<{
           </svg>
           {activePrompt ? (
             <span className="text-xs text-gray-500">
-              lumina://prompts/<span className="text-gray-700">{getCategoryName(activePrompt.category_id)}</span>/<span className="text-primary font-medium">{isEditing ? editTitle : activePrompt.title}</span>
+              lumina://prompts/<span className="text-gray-700">{getCategoryName(activePrompt.category_id)}</span>/<span className="text-primary font-medium">{editTitle || activePrompt.title}</span>
             </span>
           ) : (
             <span className="text-xs text-gray-400">选择一个标签页</span>
           )}
         </div>
-        {/* 编辑/保存/取消按钮 */}
+        {/* 保存按钮 */}
         {activePrompt && (
-          <div className="flex items-center gap-1">
-            {isEditing ? (
-              <>
-                <button
-                  onClick={cancelEdit}
-                  disabled={isSaving}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-50"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={isSaving || !editTitle.trim() || !editContent.trim()}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1"
-                >
-                  {isSaving ? (
-                    <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-                      <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><path d="M17 21v-8H7v8M7 3v5h8" />
-                    </svg>
-                  )}
-                  保存
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={enterEditMode}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors flex items-center gap-1"
-              >
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                </svg>
-                编辑
-              </button>
+          <div className="flex items-center gap-2">
+            {/* 未保存提示 */}
+            {unsavedIds.has(activePrompt.id) && (
+              <span className="text-xs text-orange-500 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" />
+                未保存
+              </span>
             )}
+            <button
+              onClick={handleSave}
+              disabled={isSaving || !editTitle.trim() || !editContent.trim()}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
+                unsavedIds.has(activePrompt.id)
+                  ? 'bg-orange-500 text-white hover:bg-orange-600 shadow-sm shadow-orange-200'
+                  : 'bg-primary text-white hover:bg-primary/90'
+              } disabled:opacity-50`}
+            >
+              {isSaving ? (
+                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                  <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><path d="M17 21v-8H7v8M7 3v5h8" />
+                </svg>
+              )}
+              保存
+            </button>
           </div>
         )}
       </div>
@@ -733,100 +1258,77 @@ export const PromptBrowserWindow: React.FC<{
       <div className="flex-1 overflow-y-auto bg-[#FAFAFA]">
         {activePrompt ? (
           <div className="h-full flex flex-col p-6">
-            {isEditing ? (
-              /* 编辑模式 - 紧凑布局，内容占大头 */
-              <div className="h-full flex flex-col gap-4">
-                {/* 顶部信息栏 - 紧凑 */}
-                <div className="flex items-center gap-4 shrink-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">分类</span>
-                    <select
-                      value={editCategoryId}
-                      onChange={(e) => setEditCategoryId(e.target.value)}
-                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
-                    >
-                      {categories.map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      className="w-full text-xl font-semibold text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:ring-2 ring-primary/20"
-                      placeholder="输入标题..."
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">标签</span>
-                    <input
-                      type="text"
-                      value={editTags}
-                      onChange={(e) => setEditTags(e.target.value)}
-                      className="w-48 px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
-                      placeholder="逗号分隔..."
-                    />
-                  </div>
+            {/* 始终可编辑 - 紧凑布局，内容占大头 */}
+            <div className="h-full flex flex-col gap-4">
+              {/* 顶部信息栏 - 紧凑 */}
+              <div className="flex items-center gap-4 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">分类</span>
+                  <select
+                    value={editCategoryId}
+                    onChange={(e) => handleUserEdit('categoryId', e.target.value)}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
+                  >
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
                 </div>
-
-                {/* 内容编辑 - 占满剩余空间 */}
-                <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <textarea
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                    className="w-full h-full text-gray-700 leading-relaxed text-sm p-5 outline-none resize-none"
-                    placeholder="输入提示词内容..."
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => handleUserEdit('title', e.target.value)}
+                    className="w-full text-xl font-semibold text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:ring-2 ring-primary/20"
+                    placeholder="输入标题..."
                   />
                 </div>
-              </div>
-            ) : (
-              /* 查看模式 - 内容占大头 */
-              <div className="h-full flex flex-col">
-                {/* 头部信息 - 紧凑 */}
-                <div className="flex items-center gap-4 mb-4 shrink-0">
-                  <span className={`px-2.5 py-1 rounded-lg text-xs font-bold tracking-wider uppercase ${activeColors.bg} ${activeColors.text}`}>
-                    {getCategoryName(activePrompt.category_id)}
-                  </span>
-                  <h1 className="text-2xl font-bold text-gray-900 flex-1">{activePrompt.title}</h1>
-                  <div className="flex items-center gap-4 text-xs text-gray-400">
-                    <span>{new Date(activePrompt.created_at).toLocaleDateString('zh-CN')}</span>
-                    <span>{activePrompt.content.length} 字符</span>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">标签</span>
+                  <input
+                    type="text"
+                    value={editTags}
+                    onChange={(e) => handleUserEdit('tags', e.target.value)}
+                    className="w-48 px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
+                    placeholder="逗号分隔..."
+                  />
                 </div>
-
-                {/* 内容卡片 - 占满剩余空间 */}
-                <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
-                    <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">提示词内容</span>
-                    <button onClick={() => onCopy(activePrompt.content)} className="text-xs text-primary hover:text-primary/80 font-medium flex items-center gap-1">
+                {/* 复制按钮 */}
+                <button 
+                  onClick={handleCopy} 
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                    isCopied 
+                      ? 'bg-green-500 text-white' 
+                      : 'text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {isCopied ? (
+                    <>
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                      已复制
+                    </>
+                  ) : (
+                    <>
                       <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
                       </svg>
                       复制
-                    </button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-5">
-                    <p className="text-gray-700 whitespace-pre-wrap leading-relaxed text-sm">{activePrompt.content}</p>
-                  </div>
-                </div>
-
-                {/* 标签 - 底部紧凑 */}
-                {activePrompt.tags && activePrompt.tags.length > 0 && (
-                  <div className="flex items-center gap-2 mt-3 shrink-0">
-                    <span className="text-xs text-gray-400">标签:</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {activePrompt.tags.map(tag => (
-                        <span key={tag} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-500 rounded-md">
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                    </>
+                  )}
+                </button>
               </div>
-            )}
+
+              {/* 内容编辑 - Tiptap WYSIWYG */}
+              <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-y-auto">
+                <TiptapEditor
+                  content={editContent}
+                  onChange={(content) => handleUserEdit('content', content)}
+                  placeholder="输入提示词内容，支持 Markdown 语法..."
+                />
+              </div>
+            </div>
           </div>
         ) : (
           <div className="h-full flex items-center justify-center">
@@ -839,6 +1341,6 @@ export const PromptBrowserWindow: React.FC<{
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 };
