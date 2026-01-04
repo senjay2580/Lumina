@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { marked } from 'marked';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -17,6 +18,12 @@ import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
+
+// 配置 marked
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
 import { ContextMenu, useContextMenu, ContextMenuItem } from '../shared/ContextMenu';
 import { Modal } from '../shared/Modal';
 import { ToastContainer } from '../shared/Toast';
@@ -30,6 +37,13 @@ const lowlight = createLowlight(common);
 
 type PromptCategory = api.PromptCategory;
 type Prompt = api.Prompt;
+
+// 从 HTML 中提取纯文本（用于预览）
+const stripHtml = (html: string): string => {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+};
 
 const getCategoryColors = (color: string) => {
   const colors: Record<string, { bg: string; text: string }> = {
@@ -67,6 +81,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
   // 批量选择模式
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedPromptIds, setSelectedPromptIds] = useState<Set<string>>(new Set());
+  const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const promptMenu = useContextMenu();
@@ -208,7 +223,9 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
 
   // 导出单个提示词为 Markdown 文件
   const handleExportPrompt = (prompt: Prompt) => {
-    const md = `# ${prompt.title}\n\n\`\`\`css\n${prompt.content}\n\`\`\``;
+    // 从 HTML 中提取纯文本
+    const plainContent = stripHtml(prompt.content);
+    const md = `# ${prompt.title}\n\n${plainContent}`;
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -246,7 +263,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
       return;
     }
     const selectedPrompts = prompts.filter(p => selectedPromptIds.has(p.id));
-    const md = selectedPrompts.map(p => `# ${p.title}\n\n\`\`\`css\n${p.content}\n\`\`\``).join('\n\n---\n\n');
+    const md = selectedPrompts.map(p => `# ${p.title}\n\n${stripHtml(p.content)}`).join('\n\n---\n\n');
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -284,7 +301,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
             <span>创建于: ${new Date(prompt.created_at).toLocaleDateString('zh-CN')}</span>
           </div>
           <div style="height: 1px; background: #eee; margin: 16px 0;"></div>
-          <div style="font-size: 14px; line-height: 1.8; color: #333; white-space: pre-wrap; word-break: break-word;">${prompt.content}</div>
+          <div style="font-size: 14px; line-height: 1.8; color: #333; word-break: break-word;">${prompt.content}</div>
         </div>
       `).join('<div style="height: 40px;"></div>');
 
@@ -334,21 +351,26 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setIsImporting(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
       const content = event.target?.result as string;
       if (!content?.trim()) {
         toast.error('文件内容为空');
+        setIsImporting(false);
         return;
       }
 
       // 用文件名（去掉扩展名）作为标题
       const title = file.name.replace(/\.md$/i, '');
+      
+      // 将 Markdown 转换为 HTML
+      const htmlContent = await marked.parse(content.trim());
 
       try {
         const created = await api.createPrompt(userId, {
           title,
-          content: content.trim(),
+          content: htmlContent,
           category_id: categories[0]?.id || null,
           tags: []
         });
@@ -357,7 +379,13 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
       } catch (err: any) {
         console.error('导入失败:', err);
         toast.error(err.message || '导入失败');
+      } finally {
+        setIsImporting(false);
       }
+    };
+    reader.onerror = () => {
+      toast.error('读取文件失败');
+      setIsImporting(false);
     };
     reader.readAsText(file);
     
@@ -403,13 +431,22 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
               accept=".md"
               onChange={handleImportMD}
               className="hidden"
+              disabled={isImporting}
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="p-2.5 rounded-xl bg-white border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-all"
+              disabled={isImporting}
+              className={`p-2.5 rounded-xl border transition-all ${isImporting ? 'bg-gray-100 border-gray-200 cursor-not-allowed' : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
               title="导入提示词"
             >
-              <ImportIcon className="w-5 h-5" />
+              {isImporting ? (
+                <svg className="w-5 h-5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+                  <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <ImportIcon className="w-5 h-5" />
+              )}
             </button>
             {/* 导出按钮 */}
             <button
@@ -466,7 +503,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
                   )}
                 </div>
                 <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-primary transition-colors">{prompt.title}</h3>
-                <p className="text-sm text-gray-500 line-clamp-3 mb-4">{prompt.content}</p>
+                <p className="text-sm text-gray-500 line-clamp-3 mb-4">{stripHtml(prompt.content)}</p>
                 <div className="flex flex-wrap gap-2">{prompt.tags?.map(tag => <span key={tag} className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">#{tag}</span>)}</div>
               </div>
             );
@@ -608,12 +645,164 @@ const ExportIcon: React.FC<{ className?: string }> = ({ className }) => <svg cla
 const ImportIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>;
 const PdfIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>;
 
+// 目录项类型
+interface TocItem {
+  id: string;
+  level: number;
+  text: string;
+}
+
+// 独立的目录按钮组件 - 固定在容器右上角
+const TocButton: React.FC<{
+  content: string;
+  editorContainerSelector: string;
+}> = ({ content, editorContainerSelector }) => {
+  const [tocItems, setTocItems] = useState<TocItem[]>([]);
+  const [isTocOpen, setIsTocOpen] = useState(false);
+  const [activeTocIndex, setActiveTocIndex] = useState<number | null>(null);
+  const [maxHeight, setMaxHeight] = useState(400);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // 从 HTML 内容中提取标题
+  useEffect(() => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    const headings = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const items: TocItem[] = [];
+    headings.forEach((heading, index) => {
+      items.push({
+        id: `toc-${index}`,
+        level: parseInt(heading.tagName[1]),
+        text: heading.textContent || '',
+      });
+    });
+    setTocItems(items);
+  }, [content]);
+
+  // 计算可用高度
+  useEffect(() => {
+    const updateHeight = () => {
+      if (containerRef.current) {
+        const parent = containerRef.current.closest('.flex-1.relative');
+        if (parent) {
+          const rect = parent.getBoundingClientRect();
+          setMaxHeight(Math.max(200, rect.height - 24));
+        }
+      }
+    };
+    
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
+  }, [isTocOpen]);
+
+  // 点击目录项跳转
+  const scrollToHeading = useCallback((index: number) => {
+    const container = containerRef.current?.closest('.overflow-y-auto');
+    if (!container) return;
+    
+    const headings = container.querySelectorAll(editorContainerSelector + ' h1, ' + editorContainerSelector + ' h2, ' + editorContainerSelector + ' h3, ' + editorContainerSelector + ' h4, ' + editorContainerSelector + ' h5, ' + editorContainerSelector + ' h6');
+    const targetHeading = headings[index] as HTMLElement;
+    
+    if (targetHeading) {
+      const containerRect = container.getBoundingClientRect();
+      const headingRect = targetHeading.getBoundingClientRect();
+      const scrollTop = container.scrollTop + (headingRect.top - containerRect.top) - 20;
+      
+      container.scrollTo({
+        top: scrollTop,
+        behavior: 'smooth'
+      });
+      
+      // 高亮效果
+      targetHeading.style.transition = 'background-color 0.3s';
+      targetHeading.style.backgroundColor = 'rgba(249, 115, 22, 0.25)';
+      targetHeading.style.borderRadius = '4px';
+      setTimeout(() => {
+        targetHeading.style.backgroundColor = '';
+        setTimeout(() => {
+          targetHeading.style.transition = '';
+          targetHeading.style.borderRadius = '';
+        }, 300);
+      }, 1500);
+    }
+    setActiveTocIndex(index);
+  }, [editorContainerSelector]);
+
+  if (tocItems.length === 0) return null;
+
+  return (
+    <div ref={containerRef} className="absolute top-3 right-3 z-30">
+      <button
+        onClick={() => setIsTocOpen(!isTocOpen)}
+        className={`p-2 rounded-lg transition-all ${isTocOpen ? 'bg-primary text-white shadow-lg' : 'bg-white text-gray-500 hover:bg-gray-100 shadow-md border border-gray-200'}`}
+        title={isTocOpen ? '关闭目录' : '打开目录'}
+      >
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 6h16M4 12h16M4 18h10" />
+        </svg>
+      </button>
+      
+      <AnimatePresence>
+        {isTocOpen && (
+          <motion.div
+            initial={{ opacity: 0, x: 10, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 10, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+            className="absolute top-0 right-10 w-64 rounded-xl shadow-2xl border border-white/20"
+            style={{ 
+              maxHeight: maxHeight,
+              background: 'rgba(255, 255, 255, 0.92)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+            }}
+          >
+            <div className="px-3 py-2 border-b border-gray-200/50 flex items-center justify-between shrink-0">
+              <span className="text-xs font-medium text-gray-600">目录</span>
+              <span className="text-xs text-gray-400">{tocItems.length} 项</span>
+            </div>
+            <div 
+              className="overflow-y-auto p-2 scrollbar-hide" 
+              style={{ maxHeight: maxHeight - 40 }}
+            >
+              {tocItems.map((item, index) => (
+                <button
+                  key={item.id}
+                  onClick={() => scrollToHeading(index)}
+                  className={`w-full text-left px-2 py-1.5 rounded-lg text-sm transition-colors truncate ${
+                    activeTocIndex === index 
+                      ? 'bg-primary/15 text-primary font-medium' 
+                      : 'text-gray-700 hover:bg-white/60 hover:text-orange-600'
+                  }`}
+                  style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
+                >
+                  <span className={`${item.level === 1 ? 'font-medium' : ''}`}>
+                    {item.text || '(空标题)'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      {/* 隐藏滚动条样式 */}
+      <style>{`
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
+    </div>
+  );
+};
+
 // Tiptap 编辑器组件 - 完整 MD 功能
 const TiptapEditor: React.FC<{
   content: string;
   onChange: (content: string) => void;
   placeholder?: string;
   onReady?: () => void;
+  showToc?: boolean;
 }> = ({ content, onChange, placeholder, onReady }) => {
   const isUpdatingFromProps = React.useRef(false);
   
@@ -658,7 +847,8 @@ const TiptapEditor: React.FC<{
       if (isUpdatingFromProps.current) {
         return;
       }
-      onChange(editor.getText());
+      // 使用 getHTML() 保留格式
+      onChange(editor.getHTML());
     },
     editorProps: {
       attributes: {
@@ -668,7 +858,7 @@ const TiptapEditor: React.FC<{
         // 在空标题行按 Backspace 时转换为段落
         if (event.key === 'Backspace') {
           const { state } = view;
-          const { selection, doc } = state;
+          const { selection } = state;
           const { $from } = selection;
           const node = $from.parent;
           
@@ -689,7 +879,7 @@ const TiptapEditor: React.FC<{
 
   // 当外部 content 变化时更新编辑器
   useEffect(() => {
-    if (editor && content !== editor.getText()) {
+    if (editor && content !== editor.getHTML()) {
       isUpdatingFromProps.current = true;
       editor.commands.setContent(content);
       // 使用 requestAnimationFrame 确保在下一帧重置标志
@@ -700,8 +890,9 @@ const TiptapEditor: React.FC<{
   }, [content, editor]);
 
   return (
-    <>
+    <div className="h-full">
       <EditorContent editor={editor} className="h-full" />
+      
       <style>{`
         .ProseMirror { padding: 20px; min-height: 100%; font-size: 14px; line-height: 1.8; color: #374151; }
         .ProseMirror:focus { outline: none; }
@@ -746,7 +937,7 @@ const TiptapEditor: React.FC<{
         .ProseMirror .hljs-title, .ProseMirror .hljs-section { color: #60a5fa; }
         .ProseMirror .hljs-built_in { color: #f472b6; }
       `}</style>
-    </>
+    </div>
   );
 };
 
@@ -811,20 +1002,25 @@ export const PromptBrowserWindow: React.FC<{
   const [isFullscreenTransitioning, setIsFullscreenTransitioning] = useState(false);
   
   const toggleFullscreen = () => {
+    // 先设置 transitioning 状态，让内容区域简化渲染
     setIsFullscreenTransitioning(true);
-    if (isFullscreen) {
-      setPosition(savedPosition);
-      setSize(savedSize);
-      setIsFullscreen(false);
-    } else {
-      setSavedPosition({ ...position });
-      setSavedSize({ ...size });
-      setPosition({ x: 0, y: 0 });
-      setSize({ width: window.innerWidth, height: window.innerHeight });
-      setIsFullscreen(true);
-    }
-    // 动画结束后重置状态
-    setTimeout(() => setIsFullscreenTransitioning(false), 350);
+    
+    // 使用 requestAnimationFrame 确保状态更新后再开始动画
+    requestAnimationFrame(() => {
+      if (isFullscreen) {
+        setPosition(savedPosition);
+        setSize(savedSize);
+        setIsFullscreen(false);
+      } else {
+        setSavedPosition({ ...position });
+        setSavedSize({ ...size });
+        setPosition({ x: 0, y: 0 });
+        setSize({ width: window.innerWidth, height: window.innerHeight });
+        setIsFullscreen(true);
+      }
+      // 动画结束后重置状态
+      setTimeout(() => setIsFullscreenTransitioning(false), 380);
+    });
   };
 
   // 复制并显示反馈
@@ -1110,6 +1306,7 @@ export const PromptBrowserWindow: React.FC<{
         opacity: animStyles.opacity,
         transform: animStyles.transform,
         transition: getTransition(),
+        willChange: isFullscreenTransitioning ? 'width, height, left, top, transform, opacity' : 'auto',
       }}
       className="bg-white shadow-2xl overflow-visible flex flex-col"
     >
@@ -1307,26 +1504,43 @@ export const PromptBrowserWindow: React.FC<{
                       <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M20 6L9 17l-5-5" />
                       </svg>
-                      已复制
+                
                     </>
                   ) : (
                     <>
                       <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
                       </svg>
-                      复制
+                
                     </>
                   )}
                 </button>
               </div>
 
               {/* 内容编辑 - Tiptap WYSIWYG */}
-              <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm overflow-y-auto">
-                <TiptapEditor
-                  content={editContent}
-                  onChange={(content) => handleUserEdit('content', content)}
-                  placeholder="输入提示词内容，支持 Markdown 语法..."
-                />
+              <div className="flex-1 relative" style={{ overflow: 'visible' }}>
+                {/* 目录按钮 - 固定在编辑器右上角，不随内容滚动 */}
+                <TocButton content={editContent} editorContainerSelector=".ProseMirror" />
+                
+                <div 
+                  className="absolute inset-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-y-auto scrollbar-hide"
+                  style={{
+                    // 全屏切换时优化渲染性能
+                    contain: isFullscreenTransitioning ? 'strict' : 'none',
+                  }}
+                >
+                  <TiptapEditor
+                    content={editContent}
+                    onChange={(content) => handleUserEdit('content', content)}
+                    placeholder="输入提示词内容，支持 Markdown 语法..."
+                    showToc={false}
+                  />
+                </div>
+                {/* 隐藏滚动条样式 */}
+                <style>{`
+                  .scrollbar-hide::-webkit-scrollbar { display: none; }
+                  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+                `}</style>
               </div>
             </div>
           </div>

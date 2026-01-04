@@ -287,7 +287,11 @@ const App: React.FC = () => {
             }}
             onCopy={async (content) => {
               try {
-                await navigator.clipboard.writeText(content);
+                // 从 HTML 中提取纯文本
+                const tmp = document.createElement('div');
+                tmp.innerHTML = content;
+                const plainText = tmp.textContent || tmp.innerText || content;
+                await navigator.clipboard.writeText(plainText);
                 toast.success('已复制到剪贴板');
               } catch {
                 toast.error('复制失败');
