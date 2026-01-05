@@ -1,8 +1,23 @@
 import React, { useState, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { getStoredUser } from '../lib/auth';
 import { preloadTrashData } from '../lib/usePreloadData';
 
-export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'SETTINGS' | 'TRASH';
+export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'SETTINGS' | 'TRASH';
+
+// 提示词采集图标（地球）
+const CrawlerIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} viewBox="0 0 48 48" fill="currentColor">
+    <path fillRule="evenodd" d="M16.392 6.312a19.33 19.33 0 0 0-8.944 7.854h5.991c.47-2.082 1.09-3.996 1.836-5.677a21 21 0 0 1 1.117-2.177M4.75 24c0-1.49.17-2.941.49-4.334h7.346A48 48 0 0 0 12.393 24c0 1.476.065 2.925.193 4.332H5.239A19.3 19.3 0 0 1 4.75 24m2.697 9.832a19.33 19.33 0 0 0 8.945 7.856a21 21 0 0 1-1.117-2.177c-.747-1.681-1.366-3.596-1.836-5.679zm11.139 0a24.4 24.4 0 0 0 1.259 3.649c.739 1.664 1.554 2.855 2.334 3.597c.766.73 1.377.922 1.82.922s1.055-.192 1.822-.922c.779-.742 1.595-1.933 2.334-3.597c.477-1.075.902-2.3 1.259-3.649zm15.975 0c-.47 2.083-1.09 3.998-1.837 5.679a21 21 0 0 1-1.117 2.177a19.33 19.33 0 0 0 8.946-7.856zm8.2-5.5h-7.347A48 48 0 0 0 35.607 24c0-1.477-.066-2.926-.193-4.334h7.346c.32 1.393.49 2.844.49 4.334s-.17 2.94-.49 4.332m-12.37 0H17.608A43 43 0 0 1 17.393 24c0-1.5.075-2.95.216-4.334H30.39c.14 1.384.216 2.835.216 4.334s-.075 2.948-.216 4.332m4.17-14.166h5.991a19.33 19.33 0 0 0-8.945-7.854c.406.684.778 1.415 1.117 2.177c.747 1.68 1.366 3.595 1.836 5.677m-14.716-3.647a24.4 24.4 0 0 0-1.259 3.647h10.827a24.4 24.4 0 0 0-1.258-3.647c-.74-1.664-1.555-2.855-2.334-3.597C25.054 6.192 24.443 6 24 6s-1.055.192-1.821.922c-.78.742-1.595 1.933-2.334 3.597M24 .75C11.16.75.75 11.16.75 24S11.16 47.25 24 47.25S47.25 36.84 47.25 24S36.84.75 24 .75" clipRule="evenodd"/>
+  </svg>
+);
+
+// 提示词库图标（抽屉）
+const PromptLibraryIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M6 10H4v10h16V10h-9q-.425 0-.712-.288T10 9t.288-.712T11 8h9q.825 0 1.413.588T22 10v10q0 .825-.587 1.413T20 22H4q-.825 0-1.412-.587T2 20V10q0-.825.588-1.412T4 8h2V3q0-.425.288-.712T7 2h6q.425 0 .713.288T14 3v2q0 .425-.288.713T13 6H8v7q0 .425-.288.713T7 14t-.712-.288T6 13zm-2 0v10zv4z"/>
+  </svg>
+);
 
 interface SidebarProps {
   currentView: ViewType;
@@ -15,6 +30,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, collapsed = false, onCollapsedChange, username, onLogout }) => {
   const [isCollapsed, setIsCollapsed] = useState(collapsed);
+  const [promptsExpanded, setPromptsExpanded] = useState(true);
   const user = getStoredUser();
 
   const handleToggle = () => {
@@ -30,7 +46,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
     }
   }, [user?.id, currentView]);
 
-  // 主导航项（不包含设置）
+  // 判断是否在提示词相关页面
+  const isPromptsActive = currentView === 'PROMPTS' || currentView === 'CRAWLER';
+
+  // 主导航项（不包含设置和提示词子菜单）
   const mainNavItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
     {
       id: 'HOME',
@@ -52,18 +71,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
       )
     },
     {
-      id: 'PROMPTS',
-      label: '提示词',
-      icon: (
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-          <line x1="16" y1="13" x2="8" y2="13" />
-          <line x1="16" y1="17" x2="8" y2="17" />
-        </svg>
-      )
-    },
-    {
       id: 'TRASH',
       label: '回收站',
       icon: (
@@ -71,6 +78,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
           <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
         </svg>
       )
+    }
+  ];
+
+  // 提示词子菜单项
+  const promptSubItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
+    {
+      id: 'PROMPTS',
+      label: '提示词库',
+      icon: <PromptLibraryIcon className="w-4 h-4" />
+    },
+    {
+      id: 'CRAWLER',
+      label: '采集',
+      icon: <CrawlerIcon className="w-4 h-4" />
     }
   ];
 
@@ -123,7 +144,111 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
 
       {/* 主导航 */}
       <nav className={`flex-1 py-4 space-y-1 relative z-10 ${isCollapsed ? 'px-2' : 'px-3'}`}>
-        {mainNavItems.map((item) => {
+        {/* 主页和工作流 */}
+        {mainNavItems.slice(0, 2).map((item) => {
+          const isActive = currentView === item.id;
+          return (
+            <button 
+              key={item.id} 
+              onClick={() => onViewChange(item.id)}
+              title={isCollapsed ? item.label : undefined}
+              className={`w-full flex items-center gap-3 rounded-xl transition-all ${
+                isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
+              } ${
+                isActive 
+                  ? 'bg-white/80 shadow-sm text-gray-900 backdrop-blur-sm' 
+                  : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
+              }`}
+            >
+              {isActive && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
+              <span className={isActive ? 'text-primary' : ''}>{item.icon}</span>
+              {!isCollapsed && <span className="font-medium text-sm">{item.label}</span>}
+            </button>
+          );
+        })}
+
+        {/* 提示词树形菜单 */}
+        <div>
+          <button 
+            onClick={() => {
+              if (isCollapsed) {
+                onViewChange('PROMPTS');
+              } else {
+                setPromptsExpanded(!promptsExpanded);
+              }
+            }}
+            title={isCollapsed ? '提示词' : undefined}
+            className={`w-full flex items-center gap-3 rounded-xl transition-all ${
+              isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
+            } ${
+              isPromptsActive 
+                ? 'bg-white/80 shadow-sm text-gray-900 backdrop-blur-sm' 
+                : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
+            }`}
+          >
+            {isPromptsActive && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
+            <span className={isPromptsActive ? 'text-primary' : ''}>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+            </span>
+            {!isCollapsed && (
+              <>
+                <span className="font-medium text-sm flex-1 text-left">提示词</span>
+                <svg 
+                  className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${promptsExpanded ? 'rotate-90' : ''}`}
+                  viewBox="0 0 24 24" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  strokeWidth="2"
+                >
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </>
+            )}
+          </button>
+
+          {/* 子菜单 */}
+          {!isCollapsed && (
+            <AnimatePresence>
+              {promptsExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="ml-4 mt-1 space-y-0.5 border-l-2 border-gray-200/60 pl-3">
+                    {promptSubItems.map((item) => {
+                      const isActive = currentView === item.id;
+                      return (
+                        <button 
+                          key={item.id} 
+                          onClick={() => onViewChange(item.id)}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-all ${
+                            isActive 
+                              ? 'bg-primary/10 text-primary' 
+                              : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
+                          }`}
+                        >
+                          <span className={isActive ? 'text-primary' : ''}>{item.icon}</span>
+                          <span className="font-medium text-sm">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          )}
+        </div>
+
+        {/* 回收站 */}
+        {mainNavItems.slice(2).map((item) => {
           const isActive = currentView === item.id;
           return (
             <button 

@@ -5,6 +5,7 @@ import { PromptManager, PromptBrowserWindow } from './components/PromptManager';
 import { HomePage } from './components/HomePage';
 import { SettingsPage } from './components/SettingsPage';
 import { TrashPage } from './components/TrashPage';
+import PromptCrawlerPage from './components/PromptCrawlerPage';
 import { Sidebar, ViewType } from './components/Sidebar';
 import { AuthPage } from './components/AuthPage';
 import { User, clearUser, validateStoredUser, getStoredUser } from './lib/auth';
@@ -19,6 +20,7 @@ const VIEW_ROUTES: Record<ViewType, string> = {
   HOME: '',
   WORKFLOW: 'workflow',
   PROMPTS: 'prompts',
+  CRAWLER: 'crawler',
   SETTINGS: 'settings',
   TRASH: 'trash',
 };
@@ -27,6 +29,7 @@ const ROUTE_VIEWS: Record<string, ViewType> = {
   '': 'HOME',
   'workflow': 'WORKFLOW',
   'prompts': 'PROMPTS',
+  'crawler': 'CRAWLER',
   'settings': 'SETTINGS',
   'trash': 'TRASH',
 };
@@ -56,9 +59,24 @@ const App: React.FC = () => {
   const [pendingNavigation, setPendingNavigation] = useState<{ view: ViewType; workflowId?: string } | null>(null);
   const [unsavedConfirm, setUnsavedConfirm] = useState<{ open: boolean; promptId: string | null; action: 'close' | 'closeAll' }>({ open: false, promptId: null, action: 'close' });
 
+  // 角色库标签页状态
+  const [showRoleLibrary, setShowRoleLibrary] = useState(false); // 角色库 tab 是否存在
+  const [isRoleLibraryActive, setIsRoleLibraryActive] = useState(false); // 角色库内容是否激活显示
+
   // 全局提示词浏览器状态
   const promptBrowser = usePromptBrowser();
   const toast = useToast();
+
+  // 监听打开角色库事件
+  useEffect(() => {
+    const handleOpenRoleLibrary = () => {
+      setShowRoleLibrary(true);
+      setIsRoleLibraryActive(true);
+      promptBrowser.setIsBrowserMinimized(false);
+    };
+    window.addEventListener('open-role-library', handleOpenRoleLibrary);
+    return () => window.removeEventListener('open-role-library', handleOpenRoleLibrary);
+  }, [promptBrowser]);
 
   // 预加载数据
   usePreloadData(user?.id);
@@ -200,6 +218,7 @@ const App: React.FC = () => {
           {currentView === 'HOME' && <HomePage username={user.username} onNavigate={handleNavigate} onOpenWorkflow={handleOpenWorkflow} />}
           {currentView === 'WORKFLOW' && <WorkflowEditor onBack={() => handleNavigate('HOME')} workflowId={selectedWorkflowId} onUnsavedChange={setWorkflowHasUnsaved} />}
           {currentView === 'PROMPTS' && <PromptManager promptBrowser={promptBrowser} />}
+          {currentView === 'CRAWLER' && <PromptCrawlerPage userId={user.id} />}
           {currentView === 'SETTINGS' && <SettingsPage user={user} onUserUpdate={setUser} />}
           {currentView === 'TRASH' && <TrashPage />}
         </div>
@@ -207,35 +226,53 @@ const App: React.FC = () => {
 
       {/* 全局提示词任务栏 - 居中底部 */}
       <AnimatePresence>
-        {promptBrowser.isBrowserMinimized && promptBrowser.browserTabs.length > 0 && (
+        {promptBrowser.isBrowserMinimized && (promptBrowser.browserTabs.length > 0 || showRoleLibrary) && (
           <motion.button
             initial={{ y: 20, opacity: 0, scale: 0.9 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: 20, opacity: 0, scale: 0.9 }}
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
             onClick={() => promptBrowser.setIsBrowserMinimized(false)}
-            className="fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2.5 bg-gray-900/95 backdrop-blur-sm hover:bg-gray-800 rounded-xl shadow-lg border border-gray-700 z-[60]"
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 bg-gray-900/95 backdrop-blur-sm hover:bg-gray-800 rounded-xl shadow-lg border border-gray-700 z-[60]"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <motion.div 
-              className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center"
-              animate={{ scale: [1, 1.1, 1] }}
-              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-            >
-              <svg className="w-3 h-3 text-primary" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
-            </motion.div>
-            <span className="text-sm text-gray-300 font-medium">Prompts</span>
-            <span className="text-xs text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded">{promptBrowser.browserTabs.length}</span>
+            {/* 角色库指示 */}
+            {showRoleLibrary && (
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded bg-gray-700 flex items-center justify-center">
+                  <span className="text-xs">🎭</span>
+                </div>
+                <span className="text-sm text-gray-300 font-medium">角色库</span>
+              </div>
+            )}
+            {/* 分隔线 */}
+            {showRoleLibrary && promptBrowser.browserTabs.length > 0 && (
+              <div className="w-px h-4 bg-gray-600" />
+            )}
+            {/* 提示词指示 */}
+            {promptBrowser.browserTabs.length > 0 && (
+              <div className="flex items-center gap-2">
+                <motion.div 
+                  className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center"
+                  animate={{ scale: [1, 1.1, 1] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                >
+                  <svg className="w-3 h-3 text-primary" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                  </svg>
+                </motion.div>
+                <span className="text-sm text-gray-300 font-medium">Prompts</span>
+                <span className="text-xs text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded">{promptBrowser.browserTabs.length}</span>
+              </div>
+            )}
           </motion.button>
         )}
       </AnimatePresence>
 
       {/* 全局提示词浏览器窗口 */}
       <AnimatePresence>
-        {promptBrowser.browserTabs.length > 0 && !promptBrowser.isBrowserMinimized && (
+        {(promptBrowser.browserTabs.length > 0 || showRoleLibrary) && !promptBrowser.isBrowserMinimized && (
           <PromptBrowserWindow
             key="global-prompt-browser"
             tabs={promptBrowser.browserTabs}
@@ -244,7 +281,13 @@ const App: React.FC = () => {
             autoEditId={promptBrowser.autoEditId}
             unsavedIds={new Set([...promptBrowser.newPromptIds, ...promptBrowser.editedPromptIds])}
             isMinimizing={promptBrowser.isMinimizing}
-            onTabChange={promptBrowser.setActiveTabId}
+            showRoleLibrary={showRoleLibrary}
+            isRoleLibraryActive={isRoleLibraryActive}
+            onRoleLibraryTabClick={() => setIsRoleLibraryActive(true)}
+            onTabChange={(id) => {
+              setIsRoleLibraryActive(false); // 切换到提示词 tab 时，取消角色库激活状态
+              promptBrowser.setActiveTabId(id);
+            }}
             onTabClose={(promptId, e) => {
               e?.stopPropagation();
               if (promptBrowser.newPromptIds.has(promptId) || promptBrowser.editedPromptIds.has(promptId)) {
@@ -263,6 +306,16 @@ const App: React.FC = () => {
                 return;
               }
               promptBrowser.clearAllTabs();
+              setShowRoleLibrary(false); // 同时关闭角色库
+              setIsRoleLibraryActive(false);
+            }}
+            onCloseRoleLibrary={() => {
+              setShowRoleLibrary(false);
+              setIsRoleLibraryActive(false);
+              // 如果有其他标签页，切换到第一个提示词标签页
+              if (promptBrowser.browserTabs.length > 0) {
+                promptBrowser.setActiveTabId(promptBrowser.browserTabs[0].id);
+              }
             }}
             onSave={async (prompt, data) => {
               const storedUser = getStoredUser();
@@ -285,7 +338,7 @@ const App: React.FC = () => {
                 toast.error(err.message || '保存失败');
               }
             }}
-            onCopy={async (content) => {
+            onCopy={async (content, promptId) => {
               try {
                 // 从 HTML 中提取纯文本
                 const tmp = document.createElement('div');
@@ -293,6 +346,12 @@ const App: React.FC = () => {
                 const plainText = tmp.textContent || tmp.innerText || content;
                 await navigator.clipboard.writeText(plainText);
                 toast.success('已复制到剪贴板');
+                
+                // 记录复制次数（仅对已保存的提示词）
+                const storedUser = getStoredUser();
+                if (storedUser?.id && promptId && !promptId.startsWith('temp_')) {
+                  promptApi.logPromptCopy(promptId, storedUser.id);
+                }
               } catch {
                 toast.error('复制失败');
               }

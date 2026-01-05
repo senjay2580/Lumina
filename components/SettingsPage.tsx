@@ -3,10 +3,12 @@ import { User, updateUsername, updatePassword, saveUser, updateEmail, requestEma
 import { ToastContainer } from '../shared/Toast';
 import { useToast } from '../shared/useToast';
 import { VerificationInput } from '../shared/VerificationInput';
+import { AIProviderIcon } from '../shared/AIProviderIcons';
 import { 
   getProviderTemplates, 
   getUserProviders, 
   saveUserProvider,
+  setDefaultProvider,
   AIProviderTemplate,
   AIProvider 
 } from '../lib/ai-providers';
@@ -15,16 +17,6 @@ interface SettingsPageProps {
   user: User;
   onUserUpdate: (user: User) => void;
 }
-
-// 颜色映射
-const colorMap: Record<string, string> = {
-  purple: 'bg-purple-500',
-  blue: 'bg-blue-500',
-  green: 'bg-green-500',
-  emerald: 'bg-emerald-500',
-  red: 'bg-red-500',
-  gray: 'bg-gray-500',
-};
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }) => {
   const [username, setUsername] = useState(user.username);
@@ -54,7 +46,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
   const [showApiKey, setShowApiKey] = useState<Record<string, boolean>>({});
   
   // 编辑中的配置
-  const [editingConfigs, setEditingConfigs] = useState<Record<string, { apiKey: string; baseUrl: string; enabled: boolean }>>({});
+  const [editingConfigs, setEditingConfigs] = useState<Record<string, { apiKey: string; baseUrl: string; enabled: boolean; isDefault: boolean; defaultModel: string }>>({});
   
   const { toasts, removeToast, success, error } = useToast();
 
@@ -114,13 +106,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
         setUserProviders(configMap);
         
         // 初始化编辑状态
-        const editConfigs: Record<string, { apiKey: string; baseUrl: string; enabled: boolean }> = {};
+        const editConfigs: Record<string, { apiKey: string; baseUrl: string; enabled: boolean; isDefault: boolean; defaultModel: string }> = {};
         templates.forEach(t => {
           const userConfig = configMap.get(t.providerKey);
           editConfigs[t.providerKey] = {
             apiKey: userConfig?.apiKey || '',
             baseUrl: userConfig?.baseUrl || t.baseUrl || '',
             enabled: userConfig?.isEnabled || false,
+            isDefault: userConfig?.isDefault || false,
+            defaultModel: userConfig?.defaultModel || (t.models.length > 0 ? t.models[0].id : ''),
           };
         });
         setEditingConfigs(editConfigs);
@@ -158,6 +152,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,
         models: template.models,
+        isDefault: config.isDefault,
+        defaultModel: config.defaultModel,
       });
       
       if (saved) {
@@ -177,6 +173,39 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
       setSavingProvider(null);
     }
   }, [user.id, providerTemplates, editingConfigs, success, error]);
+
+  // 设为默认提供商
+  const handleSetDefault = useCallback(async (providerKey: string) => {
+    const userConfig = userProviders.get(providerKey);
+    if (!userConfig) {
+      error('请先保存配置');
+      return;
+    }
+    
+    try {
+      const result = await setDefaultProvider(user.id, userConfig.id);
+      if (result) {
+        // 更新本地状态
+        setUserProviders(prev => {
+          const newMap = new Map(prev);
+          newMap.forEach((v, k) => {
+            newMap.set(k, { ...v, isDefault: k === providerKey });
+          });
+          return newMap;
+        });
+        setEditingConfigs(prev => {
+          const newConfigs = { ...prev };
+          Object.keys(newConfigs).forEach(k => {
+            newConfigs[k] = { ...newConfigs[k], isDefault: k === providerKey };
+          });
+          return newConfigs;
+        });
+        success('已设为默认');
+      }
+    } catch (err: any) {
+      error(err.message || '设置失败');
+    }
+  }, [user.id, userProviders, success, error]);
 
   // 切换显示 API Key
   const toggleShowApiKey = (providerKey: string) => {
@@ -707,11 +736,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                   </div>
                 </div>
               ) : providerTemplates.map((template) => {
-                const config = editingConfigs[template.providerKey] || { apiKey: '', baseUrl: '', enabled: false };
+                const config = editingConfigs[template.providerKey] || { apiKey: '', baseUrl: '', enabled: false, isDefault: false, defaultModel: '' };
                 const userConfig = userProviders.get(template.providerKey);
                 const isExpanded = expandedProvider === template.providerKey;
                 const isConfigured = userConfig?.isEnabled;
-                const bgColor = colorMap[template.color] || 'bg-gray-500';
+                const isDefault = userConfig?.isDefault || false;
                 
                 return (
                   <div key={template.providerKey} className="overflow-hidden">
@@ -721,16 +750,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                       className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl ${bgColor} flex items-center justify-center text-white`}>
-                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                          </svg>
+                        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+                          <AIProviderIcon providerKey={template.providerKey} size={28} />
                         </div>
                         <div className="text-left">
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-gray-900">{template.name}</span>
                             {isConfigured && (
                               <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-600 rounded">已配置</span>
+                            )}
+                            {isDefault && (
+                              <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded">默认</span>
                             )}
                           </div>
                           <p className="text-xs text-gray-500">
@@ -786,9 +816,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                           </div>
                         </div>
                         
+                        {/* 默认模型选择 - 预设厂商用下拉框，自定义用输入框 */}
+                        {template.models.length > 0 ? (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">默认模型</label>
+                            <select
+                              value={config.defaultModel}
+                              onChange={(e) => updateEditingConfig(template.providerKey, 'defaultModel', e.target.value)}
+                              className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:ring-2 ring-primary/20 outline-none transition-all"
+                            >
+                              {template.models.map(model => (
+                                <option key={model.id} value={model.id}>{model.name}</option>
+                              ))}
+                            </select>
+                            <p className="mt-1.5 text-xs text-gray-500">调用 AI 时默认使用的模型</p>
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">模型名称</label>
+                            <input
+                              type="text"
+                              value={config.defaultModel}
+                              onChange={(e) => updateEditingConfig(template.providerKey, 'defaultModel', e.target.value)}
+                              className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:ring-2 ring-primary/20 outline-none transition-all"
+                              placeholder="gpt-4o, claude-3-5-sonnet, qwen-plus..."
+                            />
+                            <p className="mt-1.5 text-xs text-gray-500">输入 API 支持的模型 ID，如 gpt-4o、claude-3-5-sonnet-20241022</p>
+                          </div>
+                        )}
+                        
                         {/* Base URL */}
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Base URL (可选)</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Base URL {template.providerKey === 'custom' ? '' : '(可选)'}</label>
                           <input
                             type="text"
                             value={config.baseUrl}
@@ -796,24 +855,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                             className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:ring-2 ring-primary/20 outline-none transition-all"
                             placeholder={template.baseUrl || 'https://api.example.com/v1'}
                           />
+                          {template.providerKey === 'custom' && (
+                            <p className="mt-1.5 text-xs text-gray-500">OpenAI 兼容的 API 地址，如 https://api.openai.com/v1</p>
+                          )}
                         </div>
                         
-                        {/* 保存按钮 */}
-                        <button
-                          onClick={() => handleSaveProvider(template.providerKey)}
-                          disabled={savingProvider === template.providerKey}
-                          className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
-                        >
-                          {savingProvider === template.providerKey ? (
-                            <>
-                              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-                                <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                        {/* 操作按钮 */}
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => handleSaveProvider(template.providerKey)}
+                            disabled={savingProvider === template.providerKey}
+                            className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                          >
+                            {savingProvider === template.providerKey ? (
+                              <>
+                                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                                  <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                                </svg>
+                                保存中...
+                              </>
+                            ) : '保存配置'}
+                          </button>
+                          
+                          {isConfigured && !isDefault && (
+                            <button
+                              onClick={() => handleSetDefault(template.providerKey)}
+                              className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 transition-colors flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                               </svg>
-                              保存中...
-                            </>
-                          ) : '保存配置'}
-                        </button>
+                              设为默认
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

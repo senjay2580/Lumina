@@ -20,6 +20,17 @@ export interface Prompt {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  copy_count?: number;
+  last_copied_at?: string | null;
+  // AI 功能新增字段
+  content_en?: string | null;           // 英文翻译版本
+  content_translated_at?: string | null; // 翻译时间
+  ai_analysis?: {                        // AI 分析结果
+    qualityScore: number;
+    issues: string[];
+    suggestions: string[];
+    analyzedAt: string;
+  } | null;
 }
 
 // ============ 分类 CRUD ============
@@ -307,3 +318,139 @@ export async function emptyPromptTrash(userId: string): Promise<void> {
 }
 
 
+
+// ============ 复制次数统计 ============
+
+// 记录提示词复制
+export async function logPromptCopy(promptId: string, userId: string): Promise<void> {
+  const { error } = await supabase.rpc('log_prompt_copy', {
+    p_prompt_id: promptId,
+    p_user_id: userId
+  });
+  
+  if (error) {
+    console.error('Log copy error:', error);
+    // 静默失败，不影响用户体验
+  }
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.PROMPTS, userId);
+  invalidateCache(CACHE_KEYS.STATS, userId);
+}
+
+// 获取提示词统计
+export interface PromptStats {
+  totalPrompts: number;
+  totalCopies: number;
+  avgCopies: number;
+  maxCopies: number;
+  usedPrompts: number;
+  promptsThisWeek: number;
+  promptsThisMonth: number;
+}
+
+export async function getPromptStats(userId: string): Promise<PromptStats | null> {
+  const { data, error } = await supabase
+    .from('prompt_statistics')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+  
+  if (error) {
+    console.error('Get stats error:', error);
+    return null;
+  }
+  
+  return {
+    totalPrompts: data.total_prompts || 0,
+    totalCopies: data.total_copies || 0,
+    avgCopies: data.avg_copies || 0,
+    maxCopies: data.max_copies || 0,
+    usedPrompts: data.used_prompts || 0,
+    promptsThisWeek: data.prompts_this_week || 0,
+    promptsThisMonth: data.prompts_this_month || 0
+  };
+}
+
+// 获取分类统计
+export interface CategoryStats {
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string;
+  promptCount: number;
+  totalCopies: number;
+}
+
+export async function getCategoryStats(userId: string): Promise<CategoryStats[]> {
+  const { data, error } = await supabase
+    .from('category_statistics')
+    .select('*')
+    .eq('user_id', userId);
+  
+  if (error) {
+    console.error('Get category stats error:', error);
+    return [];
+  }
+  
+  return (data || []).map(item => ({
+    categoryId: item.category_id,
+    categoryName: item.category_name,
+    categoryColor: item.category_color,
+    promptCount: item.prompt_count || 0,
+    totalCopies: item.total_copies || 0
+  }));
+}
+
+// 获取每日复制统计
+export interface DailyCopyStats {
+  date: string;
+  copyCount: number;
+}
+
+export async function getDailyCopyStats(userId: string, days: number = 30): Promise<DailyCopyStats[]> {
+  const { data, error } = await supabase.rpc('get_daily_copy_stats', {
+    p_user_id: userId,
+    p_days: days
+  });
+  
+  if (error) {
+    console.error('Get daily stats error:', error);
+    return [];
+  }
+  
+  return (data || []).map((item: any) => ({
+    date: item.date,
+    copyCount: item.copy_count || 0
+  }));
+}
+
+// 获取热门提示词
+export async function getPopularPrompts(userId: string, limit: number = 10): Promise<Prompt[]> {
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('*')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .order('copy_count', { ascending: false })
+    .limit(limit);
+  
+  if (error) {
+    console.error('Get popular prompts error:', error);
+    return [];
+  }
+  
+  return data || [];
+}
+
+// 按复制次数排序获取提示词
+export async function getPromptsByCopyCount(userId: string, ascending: boolean = false): Promise<Prompt[]> {
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('*')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .order('copy_count', { ascending });
+  
+  if (error) throw error;
+  return data || [];
+}

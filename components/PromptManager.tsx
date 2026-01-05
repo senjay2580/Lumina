@@ -18,6 +18,14 @@ import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
+import { BarChart3, Sparkles } from 'lucide-react';
+import { PromptStatsPanel } from './PromptStatsPanel';
+import { SearchOverlay, SearchMatch } from '../shared/SearchOverlay';
+import { AIEditorToolbar } from '../shared/AIEditorToolbar';
+import { AIEditorSidebar } from '../shared/AIEditorSidebar';
+import { RoleLibraryContent } from '../shared/RoleLibraryBrowser';
+import { generateTags } from '../lib/ai-prompt-assistant';
+import { hasEnabledProvider } from '../lib/ai-providers';
 
 // 配置 marked
 marked.setOptions({
@@ -84,6 +92,36 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Tab 切换：提示词 / 数据
+  const [activeTab, setActiveTab] = useState<'prompts' | 'stats'>('prompts');
+
+  // 排序方式
+  const [sortBy, setSortBy] = useState<'updated' | 'copies'>('updated');
+
+  // 更多菜单
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = React.useRef<HTMLDivElement>(null);
+  
+  // 新建下拉菜单
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const createMenuRef = React.useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭更多菜单
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false);
+      }
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setShowCreateMenu(false);
+      }
+    };
+    if (showMoreMenu || showCreateMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMoreMenu]);
+
   const promptMenu = useContextMenu();
   const categoryMenu = useContextMenu();
   const toast = useToast();
@@ -136,10 +174,17 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filteredPrompts = prompts.filter(p => 
-    (selectedCategoryId === 'ALL' || p.category_id === selectedCategoryId) &&
-    (p.title.toLowerCase().includes(search.toLowerCase()) || p.tags?.some(t => t.toLowerCase().includes(search.toLowerCase())))
-  );
+  const filteredPrompts = prompts
+    .filter(p => 
+      (selectedCategoryId === 'ALL' || p.category_id === selectedCategoryId) &&
+      (p.title.toLowerCase().includes(search.toLowerCase()) || p.tags?.some(t => t.toLowerCase().includes(search.toLowerCase())))
+    )
+    .sort((a, b) => {
+      if (sortBy === 'copies') {
+        return (b.copy_count ?? 0) - (a.copy_count ?? 0);
+      }
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
 
   const getCategoryName = (categoryId: string | null) => categoryId ? categories.find(c => c.id === categoryId)?.name || '未分类' : '未分类';
   const getCategoryColor = (categoryId: string | null) => categoryId ? categories.find(c => c.id === categoryId)?.color || 'gray' : 'gray';
@@ -404,7 +449,15 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
   const getCategoryMenuItems = (category: PromptCategory): ContextMenuItem[] => [
     { label: '编辑', icon: <EditIcon />, onClick: () => setCategoryModal({ open: true, category }) },
     { label: '', divider: true, onClick: () => {} },
-    { label: '删除', icon: <TrashIcon />, danger: true, onClick: () => setDeleteConfirm({ open: true, type: 'category', id: category.id }) }
+    { label: '删除', icon: <TrashIcon />, danger: true, onClick: () => {
+      // 检查该分类下是否有提示词
+      const promptCount = prompts.filter(p => p.category_id === category.id).length;
+      if (promptCount > 0) {
+        toast.error(`该分类下有 ${promptCount} 个提示词，请先移动或删除这些提示词`);
+        return;
+      }
+      setDeleteConfirm({ open: true, type: 'category', id: category.id });
+    }}
   ];
 
   if (loading) return <LoadingSpinner text="正在加载提示词..." />;
@@ -424,99 +477,213 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
             <div><h2 className="text-3xl font-bold text-gray-900 mb-1">提示词库</h2><p className="text-gray-500">管理和组织你的 AI 提示词模板</p></div>
           </div>
           <div className="flex gap-3">
-            {/* 导入按钮 */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".md"
-              onChange={handleImportMD}
-              className="hidden"
-              disabled={isImporting}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isImporting}
-              className={`p-2.5 rounded-xl border transition-all ${isImporting ? 'bg-gray-100 border-gray-200 cursor-not-allowed' : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-              title="导入提示词"
-            >
-              {isImporting ? (
-                <svg className="w-5 h-5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
-                  <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <ImportIcon className="w-5 h-5" />
-              )}
-            </button>
-            {/* 导出按钮 */}
-            <button
-              onClick={toggleSelectMode}
-              className={`p-2.5 rounded-xl border transition-all ${isSelectMode ? 'bg-primary/10 border-primary text-primary' : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-              title="批量导出"
-            >
-              <ExportIcon className="w-5 h-5" />
-            </button>
-            <div className="w-px bg-gray-200" />
-            <button onClick={() => setCategoryModal({ open: true })} className="px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 font-medium hover:bg-gray-50 transition-all flex items-center gap-2"><FolderIcon className="w-4 h-4" />管理分类</button>
-            <button onClick={handleCreatePrompt} className="px-6 py-2.5 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all flex items-center gap-2"><PlusIcon className="w-4 h-4" />新建提示词</button>
-          </div>
-        </div>
-
-        <div className="flex flex-col md:flex-row gap-4 mb-8">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input type="text" placeholder="搜索提示词..." className="w-full pl-10 pr-4 py-3 rounded-xl bg-white border border-gray-200 outline-none focus:ring-2 ring-primary/20 placeholder-gray-400 transition-all" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
-            <button onClick={() => setSelectedCategoryId('ALL')} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${selectedCategoryId === 'ALL' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>全部</button>
-            {categories.map(cat => (
-              <button key={cat.id} onClick={() => setSelectedCategoryId(cat.id)} onContextMenu={(e) => categoryMenu.open(e, cat)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${selectedCategoryId === cat.id ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>{cat.name}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredPrompts.map(prompt => {
-            const colors = getCategoryColors(getCategoryColor(prompt.category_id));
-            const isSelected = selectedPromptIds.has(prompt.id);
-            return (
-              <div key={prompt.id} className={`group bg-white rounded-2xl p-6 border cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300 relative ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'}`}
-                onClick={(e) => isSelectMode ? togglePromptSelection(prompt.id, e) : openPromptDetail(prompt)} onContextMenu={(e) => promptMenu.open(e, prompt)}>
-                {/* 选择模式下的复选框 */}
-                {isSelectMode && (
-                  <div 
-                    className={`absolute top-3 right-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}
-                    onClick={(e) => togglePromptSelection(prompt.id, e)}
-                  >
-                    {isSelected && (
-                      <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                        <path d="M20 6L9 17l-5-5" />
-                      </svg>
-                    )}
-                  </div>
-                )}
-                <div className="flex justify-between items-start mb-4">
-                  <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
-                  {!isSelectMode && (
-                    <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
-                  )}
-                </div>
-                <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-primary transition-colors">{prompt.title}</h3>
-                <p className="text-sm text-gray-500 line-clamp-3 mb-4">{stripHtml(prompt.content)}</p>
-                <div className="flex flex-wrap gap-2">{prompt.tags?.map(tag => <span key={tag} className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">#{tag}</span>)}</div>
-              </div>
-            );
-          })}
-          {!isSelectMode && (
-            <div onClick={handleCreatePrompt} className="border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all cursor-pointer min-h-[200px]">
-              <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><PlusIcon className="w-6 h-6" /></div>
-              <span className="font-medium">新建提示词</span>
+            {/* Tab 切换 */}
+            <div className="flex bg-gray-100 rounded-xl p-1">
+              <button
+                onClick={() => setActiveTab('prompts')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === 'prompts' 
+                    ? 'bg-white text-gray-900 shadow-sm' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                提示词
+              </button>
+              <button
+                onClick={() => setActiveTab('stats')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
+                  activeTab === 'stats' 
+                    ? 'bg-white text-gray-900 shadow-sm' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                数据
+              </button>
             </div>
-          )}
+            <div className="w-px bg-gray-200" />
+            <button 
+              onClick={() => window.dispatchEvent(new CustomEvent('open-role-library'))} 
+              className="px-4 py-2.5 rounded-xl bg-gray-900 text-white font-medium hover:bg-gray-800 transition-all flex items-center gap-2"
+              title="AI 角色库"
+            >
+              <span className="text-base">🎭</span>
+              角色库
+            </button>
+            {/* 新建下拉菜单 */}
+            <div className="relative" ref={createMenuRef}>
+              <button 
+                onClick={() => setShowCreateMenu(!showCreateMenu)} 
+                className={`px-6 py-2.5 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all flex items-center gap-2 ${showCreateMenu ? 'shadow-lg shadow-primary/20' : ''}`}
+              >
+                <PlusIcon className="w-4 h-4" />
+                新建
+                <svg className={`w-3 h-3 ml-0.5 transition-transform ${showCreateMenu ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+              {showCreateMenu && (
+                <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-xl border border-gray-200 shadow-lg py-1 z-50">
+                  <button
+                    onClick={() => { handleCreatePrompt(); setShowCreateMenu(false); }}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
+                  >
+                    <svg className="w-4 h-4 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                    </svg>
+                    新建提示词
+                  </button>
+                  <button
+                    onClick={() => { setCategoryModal({ open: true }); setShowCreateMenu(false); }}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
+                  >
+                    <FolderIcon className="w-4 h-4 text-gray-500" />
+                    新建分类
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* 更多菜单 */}
+            <div className="relative" ref={moreMenuRef}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".md"
+                onChange={(e) => { handleImportMD(e); setShowMoreMenu(false); }}
+                className="hidden"
+                disabled={isImporting}
+              />
+              <button
+                onClick={() => setShowMoreMenu(!showMoreMenu)}
+                className={`px-4 py-2.5 rounded-xl border transition-all flex items-center gap-2 ${showMoreMenu ? 'bg-gray-100 border-gray-300 text-gray-700' : 'bg-white border-gray-200 text-gray-600 hover:text-gray-700 hover:bg-gray-50'}`}
+              >
+                <MoreIcon className="w-4 h-4" />
+                更多
+              </button>
+              {showMoreMenu && (
+                <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-xl border border-gray-200 shadow-lg py-1 z-50">
+                  <button
+                    onClick={() => { fileInputRef.current?.click(); }}
+                    disabled={isImporting}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 disabled:opacity-50"
+                  >
+                    {isImporting ? (
+                      <svg className="w-4 h-4 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+                        <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    ) : (
+                      <ImportIcon className="w-4 h-4" />
+                    )}
+                    导入
+                  </button>
+                  <button
+                    onClick={() => { toggleSelectMode(); setShowMoreMenu(false); }}
+                    className={`w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 flex items-center gap-3 ${isSelectMode ? 'text-primary' : 'text-gray-700'}`}
+                  >
+                    <ExportIcon className="w-4 h-4" />
+                    批量导出
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {filteredPrompts.length === 0 && <div className="text-center py-16"><p className="text-gray-500 mb-2">暂无提示词</p><p className="text-gray-400 text-sm">点击上方按钮创建</p></div>}
+        {/* 根据 activeTab 显示不同内容 */}
+        {activeTab === 'prompts' ? (
+          <>
+            <div className="flex flex-col md:flex-row gap-4 mb-8">
+              <div className="relative flex-1">
+                <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input type="text" placeholder="搜索提示词..." className="w-full pl-10 pr-4 py-3 rounded-xl bg-white border border-gray-200 outline-none focus:ring-2 ring-primary/20 placeholder-gray-400 transition-all" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              {/* 排序按钮 */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">排序:</span>
+                <div className="flex bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setSortBy('updated')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      sortBy === 'updated' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    最近更新
+                  </button>
+                  <button
+                    onClick={() => setSortBy('copies')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      sortBy === 'copies' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    复制次数
+                  </button>
+                </div>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
+                <button onClick={() => setSelectedCategoryId('ALL')} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${selectedCategoryId === 'ALL' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>全部</button>
+                {categories.map(cat => (
+                  <button key={cat.id} onClick={() => setSelectedCategoryId(cat.id)} onContextMenu={(e) => categoryMenu.open(e, cat)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${selectedCategoryId === cat.id ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>{cat.name}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredPrompts.map(prompt => {
+                const colors = getCategoryColors(getCategoryColor(prompt.category_id));
+                const isSelected = selectedPromptIds.has(prompt.id);
+                return (
+                  <div key={prompt.id} className={`group bg-white rounded-2xl p-6 border cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300 relative ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'}`}
+                    onClick={(e) => isSelectMode ? togglePromptSelection(prompt.id, e) : openPromptDetail(prompt)} onContextMenu={(e) => promptMenu.open(e, prompt)}>
+                    {/* 选择模式下的复选框 */}
+                    {isSelectMode && (
+                      <div 
+                        className={`absolute top-3 right-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}
+                        onClick={(e) => togglePromptSelection(prompt.id, e)}
+                      >
+                        {isSelected && (
+                          <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                            <path d="M20 6L9 17l-5-5" />
+                          </svg>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex justify-between items-start mb-4">
+                      <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
+                      {!isSelectMode && (
+                        <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
+                      )}
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-primary transition-colors">{prompt.title}</h3>
+                    <p className="text-sm text-gray-500 line-clamp-3 mb-4">{stripHtml(prompt.content)}</p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap gap-2">{prompt.tags?.map(tag => <span key={tag} className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">#{tag}</span>)}</div>
+                      {(prompt.copy_count ?? 0) > 0 && (
+                        <div className="flex items-center gap-1 text-xs text-gray-400" title="复制次数">
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                          </svg>
+                          {prompt.copy_count}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {!isSelectMode && (
+                <div onClick={handleCreatePrompt} className="border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all cursor-pointer min-h-[200px]">
+                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><PlusIcon className="w-6 h-6" /></div>
+                  <span className="font-medium">新建提示词</span>
+                </div>
+              )}
+            </div>
+
+            {filteredPrompts.length === 0 && <div className="text-center py-16"><p className="text-gray-500 mb-2">暂无提示词</p><p className="text-gray-400 text-sm">点击上方按钮创建</p></div>}
+          </>
+        ) : (
+          <PromptStatsPanel userId={userId} />
+        )}
       </div>
 
       {promptMenu.isOpen && <ContextMenu x={promptMenu.x} y={promptMenu.y} items={getPromptMenuItems(promptMenu.data)} onClose={promptMenu.close} />}
@@ -928,7 +1095,8 @@ const TiptapEditor: React.FC<{
           pointer-events: none;
           height: 0;
         }
-        .ProseMirror ::selection { background: rgba(249, 115, 22, 0.2); }
+        .ProseMirror ::selection { background: rgba(249, 115, 22, 0.5); }
+        .ProseMirror *::selection { background: rgba(249, 115, 22, 0.5); }
         /* 代码高亮 */
         .ProseMirror .hljs-comment, .ProseMirror .hljs-quote { color: #6b7280; }
         .ProseMirror .hljs-keyword, .ProseMirror .hljs-selector-tag { color: #c084fc; }
@@ -948,18 +1116,22 @@ export const PromptBrowserWindow: React.FC<{
   categories: PromptCategory[];
   autoEditId?: string | null;
   unsavedIds?: Set<string>;
+  showRoleLibrary?: boolean;
+  isRoleLibraryActive?: boolean;
   onTabChange: (id: string) => void;
   onTabClose: (id: string, e?: React.MouseEvent) => void;
   onMinimize: () => void;
   isMinimizing?: boolean;
   onClose: () => void;
   onSave: (prompt: Prompt, data: { title: string; content: string; category_id: string | null; tags: string[] }) => Promise<void>;
-  onCopy: (content: string) => void;
+  onCopy: (content: string, promptId: string) => void;
   onClearAutoEdit: () => void;
   onEditStateChange: (promptId: string, hasChanges: boolean) => void;
+  onRoleLibraryTabClick?: () => void;
+  onCloseRoleLibrary?: () => void;
   getCategoryName: (id: string | null) => string;
   getCategoryColor: (id: string | null) => string;
-}> = ({ tabs, activeTabId, categories, autoEditId, unsavedIds = new Set(), isMinimizing: isMinimizingProp, onTabChange, onTabClose, onMinimize, onClose, onSave, onCopy, onClearAutoEdit, onEditStateChange, getCategoryName, getCategoryColor }) => {
+}> = ({ tabs, activeTabId, categories, autoEditId, unsavedIds = new Set(), showRoleLibrary = false, isRoleLibraryActive = false, isMinimizing: isMinimizingProp, onTabChange, onTabClose, onMinimize, onClose, onSave, onCopy, onClearAutoEdit, onEditStateChange, onRoleLibraryTabClick, onCloseRoleLibrary, getCategoryName, getCategoryColor }) => {
   const windowRef = React.useRef<HTMLDivElement>(null);
   
   // 使用 useState 存储位置和大小
@@ -993,6 +1165,22 @@ export const PromptBrowserWindow: React.FC<{
   const [editTags, setEditTags] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   
+  // 文档内搜索
+  const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const editorContainerRef = React.useRef<HTMLDivElement>(null);
+  
+  // AI 侧边栏状态
+  const [showAISidebar, setShowAISidebar] = useState(false);
+  const [aiSidebarTab, setAiSidebarTab] = useState<'translate' | 'optimize' | 'summarize'>('translate');
+  
+  // AI 生成标签状态
+  const [isGeneratingTags, setIsGeneratingTags] = useState(false);
+  
+  // 获取用户信息用于 AI 功能
+  const user = getStoredUser();
+  const userId = user?.id || '';
+  
   // 用于追踪原始值，判断是否有变化
   const originalValues = React.useRef<{ title: string; content: string; categoryId: string; tags: string } | null>(null);
   // 标记是否是用户主动编辑（而非从 props 同步）
@@ -1025,10 +1213,28 @@ export const PromptBrowserWindow: React.FC<{
 
   // 复制并显示反馈
   const handleCopy = () => {
-    onCopy(editContent);
+    if (activePrompt) {
+      onCopy(editContent, activePrompt.id);
+    }
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
+
+  // 清除搜索高亮
+  const clearSearchHighlights = useCallback(() => {
+    // 高亮清除现在由 SearchOverlay 组件内部处理
+  }, []);
+
+  // 搜索结果处理
+  const handleSearchResults = useCallback((matches: SearchMatch[], index: number) => {
+    setSearchMatches(matches);
+    setCurrentSearchIndex(index);
+  }, []);
+
+  // 跳转到匹配项 - 现在由 SearchOverlay 内部处理滚动
+  const handleNavigateToMatch = useCallback((match: SearchMatch) => {
+    // 滚动已由 SearchOverlay 内部处理
+  }, []);
 
   // 检查是否有未保存的更改
   const checkHasChanges = useCallback(() => {
@@ -1113,6 +1319,39 @@ export const PromptBrowserWindow: React.FC<{
       setIsSaving(false);
     }
   }, [activePrompt, editTitle, editContent, editCategoryId, editTags, onSave, onEditStateChange]);
+
+  // AI 生成标签
+  const handleGenerateTags = useCallback(async () => {
+    if (!userId || !editContent.trim() || isGeneratingTags) return;
+    
+    // 检查是否配置了 AI 提供商
+    const hasProvider = await hasEnabledProvider(userId);
+    if (!hasProvider) {
+      alert('请先在设置中配置 AI 提供商');
+      return;
+    }
+    
+    setIsGeneratingTags(true);
+    try {
+      // 从 HTML 中提取纯文本
+      const tmp = document.createElement('div');
+      tmp.innerHTML = editContent;
+      const plainContent = tmp.textContent || tmp.innerText || '';
+      
+      const tags = await generateTags(userId, plainContent);
+      if (tags.length > 0) {
+        // 合并现有标签和新生成的标签
+        const existingTags = editTags.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+        const allTags = [...new Set([...existingTags, ...tags])];
+        handleUserEdit('tags', allTags.join(', '));
+      }
+    } catch (err: any) {
+      console.error('生成标签失败:', err);
+      alert(err.message || '生成标签失败');
+    } finally {
+      setIsGeneratingTags(false);
+    }
+  }, [userId, editContent, editTags, isGeneratingTags, handleUserEdit]);
 
   // Ctrl+S 保存快捷键
   useEffect(() => {
@@ -1347,22 +1586,49 @@ export const PromptBrowserWindow: React.FC<{
               </svg>
             </button>
           </div>
-          <div className="flex-1 text-center">
-            <span className="text-xs text-gray-500 font-medium">Prompts</span>
-          </div>
+          <div className="flex-1" />
           <div className="w-16" />
         </div>
 
         {/* 标签页栏 */}
         <div className="h-9 flex items-end px-2 gap-1 overflow-x-auto">
+          {/* 角色库标签 - 只有打开时才显示 */}
+          {showRoleLibrary && (
+            <div
+              onClick={() => onRoleLibraryTabClick?.()}
+              className={`tab-item flex items-center gap-2 px-3 py-1.5 rounded-t-lg cursor-pointer transition-all group max-w-[200px] ${
+                isRoleLibraryActive ? 'bg-white border-t border-l border-r border-gray-200' : 'bg-gray-200/50 hover:bg-gray-200'
+              }`}
+            >
+              <div className="w-4 h-4 rounded shrink-0 bg-gray-800 flex items-center justify-center">
+                <span className="text-[10px]">🎭</span>
+              </div>
+              <span className={`text-xs truncate font-medium ${isRoleLibraryActive ? 'text-gray-800' : 'text-gray-600'}`}>
+                角色库
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseRoleLibrary?.();
+                }}
+                className={`shrink-0 p-0.5 rounded hover:bg-gray-300 transition-opacity ${isRoleLibraryActive ? 'text-gray-400 hover:text-gray-600' : 'text-gray-400 opacity-0 group-hover:opacity-100'}`}
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+          )}
+          
+          {/* 提示词标签 */}
           {tabs.map(tab => {
-            const isActive = tab.id === activeTabId;
+            const isActive = tab.id === activeTabId && !isRoleLibraryActive;
             const isUnsaved = unsavedIds.has(tab.id);
             const colors = getCategoryColors(getCategoryColor(tab.category_id));
             return (
               <div
                 key={tab.id}
-                onClick={() => onTabChange(tab.id)}
+                onClick={() => {
+                  onTabChange(tab.id);
+                }}
                 className={`tab-item flex items-center gap-2 px-3 py-1.5 rounded-t-lg cursor-pointer transition-all group max-w-[200px] ${
                   isActive ? 'bg-white border-t border-l border-r border-gray-200' : 'bg-gray-200/50 hover:bg-gray-200'
                 }`}
@@ -1374,7 +1640,6 @@ export const PromptBrowserWindow: React.FC<{
                 </div>
                 <span className={`text-xs truncate relative ${isActive ? 'text-gray-800 font-medium' : 'text-gray-600'}`}>
                   {tab.title}
-                  {/* 未保存指示器 - 标题右上角闪动 */}
                   {isUnsaved && (
                     <span className="absolute -top-1 -right-2.5 w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" />
                   )}
@@ -1452,26 +1717,30 @@ export const PromptBrowserWindow: React.FC<{
       </div>
 
       {/* 内容区域 */}
-      <div className="flex-1 overflow-y-auto bg-[#FAFAFA]">
-        {activePrompt ? (
-          <div className="h-full flex flex-col p-6">
-            {/* 始终可编辑 - 紧凑布局，内容占大头 */}
-            <div className="h-full flex flex-col gap-4">
-              {/* 顶部信息栏 - 紧凑 */}
-              <div className="flex items-center gap-4 shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">分类</span>
-                  <select
-                    value={editCategoryId}
-                    onChange={(e) => handleUserEdit('categoryId', e.target.value)}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
-                  >
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex-1">
+      <div className="flex-1 overflow-hidden bg-[#FAFAFA] flex">
+        {/* 主内容 */}
+        <div className="flex-1 overflow-hidden">
+          {isRoleLibraryActive ? (
+            <RoleLibraryContent />
+          ) : activePrompt ? (
+            <div className="h-full flex flex-col p-6 overflow-y-auto">
+              {/* 始终可编辑 - 紧凑布局，内容占大头 */}
+              <div className="h-full flex flex-col gap-4">
+                {/* 顶部信息栏 - 紧凑 */}
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">分类</span>
+                    <select
+                      value={editCategoryId}
+                      onChange={(e) => handleUserEdit('categoryId', e.target.value)}
+                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
+                    >
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1">
                   <input
                     type="text"
                     value={editTitle}
@@ -1482,13 +1751,30 @@ export const PromptBrowserWindow: React.FC<{
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-400">标签</span>
-                  <input
-                    type="text"
-                    value={editTags}
-                    onChange={(e) => handleUserEdit('tags', e.target.value)}
-                    className="w-48 px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
-                    placeholder="逗号分隔..."
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={editTags}
+                      onChange={(e) => handleUserEdit('tags', e.target.value)}
+                      className="w-48 pl-3 pr-8 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 ring-primary/20"
+                      placeholder="逗号分隔..."
+                    />
+                    <button
+                      onClick={handleGenerateTags}
+                      disabled={isGeneratingTags || !editContent.trim()}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="AI 生成标签"
+                    >
+                      {isGeneratingTags ? (
+                        <svg className="w-4 h-4 text-primary animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+                          <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                      ) : (
+                        <Sparkles className="w-4 h-4 text-gray-400 hover:text-primary" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 {/* 复制按钮 */}
                 <button 
@@ -1522,19 +1808,38 @@ export const PromptBrowserWindow: React.FC<{
                 {/* 目录按钮 - 固定在编辑器右上角，不随内容滚动 */}
                 <TocButton content={editContent} editorContainerSelector=".ProseMirror" />
                 
+                {/* 文档内搜索 - Ctrl+F */}
+                <SearchOverlay
+                  content={editContent.replace(/<[^>]*>/g, '')}
+                  onSearchResults={handleSearchResults}
+                  onNavigateToMatch={handleNavigateToMatch}
+                  onClose={clearSearchHighlights}
+                  position="top"
+                  editorSelector=".ProseMirror"
+                />
+                
                 <div 
-                  className="absolute inset-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-y-auto scrollbar-hide"
+                  ref={editorContainerRef}
+                  className="absolute inset-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col"
                   style={{
                     // 全屏切换时优化渲染性能
                     contain: isFullscreenTransitioning ? 'strict' : 'none',
                   }}
                 >
-                  <TiptapEditor
-                    content={editContent}
-                    onChange={(content) => handleUserEdit('content', content)}
-                    placeholder="输入提示词内容，支持 Markdown 语法..."
-                    showToc={false}
+                  {/* AI 工具栏 */}
+                  <AIEditorToolbar
+                    isOpen={showAISidebar}
+                    onToggle={() => setShowAISidebar(!showAISidebar)}
                   />
+                  
+                  <div className="flex-1 overflow-y-auto scrollbar-hide">
+                    <TiptapEditor
+                      content={editContent}
+                      onChange={(content) => handleUserEdit('content', content)}
+                      placeholder="输入提示词内容，支持 Markdown 语法..."
+                      showToc={false}
+                    />
+                  </div>
                 </div>
                 {/* 隐藏滚动条样式 */}
                 <style>{`
@@ -1553,6 +1858,19 @@ export const PromptBrowserWindow: React.FC<{
               <p className="text-gray-400">选择一个标签页查看内容</p>
             </div>
           </div>
+        )}
+        </div>
+        
+        {/* AI 侧边栏 */}
+        {activePrompt && !isRoleLibraryActive && (
+          <AIEditorSidebar
+            promptId={activePrompt.id}
+            content={editContent}
+            isOpen={showAISidebar}
+            onClose={() => setShowAISidebar(false)}
+            onContentChange={(content) => handleUserEdit('content', content)}
+            defaultTab={aiSidebarTab}
+          />
         )}
       </div>
     </div>
