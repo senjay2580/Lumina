@@ -208,6 +208,7 @@ COMMENT ON COLUMN prompt_copy_logs.copied_at IS '复制时间';
 -- 爬取的提示词
 CREATE TABLE public.extracted_prompts (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES public.users(id) ON DELETE CASCADE,
   prompt_title text NOT NULL,
   prompt_content text NOT NULL,
   suggested_category text,
@@ -221,11 +222,13 @@ CREATE TABLE public.extracted_prompts (
   source_name text,
   source_stars integer,
   source_forks integer,
+  content_hash text,
   CONSTRAINT extracted_prompts_pkey PRIMARY KEY (id)
 );
 
 COMMENT ON TABLE extracted_prompts IS '爬取的提示词 - 从 Reddit/GitHub 自动采集并经 AI 分析的提示词';
 COMMENT ON COLUMN extracted_prompts.id IS '提示词唯一标识';
+COMMENT ON COLUMN extracted_prompts.user_id IS '所属用户 ID，用于数据隔离';
 COMMENT ON COLUMN extracted_prompts.prompt_title IS '提示词标题';
 COMMENT ON COLUMN extracted_prompts.prompt_content IS '提示词内容';
 COMMENT ON COLUMN extracted_prompts.suggested_category IS 'AI 建议的分类';
@@ -238,10 +241,12 @@ COMMENT ON COLUMN extracted_prompts.source_author IS '原作者';
 COMMENT ON COLUMN extracted_prompts.source_name IS '来源名称（子版块名/仓库名）';
 COMMENT ON COLUMN extracted_prompts.source_stars IS 'GitHub 仓库 Star 数';
 COMMENT ON COLUMN extracted_prompts.source_forks IS 'GitHub 仓库 Fork 数';
+COMMENT ON COLUMN extracted_prompts.content_hash IS '内容哈希值，用于用户内去重';
 
 -- 爬取任务记录
 CREATE TABLE public.crawl_jobs (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES public.users(id) ON DELETE CASCADE,
   job_type text NOT NULL CHECK (job_type = ANY (ARRAY['reddit', 'github', 'all'])),
   status text DEFAULT 'pending' CHECK (status = ANY (ARRAY['pending', 'running', 'completed', 'failed'])),
   started_at timestamp with time zone,
@@ -256,6 +261,7 @@ CREATE TABLE public.crawl_jobs (
 
 COMMENT ON TABLE crawl_jobs IS '爬取任务记录 - 追踪提示词采集任务的执行历史';
 COMMENT ON COLUMN crawl_jobs.id IS '任务唯一标识';
+COMMENT ON COLUMN crawl_jobs.user_id IS '所属用户 ID，用于数据隔离';
 COMMENT ON COLUMN crawl_jobs.job_type IS '任务类型：reddit/github/all';
 COMMENT ON COLUMN crawl_jobs.status IS '任务状态：pending/running/completed/failed';
 COMMENT ON COLUMN crawl_jobs.started_at IS '开始时间';
@@ -264,6 +270,27 @@ COMMENT ON COLUMN crawl_jobs.items_found IS '发现的内容数量';
 COMMENT ON COLUMN crawl_jobs.items_new IS '新增内容数量';
 COMMENT ON COLUMN crawl_jobs.prompts_extracted IS '提取的提示词数量';
 COMMENT ON COLUMN crawl_jobs.error_message IS '错误信息';
+
+-- 已爬取源记录
+CREATE TABLE public.crawled_sources (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  source_type text NOT NULL CHECK (source_type IN ('reddit', 'github')),
+  source_id text NOT NULL,
+  source_url text,
+  crawled_at timestamp with time zone DEFAULT now(),
+  prompts_extracted integer DEFAULT 0,
+  CONSTRAINT crawled_sources_pkey PRIMARY KEY (id),
+  CONSTRAINT crawled_sources_user_source_unique UNIQUE (user_id, source_type, source_id)
+);
+
+COMMENT ON TABLE crawled_sources IS '已爬取源记录 - 每个用户独立记录已处理的 Reddit post 或 GitHub repo';
+COMMENT ON COLUMN crawled_sources.user_id IS '所属用户 ID';
+COMMENT ON COLUMN crawled_sources.source_type IS '来源类型：reddit/github';
+COMMENT ON COLUMN crawled_sources.source_id IS 'Reddit post ID 或 GitHub repo full_name';
+COMMENT ON COLUMN crawled_sources.source_url IS '来源 URL';
+COMMENT ON COLUMN crawled_sources.crawled_at IS '爬取时间';
+COMMENT ON COLUMN crawled_sources.prompts_extracted IS '提取的提示词数量';
 
 -- ============================================
 -- 5. AI 设置相关表
@@ -511,6 +538,7 @@ ALTER TABLE prompts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prompt_copy_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE extracted_prompts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crawl_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crawled_sources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_provider_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_role_categories ENABLE ROW LEVEL SECURITY;
@@ -531,6 +559,7 @@ CREATE POLICY "allow_all" ON prompts FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON prompt_copy_logs FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON extracted_prompts FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON crawl_jobs FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON crawled_sources FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON ai_provider_templates FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON ai_providers FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON ai_role_categories FOR ALL USING (true) WITH CHECK (true);
@@ -602,10 +631,14 @@ CREATE INDEX IF NOT EXISTS idx_prompt_categories_user_id ON prompt_categories(us
 CREATE INDEX IF NOT EXISTS idx_prompt_copy_logs_prompt_id ON prompt_copy_logs(prompt_id);
 
 -- 爬虫相关
+CREATE INDEX IF NOT EXISTS idx_extracted_prompts_user_id ON extracted_prompts(user_id);
 CREATE INDEX IF NOT EXISTS idx_extracted_prompts_source_type ON extracted_prompts(source_type);
 CREATE INDEX IF NOT EXISTS idx_extracted_prompts_suggested_category ON extracted_prompts(suggested_category);
 CREATE INDEX IF NOT EXISTS idx_extracted_prompts_created_at ON extracted_prompts(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_extracted_prompts_user_hash ON extracted_prompts(user_id, content_hash) WHERE content_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_crawl_jobs_user_id ON crawl_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_crawl_jobs_status ON crawl_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_crawled_sources_user_lookup ON crawled_sources(user_id, source_type);
 
 -- AI 设置相关
 CREATE INDEX IF NOT EXISTS idx_ai_providers_user_id ON ai_providers(user_id);

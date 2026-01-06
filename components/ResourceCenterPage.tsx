@@ -223,9 +223,14 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
       <div className="max-w-6xl mx-auto px-6 md:px-10 py-8">
         {/* 头部 */}
         <div className="flex items-center gap-3 mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-orange-100 flex items-center justify-center">
-            <FolderOpen className="w-6 h-6 text-primary" />
-          </div>
+          <svg className="w-10 h-10" viewBox="0 0 48 48" fill="none">
+            <path fill="#8fbffa" d="M4.04 9.856C4.04 5.24 12.976 1.5 24 1.5s19.96 3.74 19.96 8.356c0 0 .54 7.355.54 15.71s-.54 12.579-.54 12.579c0 4.614-8.936 8.355-19.96 8.355S4.04 42.76 4.04 38.145c0 0-.54-4.223-.54-12.578s.54-15.711.54-15.711"/>
+            <path fill="#2859c5" d="M4.04 9.856C4.04 5.24 12.975 1.5 24 1.5c11.023 0 19.96 3.74 19.96 8.356c0 4.614-8.937 8.355-19.96 8.355S4.04 14.471 4.04 9.856m-.52 18.418a184 184 0 0 1-.002-5.384c.224 1.721 1.933 3.677 5.539 5.316C12.802 29.908 18.08 31 23.992 31s11.19-1.092 14.936-2.794c3.695-1.68 5.398-3.692 5.553-5.444a208 208 0 0 1 0 5.498c-1.205 1.045-2.692 1.94-4.312 2.677C35.952 32.854 30.231 34 23.992 34s-11.96-1.146-16.177-3.063c-1.612-.733-3.093-1.624-4.295-2.663"/>
+            <path fill="#2859c5" fillRule="evenodd" d="M8.508 40a2 2 0 1 0 0-4a2 2 0 0 0 0 4" clipRule="evenodd"/>
+            <path fill="#2859c5" d="M15.008 41.75a2 2 0 1 0 0-4a2 2 0 0 0 0 4"/>
+            <path fill="#2859c5" fillRule="evenodd" d="M6.508 22.5a2 2 0 1 1 4 0a2 2 0 0 1-4 0" clipRule="evenodd"/>
+            <path fill="#2859c5" d="M15.008 26.25a2 2 0 1 0 0-4a2 2 0 0 0 0 4"/>
+          </svg>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">资源中心</h1>
             <p className="text-gray-500 text-sm">管理你的资源库</p>

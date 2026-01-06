@@ -163,11 +163,12 @@ export const TrashPage: React.FC = () => {
         {/* 标题 */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-              <svg className="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-              </svg>
-            </div>
+            <svg className="w-10 h-10" viewBox="0 0 14 14" fill="none">
+              <g fillRule="evenodd" clipRule="evenodd">
+                <path fill="#8fbffa" d="M2.5 2.823a.5.5 0 0 0-.5.5v9.145c0 .4.156.784.437 1.069c.28.285.663.447 1.063.447h7c.4 0 .783-.162 1.063-.447s.437-.67.437-1.07V3.324a.5.5 0 0 0-.5-.5z"/>
+                <path fill="#2859c5" d="M5.625 7.124a.625.625 0 1 0-1.25 0v4.002a.625.625 0 0 0 1.25 0zm4 0a.625.625 0 1 0-1.25 0v4.002a.625.625 0 0 0 1.25 0zM7 1.5a1.75 1.75 0 0 0-1.677 1.25h3.354A1.75 1.75 0 0 0 7 1.5m3.211 1.25a3.25 3.25 0 0 0-6.422 0H1a.75.75 0 0 0 0 1.5h12a.75.75 0 0 0 0-1.5z"/>
+              </g>
+            </svg>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">回收站</h1>
               <p className="text-sm text-gray-400">已删除的项目可以在这里恢复或永久删除</p>

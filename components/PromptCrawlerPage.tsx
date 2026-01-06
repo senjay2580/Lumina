@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  RefreshCw, Database, Settings, ExternalLink, Trash2, Check, X,
+  RefreshCw, Database, Settings, ExternalLink, Trash2, Check, X, Plus,
   Sparkles, Github, FileText, Star, Loader2, FolderOpen,
   TrendingUp, Eye, CheckSquare, Square, Clock, Zap, Search,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Tag,
@@ -19,10 +19,10 @@ const CrawlerIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-// Reddit 官方图标
+// Reddit 官方图标 (Snoo)
 const RedditIcon = ({ className }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 20 20" fill="currentColor">
-    <path d="M10 0a10 10 0 1 0 10 10A10 10 0 0 0 10 0m5.93 11.48c0 2.55-2.65 4.62-5.93 4.62s-5.93-2.07-5.93-4.62A3.2 3.2 0 0 1 5 9.62a3.1 3.1 0 0 1 1.17-1.1 6.4 6.4 0 0 1 3-2.4 1.24 1.24 0 0 1 .62-.17 1.26 1.26 0 0 1 1.26 1.26v.1a6.4 6.4 0 0 1 3 2.4 3.1 3.1 0 0 1 1.17 1.1 3.2 3.2 0 0 1 .71 1.67M7.5 10.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5m5 0a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5m-5 4.17a3.4 3.4 0 0 0 5 0 .42.42 0 0 0-.59-.59 2.56 2.56 0 0 1-3.82 0 .42.42 0 0 0-.59.59"/>
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/>
   </svg>
 );
 import {
@@ -127,9 +127,9 @@ export default function PromptCrawlerPage({ userId }: Props) {
       }
       
       const [promptList, jobList, statsData] = await Promise.all([
-        getCrawledPrompts(),
-        getCrawlJobs(),
-        getCrawlStats()
+        getCrawledPrompts(userId),
+        getCrawlJobs(userId),
+        getCrawlStats(userId)
       ]);
       setPrompts(promptList);
       setJobs(jobList);
@@ -152,7 +152,7 @@ export default function PromptCrawlerPage({ userId }: Props) {
   const refreshData = async () => {
     try {
       const [promptList, jobList, statsData] = await Promise.all([
-        getCrawledPrompts(), getCrawlJobs(), getCrawlStats()
+        getCrawledPrompts(userId), getCrawlJobs(userId), getCrawlStats(userId)
       ]);
       setPrompts(promptList);
       setJobs(jobList);
@@ -315,11 +315,18 @@ export default function PromptCrawlerPage({ userId }: Props) {
     });
   };
 
-  const selectAll = () => {
-    if (selectedIds.size === prompts.length) {
-      setSelectedIds(new Set());
+  const selectAll = (pageIds: string[]) => {
+    const allPageSelected = pageIds.every(id => selectedIds.has(id));
+    if (allPageSelected) {
+      // 取消选择当前页
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        pageIds.forEach(id => next.delete(id));
+        return next;
+      });
     } else {
-      setSelectedIds(new Set(prompts.map(p => p.id)));
+      // 选择当前页
+      setSelectedIds(prev => new Set([...prev, ...pageIds]));
     }
   };
 
@@ -540,25 +547,36 @@ export default function PromptCrawlerPage({ userId }: Props) {
         </AnimatePresence>
 
         {/* 标签页 */}
-        <div className="flex gap-2 mb-6">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.key;
-            return (
-              <button key={tab.key} onClick={() => setActiveTab(tab.key as any)}
-                className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
-                  isActive ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-                }`}>
-                <Icon className="w-4 h-4" />
-                {tab.label}
-                {tab.count !== undefined && (
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${isActive ? 'bg-white/20' : 'bg-gray-100'}`}>
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex gap-2">
+            {tabs.filter(t => t.key !== 'config').map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.key;
+              return (
+                <button key={tab.key} onClick={() => setActiveTab(tab.key as any)}
+                  className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                    isActive ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  }`}>
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                  {tab.count !== undefined && (
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${isActive ? 'bg-white/20' : 'bg-gray-100'}`}>
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <button 
+            onClick={() => setActiveTab('config')}
+            className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+              activeTab === 'config' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            配置
+          </button>
         </div>
 
         {/* 内容 */}
@@ -577,7 +595,7 @@ export default function PromptCrawlerPage({ userId }: Props) {
                 onClearAll={async () => {
                   if (!confirm('确定要清空所有提示词吗？此操作不可恢复！')) return;
                   try {
-                    await clearAllPrompts();
+                    await clearAllPrompts(userId);
                     setPrompts([]);
                     setStats(prev => prev ? { ...prev, totalPrompts: 0, redditPrompts: 0, githubPrompts: 0 } : prev);
                     toast.success('所有提示词已清空');
@@ -590,7 +608,7 @@ export default function PromptCrawlerPage({ userId }: Props) {
             {activeTab === 'history' && <JobHistory jobs={jobs} onRefresh={refreshData} onClear={async () => {
               if (!confirm('确定要清空所有历史记录吗？')) return;
               try {
-                await clearCrawlJobs();
+                await clearCrawlJobs(userId);
                 setJobs([]);
                 toast.success('历史记录已清空');
               } catch (e: any) {
@@ -633,7 +651,7 @@ function PromptList({
 }: {
   prompts: CrawledPrompt[]; selectedIds: Set<string>; selectMode: boolean;
   onToggleSelectMode: () => void; onToggleSelect: (id: string) => void;
-  onSelectAll: () => void; onDelete: (id: string) => void; onBatchDelete: () => void;
+  onSelectAll: (ids: string[]) => void; onDelete: (id: string) => void; onBatchDelete: () => void;
   onClearAll: () => void;
 }) {
   // 分离来源筛选和分类筛选
@@ -643,6 +661,16 @@ function PromptList({
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
+  
+  // 列表容器 ref，用于滚动到顶部
+  const listRef = React.useRef<HTMLDivElement>(null);
+  
+  // 切换页面时滚动到顶部
+  const goToPage = (page: number) => {
+    setCurrentPage(page);
+    // 滚动到列表顶部
+    listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   // 获取所有仓库和子版块
   const githubPrompts = prompts.filter(p => p.source_type === 'github');
@@ -744,10 +772,10 @@ function PromptList({
     );
   }
 
-  const allSelected = selectedIds.size === paginatedPrompts.length && paginatedPrompts.length > 0;
+  const allSelected = paginatedPrompts.length > 0 && paginatedPrompts.every(p => selectedIds.has(p.id));
 
   return (
-    <div>
+    <div ref={listRef}>
       {/* 搜索栏 */}
       <div className="mb-4">
         <div className="relative">
@@ -873,7 +901,7 @@ function PromptList({
         )}
         {selectMode && (
           <>
-            <button onClick={onSelectAll} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900">
+            <button onClick={() => onSelectAll(paginatedPrompts.map(p => p.id))} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900">
               {allSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
               {allSelected ? '取消全选' : '全选当页'}
             </button>
@@ -945,7 +973,7 @@ function PromptList({
                   {/* 标签行 */}
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg font-medium ${
-                      isReddit ? 'bg-orange-50 text-orange-600' : 'bg-gray-100 text-gray-700'
+                      isReddit ? 'bg-orange-50 text-orange-600' : 'bg-gray-900 text-white'
                     }`}>
                       {isReddit ? <RedditIcon className="w-3 h-3" /> : <Github className="w-3 h-3" />}
                       {isReddit ? 'Reddit' : 'GitHub'}
@@ -1070,7 +1098,7 @@ function PromptList({
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setCurrentPage(1)}
+              onClick={() => goToPage(1)}
               disabled={currentPage === 1}
               className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="首页"
@@ -1078,7 +1106,7 @@ function PromptList({
               <ChevronsLeft className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              onClick={() => goToPage(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
               className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="上一页"
@@ -1102,7 +1130,7 @@ function PromptList({
                 return (
                   <button
                     key={pageNum}
-                    onClick={() => setCurrentPage(pageNum)}
+                    onClick={() => goToPage(pageNum)}
                     className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
                       currentPage === pageNum
                         ? 'bg-primary text-white'
@@ -1116,7 +1144,7 @@ function PromptList({
             </div>
             
             <button
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              onClick={() => goToPage(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
               className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="下一页"
@@ -1124,7 +1152,7 @@ function PromptList({
               <ChevronRight className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setCurrentPage(totalPages)}
+              onClick={() => goToPage(totalPages)}
               disabled={currentPage === totalPages}
               className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="末页"
@@ -1212,67 +1240,151 @@ function JobHistory({ jobs, onRefresh, onClear }: { jobs: CrawlJob[]; onRefresh:
 
 // 配置面板
 function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpdate: (key: string, value: any) => void }) {
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
+  const [newTag, setNewTag] = useState<{ key: string; value: string } | null>(null);
 
-  const handleSave = (key: string) => {
-    try {
-      const value = key.includes('subreddits') || key.includes('queries') ? JSON.parse(editValue) : editValue;
-      onUpdate(key, value);
-      setEditing(null);
-    } catch {
-      alert('格式错误');
-    }
-  };
-
-  const items = [
-    { key: 'reddit_subreddits', label: 'Reddit 子版块', type: 'array', icon: RedditIcon },
-    { key: 'github_search_queries', label: 'GitHub 关键词', type: 'array', icon: Github },
-    { key: 'min_reddit_score', label: 'Reddit 最低分', type: 'number', icon: TrendingUp },
-    { key: 'min_github_stars', label: 'GitHub 最低 Stars', type: 'number', icon: Star },
-    { key: 'ai_quality_threshold', label: 'AI 质量阈值', type: 'number', icon: Sparkles }
+  const arrayItems = [
+    { key: 'reddit_subreddits', label: 'Reddit 子版块', icon: RedditIcon, color: 'orange' },
+    { key: 'github_search_queries', label: 'GitHub 关键词', icon: Github, color: 'gray' }
   ];
 
+  const numberItems = [
+    { key: 'min_reddit_score', label: 'Reddit 最低分', icon: TrendingUp },
+    { key: 'min_github_stars', label: 'GitHub 最低 Stars', icon: Star },
+    { key: 'ai_quality_threshold', label: 'AI 质量阈值', icon: Sparkles }
+  ];
+
+  const handleRemoveTag = (key: string, tag: string) => {
+    const current = config[key] || [];
+    onUpdate(key, current.filter((t: string) => t !== tag));
+  };
+
+  const handleAddTag = (key: string) => {
+    if (!newTag || newTag.key !== key || !newTag.value.trim()) return;
+    const current = config[key] || [];
+    if (!current.includes(newTag.value.trim())) {
+      onUpdate(key, [...current, newTag.value.trim()]);
+    }
+    setNewTag(null);
+  };
+
+  const getTagColor = (color: string) => {
+    if (color === 'orange') return 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100';
+    return 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100';
+  };
+
   return (
-    <div className="grid gap-4">
-      {items.map(item => {
+    <div className="grid gap-5">
+      {/* 标签云配置 */}
+      {arrayItems.map(item => {
         const Icon = item.icon;
-        const isEditing = editing === item.key;
+        const tags = config[item.key] || [];
+        const isAdding = newTag?.key === item.key;
         return (
           <div key={item.key} className="bg-white rounded-2xl border border-gray-100 p-5">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-                  <Icon className="w-5 h-5 text-gray-600" />
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${item.color === 'orange' ? 'bg-orange-100' : 'bg-gray-100'}`}>
+                  <Icon className={`w-5 h-5 ${item.color === 'orange' ? 'text-orange-600' : 'text-gray-600'}`} />
                 </div>
-                <span className="font-medium text-gray-900">{item.label}</span>
+                <div>
+                  <span className="font-medium text-gray-900">{item.label}</span>
+                  <span className="ml-2 text-xs text-gray-400">{tags.length} 个</span>
+                </div>
               </div>
-              {isEditing ? (
-                <div className="flex gap-2">
-                  <button onClick={() => handleSave(item.key)} className="px-3 py-1.5 text-sm font-medium rounded-lg bg-primary text-white">保存</button>
-                  <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">取消</button>
-                </div>
-              ) : (
-                <button onClick={() => { setEditing(item.key); setEditValue(item.type === 'array' ? JSON.stringify(config[item.key] || [], null, 2) : String(config[item.key] || '')); }}
-                  className="px-3 py-1.5 text-sm font-medium rounded-lg text-primary hover:bg-primary/10">编辑</button>
+              {!isAdding && (
+                <button 
+                  onClick={() => setNewTag({ key: item.key, value: '' })}
+                  className="px-3 py-1.5 text-sm font-medium rounded-lg text-primary hover:bg-primary/10 flex items-center gap-1"
+                >
+                  <Plus className="w-4 h-4" />
+                  添加
+                </button>
               )}
             </div>
-            {isEditing ? (
-              item.type === 'array' ? (
-                <textarea value={editValue} onChange={e => setEditValue(e.target.value)}
-                  className="w-full h-32 p-3 border border-gray-200 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-primary/20 resize-none" />
-              ) : (
-                <input type="number" value={editValue} onChange={e => setEditValue(e.target.value)}
-                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 ring-primary/20" />
-              )
-            ) : (
-              <div className="text-sm text-gray-600 bg-gray-50 rounded-xl p-3">
-                {item.type === 'array' ? (config[item.key] || []).join(', ') || '未配置' : config[item.key] || '未配置'}
-              </div>
-            )}
+            
+            {/* 标签云 */}
+            <div className="flex flex-wrap gap-2">
+              {tags.map((tag: string) => (
+                <span 
+                  key={tag} 
+                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors ${getTagColor(item.color)}`}
+                >
+                  {tag}
+                  <button 
+                    onClick={() => handleRemoveTag(item.key, tag)}
+                    className="w-4 h-4 rounded-full flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              
+              {/* 添加输入框 */}
+              {isAdding && (
+                <div className="inline-flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={newTag.value}
+                    onChange={e => setNewTag({ ...newTag, value: e.target.value })}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleAddTag(item.key);
+                      if (e.key === 'Escape') setNewTag(null);
+                    }}
+                    placeholder="输入后回车"
+                    autoFocus
+                    className="px-3 py-1.5 text-sm border border-primary/30 rounded-full outline-none focus:ring-2 ring-primary/20 w-32"
+                  />
+                  <button 
+                    onClick={() => handleAddTag(item.key)}
+                    className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center hover:bg-primary/90"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => setNewTag(null)}
+                    className="w-7 h-7 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center hover:bg-gray-200"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              
+              {tags.length === 0 && !isAdding && (
+                <span className="text-sm text-gray-400">暂无配置，点击添加</span>
+              )}
+            </div>
           </div>
         );
       })}
+
+      {/* 数值配置 */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+            <Settings className="w-5 h-5 text-blue-600" />
+          </div>
+          <span className="font-medium text-gray-900">筛选阈值</span>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          {numberItems.map(item => {
+            const Icon = item.icon;
+            return (
+              <div key={item.key} className="bg-gray-50 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon className="w-4 h-4 text-gray-500" />
+                  <span className="text-sm text-gray-600">{item.label}</span>
+                </div>
+                <input
+                  type="number"
+                  value={config[item.key] || ''}
+                  onChange={e => onUpdate(item.key, parseFloat(e.target.value) || 0)}
+                  className="w-full px-3 py-2 text-lg font-semibold text-gray-900 bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 ring-primary/20"
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

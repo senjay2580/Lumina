@@ -65,8 +65,28 @@ export interface CrawlProgress {
 
 // 默认配置
 const DEFAULT_CONFIG: CrawlConfig = {
-  reddit_subreddits: ['PromptEngineering', 'ChatGPTPromptGenius', 'ChatGPT', 'OpenAI', 'LocalLLM'],
-  github_search_queries: ['prompt-engineering', 'awesome-prompts', 'chatgpt-prompts', 'llm-prompts'],
+  reddit_subreddits: [
+    // 视觉与视频生成
+    'comfyui', 'AIVideo', 'StableDiffusion', 'GenerativeAI',
+    // AI 编程与 Vibecoding
+    'vibecoding', 'cursor', 'v0', 'AIProgramming',
+    // AI 商业化与搞钱
+    'HustleGPT', 'AIBuild', 'n8n_ai_agents',
+    // 专项模型区
+    'GeminiAI', 'LocalLLM',
+    // 原有经典
+    'PromptEngineering', 'ChatGPTPromptGenius', 'ChatGPT', 'OpenAI'
+  ],
+  github_search_queries: [
+    // 视觉流
+    'comfyui-nodes', 'comfyui-workflows', 'text-to-video', 'flux-lora',
+    // 编程与 Vibecoding
+    'cursor-rules', 'awesome-cursorrules', 'awesome-ai-agents',
+    // 多模态与提示词框架
+    'structured-prompt', 'multimodal-learning', 'gemini-cookbook',
+    // 原有经典
+    'prompt-engineering', 'awesome-prompts', 'chatgpt-prompts', 'llm-prompts', 'LangGPT'
+  ],
   min_reddit_score: 10,
   min_github_stars: 50,
   ai_quality_threshold: 6.0
@@ -115,10 +135,11 @@ export function setSelectedModel(providerId: string, modelId: string): void {
 
 // ============ 爬取任务记录 ============
 
-export async function getCrawlJobs(limit = 10): Promise<CrawlJob[]> {
+export async function getCrawlJobs(userId: string, limit = 10): Promise<CrawlJob[]> {
   const { data, error } = await supabase
     .from('crawl_jobs')
     .select('*')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
   
@@ -126,21 +147,22 @@ export async function getCrawlJobs(limit = 10): Promise<CrawlJob[]> {
   return data || [];
 }
 
-export async function clearCrawlJobs(): Promise<void> {
+export async function clearCrawlJobs(userId: string): Promise<void> {
   const { error } = await supabase
     .from('crawl_jobs')
     .delete()
-    .neq('id', '00000000-0000-0000-0000-000000000000');
+    .eq('user_id', userId);
   
   if (error) throw error;
 }
 
 // ============ 提示词管理 ============
 
-export async function getCrawledPrompts(limit = 100): Promise<CrawledPrompt[]> {
+export async function getCrawledPrompts(userId: string, limit = 100): Promise<CrawledPrompt[]> {
   const { data, error } = await supabase
     .from('extracted_prompts')
     .select('*')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
   
@@ -166,26 +188,26 @@ export async function deletePrompts(ids: string[]): Promise<void> {
   if (error) throw error;
 }
 
-export async function clearAllPrompts(): Promise<void> {
+export async function clearAllPrompts(userId: string): Promise<void> {
   const { error } = await supabase
     .from('extracted_prompts')
     .delete()
-    .neq('id', '00000000-0000-0000-0000-000000000000');
+    .eq('user_id', userId);
   
   if (error) throw error;
 }
 
 // ============ 统计 ============
 
-export async function getCrawlStats(): Promise<CrawlStats> {
+export async function getCrawlStats(userId: string): Promise<CrawlStats> {
   const [
     { count: totalPrompts },
     { count: redditPrompts },
     { count: githubPrompts }
   ] = await Promise.all([
-    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }),
-    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('source_type', 'reddit'),
-    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('source_type', 'github')
+    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('source_type', 'reddit'),
+    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('user_id', userId).eq('source_type', 'github')
   ]);
   
   return {
@@ -196,6 +218,25 @@ export async function getCrawlStats(): Promise<CrawlStats> {
 }
 
 // ============ 本地爬取逻辑 ============
+
+// 计算内容哈希（用于去重）
+async function computeContentHash(content: string): Promise<string> {
+  // 标准化：小写、去除多余空白、保留中文
+  const normalized = content
+    .toLowerCase()
+    .replace(/[^\w\s\u4e00-\u9fff]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  
+  // SHA-256 哈希
+  const encoder = new TextEncoder();
+  const data = encoder.encode(normalized);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 // 爬取 Reddit
 async function crawlReddit(subreddits: string[], minScore: number): Promise<any[]> {
@@ -423,7 +464,12 @@ export async function triggerCrawl(
   // 创建任务记录
   const { data: job, error: jobError } = await supabase
     .from('crawl_jobs')
-    .insert({ job_type: jobType, status: 'running', started_at: new Date().toISOString() })
+    .insert({ 
+      job_type: jobType, 
+      status: 'running', 
+      started_at: new Date().toISOString(),
+      user_id: userId
+    })
     .select()
     .single();
   
@@ -462,23 +508,27 @@ export async function triggerCrawl(
     promptData: any,
     source: 'reddit' | 'github'
   ): Promise<CrawledPrompt | null> => {
-    const contentPrefix = promptData.prompt_content.substring(0, 100);
+    // 计算内容哈希
+    const contentHash = await computeContentHash(promptData.prompt_content);
     
-    // 检查是否已存在
+    // 检查当前用户是否已有相同哈希
     const { data: existing } = await supabase
       .from('extracted_prompts')
       .select('id')
-      .eq('source_type', promptData.source_type)
-      .ilike('prompt_content', `${contentPrefix}%`)
-      .limit(1)
+      .eq('user_id', userId)
+      .eq('content_hash', contentHash)
       .maybeSingle();
     
     if (existing) return null; // 已存在，跳过
     
-    // 保存并返回完整数据
+    // 保存并返回完整数据（包含 user_id 和 content_hash）
     const { data, error } = await supabase
       .from('extracted_prompts')
-      .insert(promptData)
+      .insert({ 
+        ...promptData, 
+        user_id: userId,
+        content_hash: contentHash 
+      })
       .select()
       .single();
     

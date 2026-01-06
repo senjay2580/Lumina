@@ -135,15 +135,15 @@ export const VerificationInput: React.FC<VerificationInputProps> = ({
             aria-label={`验证码第 ${index + 1} 位`}
             className={`
               w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-semibold
-              rounded-xl bg-white/60 border-2 outline-none transition-all duration-200
+              rounded-xl border-2 outline-none transition-all duration-200
               ${error 
-                ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200' 
+                ? 'border-red-300 bg-red-50 focus:border-red-400 focus:ring-2 focus:ring-red-200' 
                 : value[index] 
-                  ? 'border-primary/50 bg-primary/5' 
-                  : 'border-white/80 focus:border-primary/50 focus:ring-2 focus:ring-primary/20'
+                  ? 'border-[#FF6B00]/50 bg-orange-50' 
+                  : 'border-gray-200 bg-gray-50 focus:border-[#FF6B00]/50 focus:bg-white focus:ring-2 focus:ring-[#FF6B00]/20'
               }
               ${disabled ? 'opacity-50 cursor-not-allowed bg-gray-100' : ''}
-              text-text placeholder:text-gray-300
+              text-gray-800 placeholder:text-gray-300
             `}
           />
         ))}
