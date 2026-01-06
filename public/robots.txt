@@ -3,4 +3,4 @@ User-agent: *
 Allow: /
 
 # Sitemap location
-Sitemap: https://lumina-ai.vercel.app/sitemap.xml
+Sitemap: https://luminaio.dpdns.org/sitemap.xml
