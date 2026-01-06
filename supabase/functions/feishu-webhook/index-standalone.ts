@@ -1,0 +1,1012 @@
+// 飞书 Webhook 处理函数 - 单文件版本（用于 Supabase Web UI 部署）
+// 包含所有依赖，无需额外文件
+
+// @ts-ignore - Deno types
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+// @ts-ignore - Deno types
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+};
+
+// ============ 环境变量 ============
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const FEISHU_APP_ID = Deno.env.get('FEISHU_APP_ID') || '';
+const FEISHU_APP_SECRET = Deno.env.get('FEISHU_APP_SECRET') || '';
+const FEISHU_VERIFICATION_TOKEN = Deno.env.get('FEISHU_VERIFICATION_TOKEN') || '';
+
+// AI 配置 - 完全按用户配置，无默认值
+const AI_API_KEY = Deno.env.get('AI_API_KEY') || '';
+const AI_BASE_URL = Deno.env.get('AI_BASE_URL') || '';
+const AI_MODEL = Deno.env.get('AI_MODEL') || '';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+// 消息去重缓存（防止飞书重复发送事件）
+const processedMessages = new Map<string, number>();
+const MESSAGE_CACHE_TTL = 60000; // 60 秒内的重复消息会被忽略
+
+// 消息去重 - 使用数据库存储已处理的消息ID
+async function isMessageProcessed(messageId: string): Promise<boolean> {
+  try {
+    // 尝试插入消息ID，如果已存在会失败
+    const { error } = await supabase
+      .from('feishu_processed_messages')
+      .insert({ message_id: messageId })
+      .single();
+    
+    if (error) {
+      // 如果是唯一约束冲突，说明消息已处理过
+      if (error.code === '23505') {
+        console.log('[MSG] Duplicate detected via DB:', messageId);
+        return true;
+      }
+      // 如果表不存在，使用内存缓存作为后备
+      console.log('[MSG] DB check failed, using memory cache:', error.message);
+    } else {
+      console.log('[MSG] New message recorded:', messageId);
+      return false;
+    }
+  } catch (e) {
+    console.log('[MSG] DB error, using memory cache');
+  }
+  
+  // 后备：内存缓存
+  const now = Date.now();
+  
+  // 清理过期的缓存
+  for (const [id, timestamp] of processedMessages) {
+    if (now - timestamp > MESSAGE_CACHE_TTL) {
+      processedMessages.delete(id);
+    }
+  }
+  
+  // 检查是否已处理
+  if (processedMessages.has(messageId)) {
+    return true;
+  }
+  
+  // 标记为已处理
+  processedMessages.set(messageId, now);
+  return false;
+}
+
+// ============ 飞书 API 封装 ============
+let cachedToken: { token: string; expiresAt: number } | null = null;
+
+async function getTenantAccessToken(): Promise<string> {
+  if (cachedToken && cachedToken.expiresAt > Date.now()) {
+    return cachedToken.token;
+  }
+
+  const response = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      app_id: FEISHU_APP_ID,
+      app_secret: FEISHU_APP_SECRET,
+    }),
+  });
+
+  const data = await response.json();
+  if (data.code !== 0) {
+    throw new Error(`获取 tenant_access_token 失败: ${data.msg}`);
+  }
+
+  cachedToken = {
+    token: data.tenant_access_token,
+    expiresAt: Date.now() + (data.expire - 300) * 1000,
+  };
+
+  return data.tenant_access_token;
+}
+
+async function sendTextMessage(openId: string, text: string): Promise<void> {
+  const token = await getTenantAccessToken();
+  
+  const response = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      receive_id: openId,
+      msg_type: 'text',
+      content: JSON.stringify({ text }),
+    }),
+  });
+
+  const data = await response.json();
+  if (data.code !== 0) {
+    console.error('发送消息失败:', data);
+  }
+}
+
+async function sendCardMessage(openId: string, card: object): Promise<void> {
+  const token = await getTenantAccessToken();
+  
+  const response = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      receive_id: openId,
+      msg_type: 'interactive',
+      content: JSON.stringify(card),
+    }),
+  });
+
+  const data = await response.json();
+  if (data.code !== 0) {
+    console.error('发送卡片消息失败:', data);
+  }
+}
+
+async function downloadFeishuFile(messageId: string, fileKey: string): Promise<Blob> {
+  const token = await getTenantAccessToken();
+  const response = await fetch(
+    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!response.ok) throw new Error(`下载文件失败: ${response.status}`);
+  return response.blob();
+}
+
+async function downloadFeishuImage(messageId: string, imageKey: string): Promise<Blob> {
+  const token = await getTenantAccessToken();
+  const response = await fetch(
+    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!response.ok) throw new Error(`下载图片失败: ${response.status}`);
+  return response.blob();
+}
+
+async function getFeishuUserInfo(openId: string) {
+  const token = await getTenantAccessToken();
+  const response = await fetch(
+    `https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  const data = await response.json();
+  if (data.code !== 0) {
+    return { name: '飞书用户', avatar: '', userId: undefined, unionId: undefined };
+  }
+  return {
+    name: data.data.user.name,
+    avatar: data.data.user.avatar?.avatar_origin || '',
+    userId: data.data.user.user_id,
+    unionId: data.data.user.union_id,
+  };
+}
+
+// ============ 消息解析工具 ============
+interface ParsedMessage {
+  type: 'text' | 'image' | 'file' | 'unknown';
+  content?: string;
+  fileKey?: string;
+  fileName?: string;
+}
+
+function parseMessageContent(msgType: string, content: string): ParsedMessage {
+  try {
+    const parsed = JSON.parse(content);
+    switch (msgType) {
+      case 'text': return { type: 'text', content: parsed.text };
+      case 'image': return { type: 'image', fileKey: parsed.image_key };
+      case 'file': return { type: 'file', fileKey: parsed.file_key, fileName: parsed.file_name };
+      default: return { type: 'unknown' };
+    }
+  } catch {
+    return { type: 'unknown' };
+  }
+}
+
+function extractUrl(text: string): string | null {
+  const match = text.match(/(https?:\/\/[^\s]+)/g);
+  return match ? match[0] : null;
+}
+
+function parseCommand(text: string): { command: string; args: string } | null {
+  const trimmed = text.trim();
+  
+  // 只支持 /command 格式的英文指令
+  if (trimmed.startsWith('/')) {
+    const parts = trimmed.slice(1).split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    // 只识别这些指令，其他的不算指令
+    if (['help', 'list', 'search', 'stats', 'unbind', 'bind', 'debug'].includes(cmd)) {
+      return { command: cmd, args: parts.slice(1).join(' ') };
+    }
+  }
+  
+  return null;
+}
+
+// ============ AI 智能搜索 ============
+
+interface AISearchResult {
+  intent: string;           // AI 理解的用户意图
+  matchedIds: string[];     // AI 选择的资源 ID
+  suggestion: string;       // AI 的建议/总结
+}
+
+// 获取用户资源（分页）
+async function getResourcesPage(userId: string, offset: number, limit: number = 100): Promise<any[]> {
+  const { data } = await supabase
+    .from('resources')
+    .select('id, title, type, url, description, created_at')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .is('archived_at', null)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  
+  return data || [];
+}
+
+// AI 分析查询并从资源中选择最相关的
+async function aiSmartMatch(query: string, resources: any[]): Promise<AISearchResult> {
+  if (!AI_API_KEY) {
+    return {
+      intent: query,
+      matchedIds: [],
+      suggestion: '未配置 AI 服务，请在 Supabase Secrets 中设置 AI_API_KEY',
+    };
+  }
+
+  if (resources.length === 0) {
+    return {
+      intent: query,
+      matchedIds: [],
+      suggestion: '当前批次没有资源',
+    };
+  }
+
+  // 统计各分类数量
+  const typeStats = {
+    link: resources.filter(r => r.type === 'link').length,
+    github: resources.filter(r => r.type === 'github').length,
+    document: resources.filter(r => r.type === 'document').length,
+    image: resources.filter(r => r.type === 'image').length,
+  };
+
+  // 构建资源列表给 AI，突出显示分类
+  const resourceList = resources.map((r, i) => {
+    const typeLabel = { link: '链接', github: 'GitHub项目', document: '文档', image: '图片' }[r.type] || r.type;
+    return `${i}: 【${typeLabel}】${r.title}${r.description ? ' - ' + r.description.slice(0, 80) : ''}${r.url ? ' | ' + r.url : ''}`;
+  }).join('\n');
+
+  const systemPrompt = `你是资源搜索助手。根据用户查询，从资源列表中选择相关资源。
+
+资源统计：链接${typeStats.link}个，GitHub${typeStats.github}个，文档${typeStats.document}个，图片${typeStats.image}个
+
+资源列表：
+${resourceList}
+
+匹配规则（按优先级）：
+1. 分类匹配：查询"github"→返回所有【GitHub项目】；查询"链接"→返回所有【链接】；查询"文档"→返回所有【文档】；查询"图片"→返回所有【图片】
+2. 关键词匹配：标题、描述、URL中包含查询关键词
+3. 语义匹配：内容与查询意图相关
+
+返回JSON（只返回JSON，无其他内容）：
+{"intent":"理解的意图","matchedIndexes":[0,1,2],"suggestion":"中文推荐理由"}
+
+注意：matchedIndexes是数字数组，对应资源序号。如果有匹配必须返回，宁可多返回也不要漏掉。`;
+
+  try {
+    console.log('[AI] Request - query:', query, 'resources:', resources.length, 'types:', JSON.stringify(typeStats));
+    console.log('[AI] Resource list sample:', resourceList.slice(0, 500));
+    
+    const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${AI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `查询：${query}` },
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('[AI] API error:', response.status, errText);
+      return {
+        intent: query,
+        matchedIds: [],
+        suggestion: `AI 服务调用失败: ${response.status}`,
+      };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    console.log('[AI] Raw response:', content);
+    
+    // 解析 JSON - 尝试多种方式
+    let parsed: any = null;
+    
+    // 方式1: 直接解析
+    try {
+      parsed = JSON.parse(content.trim());
+    } catch {
+      // 方式2: 提取 JSON 块
+      const jsonMatch = content.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          console.error('[AI] JSON parse error:', e);
+        }
+      }
+    }
+    
+    if (parsed && parsed.matchedIndexes) {
+      console.log('[AI] Parsed result:', JSON.stringify(parsed));
+      
+      // 把序号转换成实际的资源 ID
+      const indexes = Array.isArray(parsed.matchedIndexes) ? parsed.matchedIndexes : [];
+      const matchedIds = indexes
+        .filter((i: number) => typeof i === 'number' && i >= 0 && i < resources.length)
+        .map((i: number) => resources[i].id);
+      
+      console.log('[AI] Matched indexes:', indexes, '-> IDs:', matchedIds);
+      
+      return {
+        intent: parsed.intent || query,
+        matchedIds,
+        suggestion: parsed.suggestion || '以上是为你找到的相关资源',
+      };
+    }
+    
+    console.error('[AI] Response format error, content:', content);
+    return {
+      intent: query,
+      matchedIds: [],
+      suggestion: 'AI 返回格式错误，请重试',
+    };
+  } catch (err) {
+    console.error('[AI] Analysis failed:', err);
+    return {
+      intent: query,
+      matchedIds: [],
+      suggestion: 'AI 分析失败，请检查配置',
+    };
+  }
+}
+
+// 分页搜索直到找到结果或遍历完所有资源
+async function searchWithPagination(userId: string, query: string): Promise<{ aiResult: AISearchResult; matchedResources: any[] }> {
+  const pageSize = 100;
+  let offset = 0;
+  let allMatchedResources: any[] = [];
+  let finalAiResult: AISearchResult = {
+    intent: query,
+    matchedIds: [],
+    suggestion: '没有找到匹配的资源',
+  };
+  
+  const processedIds = new Set<string>(); // 防止重复
+  
+  console.log('[Search] Starting search for:', query, 'userId:', userId);
+  
+  while (true) {
+    const resources = await getResourcesPage(userId, offset, pageSize);
+    console.log('[Search] Page offset:', offset, 'fetched:', resources.length);
+    
+    // 没有更多资源了
+    if (resources.length === 0) {
+      console.log('[Search] No more resources');
+      break;
+    }
+    
+    // 过滤掉已处理过的资源
+    const newResources = resources.filter(r => !processedIds.has(r.id));
+    newResources.forEach(r => processedIds.add(r.id));
+    
+    console.log('[Search] New resources to process:', newResources.length);
+    
+    if (newResources.length === 0) {
+      offset += pageSize;
+      continue;
+    }
+    
+    // AI 分析这批资源
+    const aiResult = await aiSmartMatch(query, newResources);
+    console.log('[Search] AI result - matched:', aiResult.matchedIds.length);
+    
+    // 如果找到了匹配的资源
+    if (aiResult.matchedIds.length > 0) {
+      const matchedResources = aiResult.matchedIds
+        .map(id => newResources.find(r => r.id === id))
+        .filter(Boolean);
+      
+      allMatchedResources.push(...matchedResources);
+      finalAiResult = aiResult;
+      
+      console.log('[Search] Found matches:', matchedResources.length, 'total:', allMatchedResources.length);
+      
+      // 如果已经找到足够的结果（5个），就停止
+      if (allMatchedResources.length >= 5) {
+        break;
+      }
+    }
+    
+    // 如果这批资源不足 pageSize，说明已经是最后一批了
+    if (resources.length < pageSize) {
+      console.log('[Search] Last page reached');
+      break;
+    }
+    
+    offset += pageSize;
+    
+    // 安全限制：最多遍历 1000 条资源
+    if (offset >= 1000) {
+      console.log('[Search] Max offset reached');
+      break;
+    }
+  }
+  
+  console.log('[Search] Final result - matched:', allMatchedResources.length);
+  
+  return {
+    aiResult: finalAiResult,
+    matchedResources: allMatchedResources.slice(0, 5), // 最多返回 5 个
+  };
+}
+
+// 生成 AI 搜索结果卡片
+function generateAISearchCard(
+  query: string,
+  aiResult: AISearchResult,
+  matchedResources: any[]
+): object {
+  const typeEmoji: Record<string, string> = {
+    link: '🔗', github: '📦', document: '📄', image: '🖼️',
+  };
+
+  const elements: any[] = [];
+
+  // AI 理解的意图
+  elements.push({
+    tag: 'div',
+    text: {
+      tag: 'lark_md',
+      content: `🤖 **AI 理解**：${aiResult.intent}`,
+    },
+  });
+
+  elements.push({ tag: 'hr' });
+
+  // AI 推荐理由
+  elements.push({
+    tag: 'div',
+    text: {
+      tag: 'lark_md',
+      content: `💡 ${aiResult.suggestion}`,
+    },
+  });
+
+  elements.push({ tag: 'hr' });
+
+  // 搜索结果
+  if (matchedResources.length === 0) {
+    elements.push({
+      tag: 'div',
+      text: { tag: 'plain_text', content: '📭 没有找到匹配的资源' },
+    });
+    elements.push({
+      tag: 'note',
+      elements: [
+        { tag: 'plain_text', content: '试试用其他方式描述你想找的内容' },
+      ],
+    });
+  } else {
+    matchedResources.forEach((r: any) => {
+      const emoji = typeEmoji[r.type] || '📎';
+      const date = new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+      
+      elements.push({
+        tag: 'div',
+        fields: [{
+          is_short: false,
+          text: {
+            tag: 'lark_md',
+            content: r.url 
+              ? `${emoji} **[${r.title}](${r.url})**`
+              : `${emoji} **${r.title}**`,
+          },
+        }],
+      });
+      
+      if (r.description) {
+        elements.push({
+          tag: 'note',
+          elements: [
+            { tag: 'plain_text', content: r.description.slice(0, 80) + (r.description.length > 80 ? '...' : '') },
+          ],
+        });
+      }
+      
+      elements.push({
+        tag: 'note',
+        elements: [
+          { tag: 'plain_text', content: `${r.type} · ${date}` },
+        ],
+      });
+      
+      elements.push({ tag: 'hr' });
+    });
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `🔮 智能搜索：${query.slice(0, 20)}${query.length > 20 ? '...' : ''}` },
+      template: 'violet',
+    },
+    elements,
+  };
+}
+
+// 处理 AI 搜索
+async function handleAISearch(userId: string, query: string): Promise<object | string> {
+  if (!query.trim()) {
+    return '❓ 请告诉我你想找什么\n\n直接输入即可，比如：\n• "AI 工具"\n• "React 文档"\n• "GitHub 项目"';
+  }
+
+  // 检查 AI 配置
+  if (!AI_API_KEY) {
+    console.log('[AI] API_KEY not configured');
+    return '⚠️ AI 服务未配置\n\n请在 Supabase Edge Functions Secrets 中设置：\n• AI_API_KEY（必需）\n• AI_BASE_URL（必需）\n• AI_MODEL（必需）';
+  }
+
+  if (!AI_BASE_URL) {
+    console.log('[AI] BASE_URL not configured');
+    return '⚠️ AI_BASE_URL 未配置\n\n请在 Supabase Edge Functions Secrets 中设置 AI_BASE_URL';
+  }
+
+  if (!AI_MODEL) {
+    console.log('[AI] MODEL not configured');
+    return '⚠️ AI_MODEL 未配置\n\n请在 Supabase Edge Functions Secrets 中设置 AI_MODEL';
+  }
+
+  console.log('[AI] Starting search, API configured:', !!AI_API_KEY, 'Base URL:', AI_BASE_URL, 'Model:', AI_MODEL);
+
+  // 分页搜索
+  const { aiResult, matchedResources } = await searchWithPagination(userId, query);
+  
+  return generateAISearchCard(query, aiResult, matchedResources);
+}
+
+// ============ 卡片生成 ============
+function generateHelpCard(): object {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '📚 Lumina 资源助手' }, template: 'orange' },
+    elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: '**添加资源：**\n• 发送链接 → 自动识别保存\n• 发送图片 → 自动上传\n• 发送文件 → 自动上传' } },
+      { tag: 'hr' },
+      { tag: 'div', text: { tag: 'lark_md', content: '**🔮 AI 智能搜索：**\n直接输入你想找的内容！\n• "AI 工具"\n• "React 文档"\n• "GitHub 项目"' } },
+      { tag: 'hr' },
+      { tag: 'div', text: { tag: 'lark_md', content: '**指令：**\n• `/help` - 显示帮助\n• `/list` - 查看最近资源\n• `/list link 30` - 最近30天的链接\n• `/search 关键词` - 搜索资源\n• `/stats` - 查看统计\n• `/unbind` - 解绑账号' } },
+    ],
+  };
+}
+
+function generateResourceAddedCard(title: string, type: string): object {
+  const typeLabels: Record<string, string> = { link: '🔗 链接', github: '📦 GitHub', document: '📄 文档', image: '🖼️ 图片' };
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '✅ 资源已添加' }, template: 'green' },
+    elements: [
+      { tag: 'div', fields: [
+        { is_short: true, text: { tag: 'lark_md', content: `**类型**\n${typeLabels[type] || type}` } },
+        { is_short: true, text: { tag: 'lark_md', content: `**标题**\n${title}` } },
+      ] },
+    ],
+  };
+}
+
+// ============ 业务逻辑 ============
+async function getBoundUserId(openId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('feishu_user_bindings')
+    .select('user_id')
+    .eq('feishu_open_id', openId)
+    .single();
+  return data?.user_id || null;
+}
+
+async function handleBindCommand(openId: string, code: string): Promise<string> {
+  const { data: bindCode } = await supabase
+    .from('feishu_bind_codes')
+    .select('*')
+    .eq('code', code.toUpperCase())
+    .is('used_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .single();
+
+  if (!bindCode) return '❌ 绑定码无效或已过期，请重新获取';
+
+  const { data: existingBinding } = await supabase
+    .from('feishu_user_bindings')
+    .select('id')
+    .eq('feishu_open_id', openId)
+    .single();
+
+  if (existingBinding) return '❌ 此飞书账号已绑定，请先用 /unbind 解绑';
+
+  const userInfo = await getFeishuUserInfo(openId);
+
+  const { error: bindError } = await supabase
+    .from('feishu_user_bindings')
+    .insert({
+      user_id: bindCode.user_id,
+      feishu_open_id: openId,
+      feishu_user_id: userInfo.userId,
+      feishu_union_id: userInfo.unionId,
+      feishu_name: userInfo.name,
+      feishu_avatar: userInfo.avatar,
+    });
+
+  if (bindError) return '❌ 绑定失败，请稍后重试';
+
+  await supabase.from('feishu_bind_codes').update({ used_at: new Date().toISOString() }).eq('id', bindCode.id);
+
+  return `✅ 绑定成功！\n\n你好 ${userInfo.name}，现在可以直接发送链接、图片或文件来添加资源了。\n\n发送 /help 查看所有指令。`;
+}
+
+async function handleUnbindCommand(openId: string): Promise<string> {
+  await supabase.from('feishu_user_bindings').delete().eq('feishu_open_id', openId);
+  return '✅ 已解绑\n\n如需重新使用，请在 Lumina 设置页面获取新的绑定码。';
+}
+
+async function addLinkResource(userId: string, url: string): Promise<{ title: string; type: string }> {
+  const isGitHub = url.includes('github.com');
+  const type = isGitHub ? 'github' : 'link';
+  let title: string;
+  let metadata: Record<string, any> = {};
+  let description: string | undefined;
+
+  if (isGitHub) {
+    const match = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+    if (match) {
+      const [, owner, repo] = match;
+      title = `${owner}/${repo}`;
+      try {
+        const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+          headers: { 'Accept': 'application/vnd.github.v3+json' },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          metadata = { owner: data.owner.login, repo: data.name, stars: data.stargazers_count, forks: data.forks_count, language: data.language };
+          description = data.description;
+        }
+      } catch {}
+    } else {
+      title = new URL(url).host + new URL(url).pathname;
+    }
+  } else {
+    const parsed = new URL(url);
+    title = parsed.host + parsed.pathname.replace(/\/$/, '');
+  }
+
+  await supabase.from('resources').insert({ user_id: userId, type, title, description, url, metadata });
+  return { title, type };
+}
+
+async function uploadFileResource(userId: string, blob: Blob, fileName: string, isImage: boolean): Promise<{ title: string; type: string }> {
+  const resourceId = crypto.randomUUID();
+  const ext = fileName.split('.').pop() || (isImage ? 'png' : 'bin');
+  const storagePath = `${userId}/${resourceId}.${ext}`;
+  const type = isImage ? 'image' : 'document';
+
+  await supabase.storage.from('resources').upload(storagePath, blob, {
+    contentType: isImage ? `image/${ext}` : 'application/octet-stream',
+  });
+
+  await supabase.from('resources').insert({
+    id: resourceId, user_id: userId, type, title: fileName, storage_path: storagePath, file_name: fileName, metadata: {},
+  });
+
+  return { title: fileName, type };
+}
+
+async function handleListCommand(userId: string, typeFilter?: string, days?: number): Promise<object> {
+  const since = new Date(Date.now() - (days || 7) * 24 * 60 * 60 * 1000).toISOString();
+  let query = supabase.from('resources').select('title, type, url, created_at')
+    .eq('user_id', userId).is('deleted_at', null).is('archived_at', null)
+    .gte('created_at', since).order('created_at', { ascending: false }).limit(10);
+
+  if (typeFilter && typeFilter !== 'all') query = query.eq('type', typeFilter);
+  const { data } = await query;
+
+  const typeLabels: Record<string, string> = { all: '全部', link: '链接', github: 'GitHub', document: '文档', image: '图片' };
+  const typeEmoji: Record<string, string> = { link: '🔗', github: '📦', document: '📄', image: '🖼️' };
+  const elements: any[] = [];
+
+  if (!data || data.length === 0) {
+    elements.push({ tag: 'div', text: { tag: 'plain_text', content: `📭 最近 ${days || 7} 天没有资源` } });
+  } else {
+    data.forEach((r: any) => {
+      const emoji = typeEmoji[r.type] || '📎';
+      const date = new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+      elements.push({
+        tag: 'div', fields: [{ is_short: false, text: { tag: 'lark_md', content: r.url ? `${emoji} **[${r.title}](${r.url})**` : `${emoji} **${r.title}**` } }],
+      });
+      elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: `${typeLabels[r.type] || r.type} · ${date}` }] });
+      elements.push({ tag: 'hr' });
+    });
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: `📋 资源列表` }, template: 'orange' },
+    elements,
+  };
+}
+
+async function handleSearchCommand(userId: string, keyword: string): Promise<object | string> {
+  if (!keyword) return '❌ 请输入搜索关键词';
+
+  const { data } = await supabase.from('resources').select('title, type, url, created_at')
+    .eq('user_id', userId).is('deleted_at', null).ilike('title', `%${keyword}%`)
+    .order('created_at', { ascending: false }).limit(10);
+
+  const typeEmoji: Record<string, string> = { link: '🔗', github: '📦', document: '📄', image: '🖼️' };
+  const elements: any[] = [];
+
+  if (!data || data.length === 0) {
+    elements.push({ tag: 'div', text: { tag: 'plain_text', content: `🔍 未找到包含「${keyword}」的资源` } });
+  } else {
+    data.forEach((r: any) => {
+      const emoji = typeEmoji[r.type] || '📎';
+      elements.push({
+        tag: 'div', fields: [{ is_short: false, text: { tag: 'lark_md', content: r.url ? `${emoji} **[${r.title}](${r.url})**` : `${emoji} **${r.title}**` } }],
+      });
+      elements.push({ tag: 'hr' });
+    });
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: `🔍 搜索「${keyword}」` }, template: 'blue' },
+    elements,
+  };
+}
+
+async function handleStatsCommand(userId: string): Promise<object> {
+  const { data } = await supabase.from('resources').select('type, created_at')
+    .eq('user_id', userId).is('deleted_at', null).is('archived_at', null);
+
+  const stats = {
+    total: data?.length || 0,
+    link: data?.filter((r: any) => r.type === 'link').length || 0,
+    github: data?.filter((r: any) => r.type === 'github').length || 0,
+    document: data?.filter((r: any) => r.type === 'document').length || 0,
+    image: data?.filter((r: any) => r.type === 'image').length || 0,
+  };
+
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '📊 资源统计' }, template: 'purple' },
+    elements: [
+      { tag: 'div', fields: [
+        { is_short: true, text: { tag: 'lark_md', content: `**📚 总计**\n${stats.total} 条` } },
+        { is_short: true, text: { tag: 'lark_md', content: `**🔗 链接**\n${stats.link} 条` } },
+      ] },
+      { tag: 'div', fields: [
+        { is_short: true, text: { tag: 'lark_md', content: `**📦 GitHub**\n${stats.github} 条` } },
+        { is_short: true, text: { tag: 'lark_md', content: `**📄 文档**\n${stats.document} 条` } },
+      ] },
+    ],
+  };
+}
+
+// ============ 消息处理 ============
+async function handleMessage(event: any): Promise<void> {
+  const { message, sender } = event;
+  const openId = sender.sender_id.open_id;
+  const messageId = message.message_id;
+  const msgType = message.message_type;
+  const content = message.content;
+
+  console.log('[MSG] === New message ===');
+  console.log('[MSG] messageId:', messageId);
+  console.log('[MSG] msgType:', msgType);
+  console.log('[MSG] openId:', openId);
+
+  // 消息去重 - 防止飞书重复发送事件
+  const isDuplicate = await isMessageProcessed(messageId);
+  if (isDuplicate) {
+    console.log('[MSG] Duplicate ignored:', messageId);
+    return;
+  }
+
+  const parsed = parseMessageContent(msgType, content);
+  console.log('[MSG] Parsed type:', parsed.type, 'content:', parsed.content?.slice(0, 100));
+  
+  const userId = await getBoundUserId(openId);
+  console.log('[MSG] Bound userId:', userId);
+
+  if (parsed.type === 'text' && parsed.content) {
+    const text = parsed.content.trim();
+    console.log('[MSG] Processing text:', text);
+    
+    if (text.startsWith('/bind ')) {
+      const code = text.replace(/^\/bind /, '').trim();
+      const result = await handleBindCommand(openId, code);
+      await sendTextMessage(openId, result);
+      return;
+    }
+
+    if (!userId) {
+      await sendTextMessage(openId, '👋 你好！我是 Lumina 资源助手。\n\n请先在 Lumina 设置页面获取绑定码，然后发送：\n`/bind 绑定码`');
+      return;
+    }
+
+    const cmd = parseCommand(text);
+    console.log('[MSG] Command:', cmd);
+    
+    if (cmd) {
+      switch (cmd.command) {
+        case 'help': await sendCardMessage(openId, generateHelpCard()); return;
+        case 'debug': {
+          console.log('[MSG] Debug command');
+          const resources = await getResourcesPage(userId, 0, 10);
+          const { count } = await supabase
+            .from('resources')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .is('deleted_at', null);
+          
+          const debugInfo = `🔧 调试信息\n\n` +
+            `用户ID: ${userId}\n` +
+            `飞书OpenID: ${openId}\n` +
+            `资源总数: ${count || 0}\n` +
+            `AI_API_KEY: ${AI_API_KEY ? '已配置(' + AI_API_KEY.slice(0, 8) + '...)' : '❌ 未配置'}\n` +
+            `AI_BASE_URL: ${AI_BASE_URL}\n` +
+            `AI_MODEL: ${AI_MODEL}\n\n` +
+            `最近资源:\n${resources.map(r => `- [${r.type}] ${r.title}`).join('\n') || '无'}`;
+          
+          await sendTextMessage(openId, debugInfo);
+          return;
+        }
+        case 'list': {
+          const args = cmd.args.split(/\s+/).filter(Boolean);
+          let typeFilter = 'all', days = 7;
+          const typeMap: Record<string, string> = { 'link': 'link', 'github': 'github', 'document': 'document', 'image': 'image' };
+          for (const arg of args) {
+            if (typeMap[arg.toLowerCase()]) typeFilter = typeMap[arg.toLowerCase()];
+            else if (!isNaN(parseInt(arg))) days = parseInt(arg);
+          }
+          await sendCardMessage(openId, await handleListCommand(userId, typeFilter, days));
+          return;
+        }
+        case 'search': {
+          const result = await handleSearchCommand(userId, cmd.args);
+          if (typeof result === 'string') await sendTextMessage(openId, result);
+          else await sendCardMessage(openId, result);
+          return;
+        }
+        case 'stats': await sendCardMessage(openId, await handleStatsCommand(userId)); return;
+        case 'unbind': await sendTextMessage(openId, await handleUnbindCommand(openId)); return;
+      }
+    }
+
+    // 检查是否包含 URL - 如果是链接则添加资源
+    const url = extractUrl(text);
+    if (url) {
+      console.log('[MSG] URL detected:', url);
+      try {
+        const result = await addLinkResource(userId, url);
+        await sendCardMessage(openId, generateResourceAddedCard(result.title, result.type));
+      } catch (e) {
+        console.error('[MSG] Add link error:', e);
+        await sendTextMessage(openId, '❌ 添加链接失败');
+      }
+      return;
+    }
+
+    // 没有匹配到指令，也不是链接，发送给 AI 搜索
+    console.log('[MSG] >>> Triggering AI search for:', text);
+    try {
+      const aiResult = await handleAISearch(userId, text);
+      console.log('[MSG] AI search completed, result type:', typeof aiResult);
+      if (typeof aiResult === 'string') {
+        await sendTextMessage(openId, aiResult);
+      } else {
+        await sendCardMessage(openId, aiResult);
+      }
+    } catch (e) {
+      console.error('[MSG] AI search error:', e);
+      await sendTextMessage(openId, '❌ AI 搜索出错，请稍后重试');
+    }
+    return;
+  }
+
+  if (!userId) {
+    await sendTextMessage(openId, '❌ 请先绑定账号 /bind');
+    return;
+  }
+
+  if (parsed.type === 'image' && parsed.fileKey) {
+    try {
+      const blob = await downloadFeishuImage(messageId, parsed.fileKey);
+      const result = await uploadFileResource(userId, blob, `feishu_${Date.now()}.png`, true);
+      await sendCardMessage(openId, generateResourceAddedCard(result.title, result.type));
+    } catch {
+      await sendTextMessage(openId, '❌ 上传图片失败');
+    }
+    return;
+  }
+
+  if (parsed.type === 'file' && parsed.fileKey && parsed.fileName) {
+    try {
+      const blob = await downloadFeishuFile(messageId, parsed.fileKey);
+      const result = await uploadFileResource(userId, blob, parsed.fileName, false);
+      await sendCardMessage(openId, generateResourceAddedCard(result.title, result.type));
+    } catch {
+      await sendTextMessage(openId, '❌ 上传文件失败');
+    }
+    return;
+  }
+
+  await sendTextMessage(openId, '❓ 暂不支持此类型的消息');
+}
+
+// ============ 主入口 ============
+serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    const body = await req.json();
+
+    if (body.type === 'url_verification') {
+      return new Response(JSON.stringify({ challenge: body.challenge }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (body.header?.token !== FEISHU_VERIFICATION_TOKEN) {
+      return new Response(JSON.stringify({ error: 'Invalid token' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (body.header?.event_type === 'im.message.receive_v1') {
+      handleMessage(body.event).catch(console.error);
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('Webhook error:', err);
+    return new Response(JSON.stringify({ error: 'Internal error' }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { getStoredUser } from '../lib/auth';
 import { preloadTrashData } from '../lib/usePreloadData';
 
-export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'SETTINGS' | 'TRASH';
+export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'RESOURCES' | 'SETTINGS' | 'TRASH' | 'FEISHU_GUIDE';
 
 // 提示词采集图标（地球）
 const CrawlerIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -67,15 +67,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
       icon: (
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
-        </svg>
-      )
-    },
-    {
-      id: 'TRASH',
-      label: '回收站',
-      icon: (
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
         </svg>
       )
     }
@@ -145,7 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
       {/* 主导航 */}
       <nav className={`flex-1 py-4 space-y-1 relative z-10 ${isCollapsed ? 'px-2' : 'px-3'}`}>
         {/* 主页和工作流 */}
-        {mainNavItems.slice(0, 2).map((item) => {
+        {mainNavItems.map((item) => {
           const isActive = currentView === item.id;
           return (
             <button 
@@ -247,29 +238,48 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
           )}
         </div>
 
-        {/* 回收站 */}
-        {mainNavItems.slice(2).map((item) => {
-          const isActive = currentView === item.id;
-          return (
-            <button 
-              key={item.id} 
-              onClick={() => onViewChange(item.id)}
-              onMouseEnter={item.id === 'TRASH' ? handleTrashHover : undefined}
-              title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center gap-3 rounded-xl transition-all ${
-                isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
-              } ${
-                isActive 
-                  ? 'bg-white/80 shadow-sm text-gray-900 backdrop-blur-sm' 
-                  : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
-              }`}
-            >
-              {isActive && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
-              <span className={isActive ? 'text-primary' : ''}>{item.icon}</span>
-              {!isCollapsed && <span className="font-medium text-sm">{item.label}</span>}
-            </button>
-          );
-        })}
+        {/* 资源中心 */}
+        <button 
+          onClick={() => onViewChange('RESOURCES')}
+          title={isCollapsed ? '资源中心' : undefined}
+          className={`w-full flex items-center gap-3 rounded-xl transition-all ${
+            isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
+          } ${
+            currentView === 'RESOURCES' 
+              ? 'bg-white/80 shadow-sm text-gray-900 backdrop-blur-sm' 
+              : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
+          }`}
+        >
+          {currentView === 'RESOURCES' && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
+          <span className={currentView === 'RESOURCES' ? 'text-primary' : ''}>
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+          </span>
+          {!isCollapsed && <span className="font-medium text-sm">资源中心</span>}
+        </button>
+
+        {/* 回收站 - 放最后，淡红色渐变 */}
+        <button 
+          onClick={() => onViewChange('TRASH')}
+          onMouseEnter={handleTrashHover}
+          title={isCollapsed ? '回收站' : undefined}
+          className={`w-full flex items-center gap-3 rounded-xl transition-all mt-2 ${
+            isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
+          } ${
+            currentView === 'TRASH' 
+              ? 'bg-gradient-to-r from-red-50 to-rose-50 shadow-sm text-red-600 border border-red-100' 
+              : 'text-gray-400 hover:bg-gradient-to-r hover:from-red-50/50 hover:to-rose-50/50 hover:text-red-500'
+          }`}
+        >
+          {currentView === 'TRASH' && !isCollapsed && <div className="w-1 h-5 bg-red-400 rounded-full -ml-1" />}
+          <span className={currentView === 'TRASH' ? 'text-red-500' : ''}>
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            </svg>
+          </span>
+          {!isCollapsed && <span className="font-medium text-sm">回收站</span>}
+        </button>
       </nav>
 
       {/* 收缩按钮 */}

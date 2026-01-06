@@ -115,23 +115,28 @@ export async function getUserProviders(userId: string, forceRefresh = false): Pr
     return [];
   }
 
-  // 获取模板以获取颜色信息
+  // 获取模板以继承默认值
   const templates = await getProviderTemplates();
-  const templateColorMap = new Map(templates.map(t => [t.providerKey, t.color]));
+  const templateMap = new Map(templates.map(t => [t.providerKey, t]));
 
-  const result = (data || []).map(r => ({
-    id: r.id,
-    userId: r.user_id,
-    providerKey: r.provider_key,
-    name: r.name,
-    apiKey: r.api_key || '',
-    baseUrl: r.base_url || '',
-    models: r.models || [],
-    isEnabled: r.is_enabled || false,
-    isDefault: r.is_default || false,
-    defaultModel: r.default_model || '',
-    color: templateColorMap.get(r.provider_key) || 'gray',
-  }));
+  const result = (data || []).map(r => {
+    const template = templateMap.get(r.provider_key);
+    return {
+      id: r.id,
+      userId: r.user_id,
+      providerKey: r.provider_key,
+      name: r.name,
+      apiKey: r.api_key || '',
+      // 如果用户没有配置 baseUrl，从模板继承
+      baseUrl: r.base_url || template?.baseUrl || '',
+      // 如果用户没有配置 models，从模板继承
+      models: r.models?.length ? r.models : (template?.models || []),
+      isEnabled: r.is_enabled || false,
+      isDefault: r.is_default || false,
+      defaultModel: r.default_model || '',
+      color: template?.color || 'gray',
+    };
+  });
 
   setCache(CACHE_KEYS.USER_PROVIDERS, userId, result);
   return result;

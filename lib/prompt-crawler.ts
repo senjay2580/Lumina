@@ -1,35 +1,24 @@
-// 提示词爬虫管理库
+// 提示词爬虫管理库（本地执行版）
 import { supabase } from './supabase';
+import { getUserProviders } from './ai-providers';
+import { decryptApiKey } from './ai-providers';
 
 // 类型定义
-export interface PromptSource {
+export interface CrawledPrompt {
   id: string;
-  source_type: 'reddit' | 'github' | 'manual';
-  source_id: string;
-  source_url: string;
-  title: string;
-  content: string;
-  author: string;
-  score: number;
-  raw_data: any;
-  crawled_at: string;
-}
-
-export interface ExtractedPrompt {
-  id: string;
-  source_id: string;
   prompt_title: string;
   prompt_content: string;
   suggested_category: string;
   quality_score: number;
   ai_analysis: any;
   language: string;
-  is_approved: boolean;
-  approved_by: string | null;
-  imported_to_prompt_id: string | null;
+  source_type: 'reddit' | 'github' | 'unknown';
+  source_url: string | null;
+  source_author: string | null;
+  source_name: string | null;
+  source_stars: number | null;
+  source_forks: number | null;
   created_at: string;
-  // 关联数据
-  source?: PromptSource;
 }
 
 export interface CrawlJob {
@@ -46,29 +35,87 @@ export interface CrawlJob {
 }
 
 export interface CrawlStats {
-  totalSources: number;
-  redditSources: number;
-  githubSources: number;
-  totalExtracted: number;
-  pendingReview: number;
-  approved: number;
-  imported: number;
+  totalPrompts: number;
+  redditPrompts: number;
+  githubPrompts: number;
 }
 
-// ============ 爬取任务 ============
-
-// 触发爬取任务
-export async function triggerCrawl(jobType: 'reddit' | 'github' | 'all' = 'all'): Promise<{ jobId: string; stats: any }> {
-  const { data, error } = await supabase.functions.invoke('prompt-crawler', {
-    body: { jobType }
-  });
-  
-  if (error) throw new Error(error.message);
-  return data;
+export interface CrawlConfig {
+  reddit_subreddits: string[];
+  github_search_queries: string[];
+  min_reddit_score: number;
+  min_github_stars: number;
+  ai_quality_threshold: number;
 }
 
-// 获取爬取任务历史
-export async function getCrawlJobs(limit = 20): Promise<CrawlJob[]> {
+export interface CrawlProgress {
+  phase: 'crawling' | 'analyzing' | 'saving' | 'done' | 'cancelled';
+  message: string;
+  source?: 'reddit' | 'github'; // 当前进度来源
+  itemsFound: number;
+  promptsExtracted: number;
+  current?: number; // 当前处理的索引
+  total?: number;   // 总数
+  // 分别统计
+  reddit?: { found: number; extracted: number };
+  github?: { found: number; extracted: number };
+  // 新提取的提示词（实时推送）
+  newPrompt?: CrawledPrompt;
+}
+
+// 默认配置
+const DEFAULT_CONFIG: CrawlConfig = {
+  reddit_subreddits: ['PromptEngineering', 'ChatGPTPromptGenius', 'ChatGPT', 'OpenAI', 'LocalLLM'],
+  github_search_queries: ['prompt-engineering', 'awesome-prompts', 'chatgpt-prompts', 'llm-prompts'],
+  min_reddit_score: 10,
+  min_github_stars: 50,
+  ai_quality_threshold: 6.0
+};
+
+const CONFIG_STORAGE_KEY = 'crawl_config';
+const SELECTED_MODEL_KEY = 'crawl_selected_model'; // 格式: providerId:modelId
+
+// ============ 配置管理 (localStorage) ============
+
+export function getCrawlConfig(): CrawlConfig {
+  try {
+    const stored = localStorage.getItem(CONFIG_STORAGE_KEY);
+    if (stored) {
+      return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
+    }
+  } catch (e) {
+    console.error('Failed to load crawl config:', e);
+  }
+  return DEFAULT_CONFIG;
+}
+
+export function updateCrawlConfig(key: keyof CrawlConfig, value: any): void {
+  const config = getCrawlConfig();
+  (config as any)[key] = value;
+  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+}
+
+export function resetCrawlConfig(): void {
+  localStorage.removeItem(CONFIG_STORAGE_KEY);
+}
+
+// 获取用户选择的模型 (providerId:modelId)
+export function getSelectedModel(): { providerId: string; modelId: string } | null {
+  const stored = localStorage.getItem(SELECTED_MODEL_KEY);
+  if (!stored) return null;
+  const [providerId, modelId] = stored.split(':');
+  if (!providerId || !modelId) return null;
+  return { providerId, modelId };
+}
+
+// 保存用户选择的模型
+export function setSelectedModel(providerId: string, modelId: string): void {
+  localStorage.setItem(SELECTED_MODEL_KEY, `${providerId}:${modelId}`);
+}
+
+// ============ 爬取任务记录 ============
+
+export async function getCrawlJobs(limit = 10): Promise<CrawlJob[]> {
   const { data, error } = await supabase
     .from('crawl_jobs')
     .select('*')
@@ -79,95 +126,29 @@ export async function getCrawlJobs(limit = 20): Promise<CrawlJob[]> {
   return data || [];
 }
 
-// ============ 来源管理 ============
+export async function clearCrawlJobs(): Promise<void> {
+  const { error } = await supabase
+    .from('crawl_jobs')
+    .delete()
+    .neq('id', '00000000-0000-0000-0000-000000000000');
+  
+  if (error) throw error;
+}
 
-// 获取所有来源
-export async function getPromptSources(
-  filters?: { sourceType?: string; limit?: number; offset?: number }
-): Promise<PromptSource[]> {
-  let query = supabase
-    .from('prompt_sources')
+// ============ 提示词管理 ============
+
+export async function getCrawledPrompts(limit = 100): Promise<CrawledPrompt[]> {
+  const { data, error } = await supabase
+    .from('extracted_prompts')
     .select('*')
-    .order('crawled_at', { ascending: false });
-  
-  if (filters?.sourceType) {
-    query = query.eq('source_type', filters.sourceType);
-  }
-  if (filters?.limit) {
-    query = query.limit(filters.limit);
-  }
-  if (filters?.offset) {
-    query = query.range(filters.offset, filters.offset + (filters.limit || 20) - 1);
-  }
-  
-  const { data, error } = await query;
-  if (error) throw error;
-  return data || [];
-}
-
-// ============ 提取的提示词管理 ============
-
-// 获取待审核的提示词
-export async function getPendingPrompts(limit = 50): Promise<ExtractedPrompt[]> {
-  const { data, error } = await supabase
-    .from('extracted_prompts')
-    .select(`
-      *,
-      source:prompt_sources(*)
-    `)
-    .eq('is_approved', false)
-    .is('imported_to_prompt_id', null)
-    .order('quality_score', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(limit);
   
   if (error) throw error;
   return data || [];
 }
 
-// 获取已审核的提示词
-export async function getApprovedPrompts(limit = 50): Promise<ExtractedPrompt[]> {
-  const { data, error } = await supabase
-    .from('extracted_prompts')
-    .select(`
-      *,
-      source:prompt_sources(*)
-    `)
-    .eq('is_approved', true)
-    .order('quality_score', { ascending: false })
-    .limit(limit);
-  
-  if (error) throw error;
-  return data || [];
-}
-
-// 审核通过提示词
-export async function approvePrompt(id: string, userId: string): Promise<void> {
-  const { error } = await supabase
-    .from('extracted_prompts')
-    .update({ 
-      is_approved: true, 
-      approved_by: userId 
-    })
-    .eq('id', id);
-  
-  if (error) throw error;
-}
-
-// 批量审核
-export async function approvePrompts(ids: string[], userId: string): Promise<void> {
-  const { error } = await supabase
-    .from('extracted_prompts')
-    .update({ 
-      is_approved: true, 
-      approved_by: userId 
-    })
-    .in('id', ids);
-  
-  if (error) throw error;
-}
-
-// 拒绝/删除提示词
-export async function rejectPrompt(id: string): Promise<void> {
+export async function deletePrompt(id: string): Promise<void> {
   const { error } = await supabase
     .from('extracted_prompts')
     .delete()
@@ -176,134 +157,526 @@ export async function rejectPrompt(id: string): Promise<void> {
   if (error) throw error;
 }
 
-// 导入提示词到用户的提示词库
-export async function importPromptToLibrary(
-  extractedPromptId: string,
-  userId: string,
-  categoryId?: string
-): Promise<string> {
-  // 获取提取的提示词
-  const { data: extracted, error: fetchError } = await supabase
+export async function deletePrompts(ids: string[]): Promise<void> {
+  const { error } = await supabase
     .from('extracted_prompts')
-    .select('*')
-    .eq('id', extractedPromptId)
-    .single();
+    .delete()
+    .in('id', ids);
   
-  if (fetchError) throw fetchError;
-  
-  // 创建新提示词
-  const { data: newPrompt, error: createError } = await supabase
-    .from('prompts')
-    .insert({
-      user_id: userId,
-      title: extracted.prompt_title,
-      content: extracted.prompt_content,
-      category_id: categoryId || null,
-      tags: [extracted.suggested_category, 'imported'].filter(Boolean)
-    })
-    .select()
-    .single();
-  
-  if (createError) throw createError;
-  
-  // 更新提取记录
-  await supabase
-    .from('extracted_prompts')
-    .update({ 
-      imported_to_prompt_id: newPrompt.id,
-      is_approved: true,
-      approved_by: userId
-    })
-    .eq('id', extractedPromptId);
-  
-  return newPrompt.id;
+  if (error) throw error;
 }
 
-// 批量导入
-export async function importPromptsToLibrary(
-  extractedPromptIds: string[],
-  userId: string,
-  categoryId?: string
-): Promise<string[]> {
-  const importedIds: string[] = [];
+export async function clearAllPrompts(): Promise<void> {
+  const { error } = await supabase
+    .from('extracted_prompts')
+    .delete()
+    .neq('id', '00000000-0000-0000-0000-000000000000');
   
-  for (const id of extractedPromptIds) {
-    try {
-      const newId = await importPromptToLibrary(id, userId, categoryId);
-      importedIds.push(newId);
-    } catch (error) {
-      console.error(`Failed to import prompt ${id}:`, error);
-    }
-  }
-  
-  return importedIds;
+  if (error) throw error;
 }
 
 // ============ 统计 ============
 
 export async function getCrawlStats(): Promise<CrawlStats> {
   const [
-    { count: totalSources },
-    { count: redditSources },
-    { count: githubSources },
-    { count: totalExtracted },
-    { count: pendingReview },
-    { count: approved },
-    { count: imported }
+    { count: totalPrompts },
+    { count: redditPrompts },
+    { count: githubPrompts }
   ] = await Promise.all([
-    supabase.from('prompt_sources').select('*', { count: 'exact', head: true }),
-    supabase.from('prompt_sources').select('*', { count: 'exact', head: true }).eq('source_type', 'reddit'),
-    supabase.from('prompt_sources').select('*', { count: 'exact', head: true }).eq('source_type', 'github'),
     supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }),
-    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('is_approved', false).is('imported_to_prompt_id', null),
-    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('is_approved', true),
-    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).not('imported_to_prompt_id', 'is', null)
+    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('source_type', 'reddit'),
+    supabase.from('extracted_prompts').select('*', { count: 'exact', head: true }).eq('source_type', 'github')
   ]);
   
   return {
-    totalSources: totalSources || 0,
-    redditSources: redditSources || 0,
-    githubSources: githubSources || 0,
-    totalExtracted: totalExtracted || 0,
-    pendingReview: pendingReview || 0,
-    approved: approved || 0,
-    imported: imported || 0
+    totalPrompts: totalPrompts || 0,
+    redditPrompts: redditPrompts || 0,
+    githubPrompts: githubPrompts || 0
   };
 }
 
-// ============ 配置管理 ============
+// ============ 本地爬取逻辑 ============
 
-export async function getCrawlConfig(): Promise<Record<string, any>> {
-  const { data, error } = await supabase
-    .from('crawl_config')
-    .select('config_key, config_value');
+// 爬取 Reddit
+async function crawlReddit(subreddits: string[], minScore: number): Promise<any[]> {
+  const results: any[] = [];
   
-  if (error) throw error;
-  
-  const config: Record<string, any> = {};
-  for (const item of data || []) {
+  for (const subreddit of subreddits) {
     try {
-      config[item.config_key] = JSON.parse(item.config_value);
-    } catch {
-      config[item.config_key] = item.config_value;
+      console.log(`[Reddit] Fetching r/${subreddit}...`);
+      
+      const response = await fetch(
+        `https://www.reddit.com/r/${subreddit}/hot.json?limit=50&raw_json=1`,
+        {
+          headers: {
+            'Accept': 'application/json'
+          }
+        }
+      );
+      
+      if (!response.ok) {
+        console.log(`[Reddit] r/${subreddit} failed: ${response.status}`);
+        continue;
+      }
+      
+      const data = await response.json();
+      const children = data?.data?.children || [];
+      
+      for (const child of children) {
+        const post = child.data;
+        if (post.stickied || post.score < minScore) continue;
+        if (!post.title) continue;
+        
+        // 只保留有实际内容的帖子（至少50字符）
+        const content = post.selftext || '';
+        if (content.length < 50) {
+          console.log(`[Reddit] Skipping "${post.title.substring(0, 30)}..." - no content`);
+          continue;
+        }
+        
+        results.push({
+          id: post.id,
+          title: post.title,
+          content: content,
+          url: `https://reddit.com${post.permalink}`,
+          author: post.author,
+          subreddit: post.subreddit
+        });
+      }
+      
+      console.log(`[Reddit] r/${subreddit}: found ${results.length} posts with content`);
+      
+      // 延迟避免速率限制
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.error(`[Reddit] Error crawling r/${subreddit}:`, e);
     }
   }
   
-  return config;
+  return results;
 }
 
-export async function updateCrawlConfig(key: string, value: any): Promise<void> {
-  const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
+// 爬取 GitHub
+async function crawlGitHub(queries: string[], minStars: number, token?: string): Promise<any[]> {
+  const results: any[] = [];
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github.v3+json'
+  };
+  if (token) headers['Authorization'] = `token ${token}`;
   
-  const { error } = await supabase
-    .from('crawl_config')
-    .upsert({ 
-      config_key: key, 
-      config_value: stringValue,
-      updated_at: new Date().toISOString()
-    }, { 
-      onConflict: 'config_key' 
+  for (const query of queries) {
+    try {
+      console.log(`[GitHub] Searching "${query}"...`);
+      
+      const response = await fetch(
+        `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=15`,
+        { headers }
+      );
+      
+      if (!response.ok) {
+        console.log(`[GitHub] Search failed: ${response.status}`);
+        continue;
+      }
+      
+      const data = await response.json();
+      
+      for (const repo of (data?.items || [])) {
+        if (repo.stargazers_count < minStars) continue;
+        
+        // 尝试获取 README
+        let readme = '';
+        try {
+          const readmeRes = await fetch(
+            `https://api.github.com/repos/${repo.full_name}/readme`,
+            { headers }
+          );
+          if (readmeRes.ok) {
+            const readmeData = await readmeRes.json();
+            readme = atob(readmeData.content || '').substring(0, 3000);
+          }
+        } catch (e) {}
+        
+        results.push({
+          id: repo.full_name,
+          title: repo.name,
+          content: `${repo.description || ''}\n\n${readme}`,
+          url: repo.html_url,
+          author: repo.owner.login,
+          repoName: repo.full_name,
+          stars: repo.stargazers_count,
+          forks: repo.forks_count
+        });
+      }
+      
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.error(`[GitHub] Error searching "${query}":`, e);
+    }
+  }
+  
+  return results;
+}
+
+// AI 分析提取提示词
+async function analyzeWithAI(
+  content: string,
+  sourceType: string,
+  title: string,
+  aiProvider: any
+): Promise<{ prompts: Array<{ title: string; content: string; category: string; quality: number }>; analysis: any } | null> {
+  // 内容太短，跳过分析
+  if (content.trim().length < 50) {
+    console.log(`[AI] Skipping "${title.substring(0, 30)}..." - content too short (${content.length} chars)`);
+    return null;
+  }
+
+  const systemPrompt = `你是 AI 提示词专家。分析内容，提取高质量 AI 提示词。
+
+输出 JSON：
+{
+  "prompts": [{ "title": "标题", "content": "完整提示词", "category": "分类", "quality": 8.5 }],
+  "analysis": { "summary": "摘要", "language": "语言" }
+}
+
+评分：10分=专业级，7-9=高质量，4-6=一般，1-3=低质量。无提示词返回空数组。`;
+
+  try {
+    // 使用用户配置的 baseUrl，和 ai-prompt-assistant 保持一致
+    const baseUrl = aiProvider.baseUrl || 'https://api.openai.com/v1';
+    const url = `${baseUrl}/chat/completions`;
+    const model = aiProvider.defaultModel || aiProvider.models?.[0]?.id || 'gpt-4o-mini';
+    const apiKey = decryptApiKey(aiProvider.apiKey);
+    
+    const headers: Record<string, string> = { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    };
+    
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `来源: ${sourceType}\n标题: ${title}\n\n${content.substring(0, 3000)}` }
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' }
+    };
+    
+    console.log(`[AI] Analyzing "${title.substring(0, 30)}..." with ${aiProvider.providerKey}, model: ${model}`);
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
     });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[AI] API error ${response.status}:`, errorText);
+      return null;
+    }
+    
+    const data = await response.json();
+    const result = JSON.parse(data.choices[0].message.content);
+    console.log(`[AI] Found ${result.prompts?.length || 0} prompts in "${title}"`);
+    return result;
+  } catch (e) {
+    console.error('[AI] Analysis error:', e);
+    return null;
+  }
+}
+
+// ============ 主爬取函数 ============
+
+export async function triggerCrawl(
+  jobType: 'reddit' | 'github' | 'all',
+  userId: string,
+  onProgress?: (progress: CrawlProgress) => void,
+  abortSignal?: AbortSignal,
+  selectedModel?: { providerId: string; modelId: string } // 指定使用的模型
+): Promise<{ jobId: string; stats: any }> {
+  const config = getCrawlConfig();
   
-  if (error) throw error;
+  // 获取 AI 提供商
+  const providers = await getUserProviders(userId);
+  
+  // 优先使用指定的模型，其次使用 localStorage 保存的选择
+  const modelSelection = selectedModel || getSelectedModel();
+  let aiProvider = modelSelection 
+    ? providers.find(p => p.id === modelSelection.providerId && p.isEnabled)
+    : null;
+  
+  // 如果选择的提供商不可用，回退到默认
+  if (!aiProvider) {
+    aiProvider = providers.find(p => p.isDefault && p.isEnabled) || providers.find(p => p.isEnabled);
+  }
+  
+  if (!aiProvider) {
+    throw new Error('请先在配置页面选择 AI 模型');
+  }
+  
+  // 使用选择的模型覆盖默认模型
+  if (modelSelection?.modelId) {
+    aiProvider = { ...aiProvider, defaultModel: modelSelection.modelId };
+  }
+  
+  // 创建任务记录
+  const { data: job, error: jobError } = await supabase
+    .from('crawl_jobs')
+    .insert({ job_type: jobType, status: 'running', started_at: new Date().toISOString() })
+    .select()
+    .single();
+  
+  if (jobError) throw jobError;
+  const jobId = job.id;
+  
+  // 分别统计 - 使用独立对象避免并发问题
+  const redditStats = { found: 0, extracted: 0, current: 0, total: 0 };
+  const githubStats = { found: 0, extracted: 0, current: 0, total: 0 };
+  let itemsNew = 0;
+  
+  // 更新进度 - 只更新当前任务类型的数据
+  const updateProgress = (
+    source: 'reddit' | 'github',
+    phase: CrawlProgress['phase'], 
+    message: string,
+    newPrompt?: CrawledPrompt
+  ) => {
+    const stats = source === 'reddit' ? redditStats : githubStats;
+    onProgress?.({
+      phase,
+      message,
+      source, // 标记是哪个来源的进度
+      itemsFound: stats.found,
+      promptsExtracted: stats.extracted,
+      current: stats.current,
+      total: stats.total,
+      reddit: { found: redditStats.found, extracted: redditStats.extracted },
+      github: { found: githubStats.found, extracted: githubStats.extracted },
+      newPrompt // 新提取的提示词
+    });
+  };
+  
+  // 立即保存单个提示词并返回保存结果
+  const saveAndNotify = async (
+    promptData: any,
+    source: 'reddit' | 'github'
+  ): Promise<CrawledPrompt | null> => {
+    const contentPrefix = promptData.prompt_content.substring(0, 100);
+    
+    // 检查是否已存在
+    const { data: existing } = await supabase
+      .from('extracted_prompts')
+      .select('id')
+      .eq('source_type', promptData.source_type)
+      .ilike('prompt_content', `${contentPrefix}%`)
+      .limit(1)
+      .maybeSingle();
+    
+    if (existing) return null; // 已存在，跳过
+    
+    // 保存并返回完整数据
+    const { data, error } = await supabase
+      .from('extracted_prompts')
+      .insert(promptData)
+      .select()
+      .single();
+    
+    if (error || !data) return null;
+    
+    itemsNew++;
+    return data as CrawledPrompt;
+  };
+  
+  try {
+    // 定义爬取任务
+    const crawlRedditTask = async () => {
+      if (jobType !== 'all' && jobType !== 'reddit') return;
+      if (abortSignal?.aborted) return;
+      
+      updateProgress('reddit', 'crawling', '正在爬取 Reddit...');
+      const subs = config.reddit_subreddits;
+      const posts = await crawlReddit(subs, config.min_reddit_score);
+      if (abortSignal?.aborted) return;
+      
+      redditStats.found = posts.length;
+      redditStats.total = posts.length;
+      console.log(`[Crawler] Reddit crawl done, ${posts.length} posts to analyze`);
+      updateProgress('reddit', 'analyzing', `分析 ${posts.length} 条 Reddit 内容...`);
+      
+      for (let i = 0; i < posts.length; i++) {
+        if (abortSignal?.aborted) {
+          console.log('[Crawler] Reddit task cancelled');
+          return;
+        }
+        
+        const post = posts[i];
+        redditStats.current = i + 1;
+        console.log(`[Crawler] Analyzing Reddit post ${i + 1}/${posts.length}: "${post.title.substring(0, 30)}..."`);
+        
+        try {
+          const analysis = await analyzeWithAI(
+            `${post.title}\n\n${post.content}`,
+            'reddit',
+            post.title,
+            aiProvider
+          );
+          
+          if (analysis?.prompts?.length) {
+            for (const p of analysis.prompts) {
+              if (p.quality >= config.ai_quality_threshold) {
+                // 立即保存并推送
+                const promptData = {
+                  prompt_title: p.title,
+                  prompt_content: p.content,
+                  suggested_category: p.category,
+                  quality_score: p.quality,
+                  ai_analysis: analysis.analysis,
+                  language: analysis.analysis?.language || 'en',
+                  source_type: 'reddit',
+                  source_url: post.url,
+                  source_author: post.author,
+                  source_name: `r/${post.subreddit}`
+                };
+                
+                const saved = await saveAndNotify(promptData, 'reddit');
+                if (saved) {
+                  redditStats.extracted++;
+                  // 推送新提示词到 UI
+                  updateProgress('reddit', 'analyzing', `Reddit: ${i + 1}/${posts.length} 已分析，提取 ${redditStats.extracted} 个`, saved);
+                }
+              }
+            }
+          }
+          // 即使没有提取到也更新进度
+          updateProgress('reddit', 'analyzing', `Reddit: ${i + 1}/${posts.length} 已分析，提取 ${redditStats.extracted} 个`);
+        } catch (err) {
+          console.error(`[Crawler] Error analyzing post:`, err);
+        }
+      }
+      console.log(`[Crawler] Reddit analysis done, extracted ${redditStats.extracted} prompts`);
+    };
+    
+    const crawlGitHubTask = async () => {
+      if (jobType !== 'all' && jobType !== 'github') return;
+      if (abortSignal?.aborted) return;
+      
+      updateProgress('github', 'crawling', '正在爬取 GitHub...');
+      const queries = config.github_search_queries;
+      const repos = await crawlGitHub(queries, config.min_github_stars);
+      if (abortSignal?.aborted) return;
+      
+      githubStats.found = repos.length;
+      githubStats.total = repos.length;
+      console.log(`[Crawler] GitHub crawl done, ${repos.length} repos to analyze`);
+      updateProgress('github', 'analyzing', `分析 ${repos.length} 个 GitHub 仓库...`);
+      
+      for (let i = 0; i < repos.length; i++) {
+        if (abortSignal?.aborted) {
+          console.log('[Crawler] GitHub task cancelled');
+          return;
+        }
+        
+        const repo = repos[i];
+        githubStats.current = i + 1;
+        console.log(`[Crawler] Analyzing GitHub repo ${i + 1}/${repos.length}: "${repo.title}"`);
+        
+        try {
+          const analysis = await analyzeWithAI(
+            repo.content,
+            'github',
+            repo.title,
+            aiProvider
+          );
+          
+          if (analysis?.prompts?.length) {
+            for (const p of analysis.prompts) {
+              if (p.quality >= config.ai_quality_threshold) {
+                // 立即保存并推送
+                const promptData = {
+                  prompt_title: p.title,
+                  prompt_content: p.content,
+                  suggested_category: p.category,
+                  quality_score: p.quality,
+                  ai_analysis: analysis.analysis,
+                  language: analysis.analysis?.language || 'en',
+                  source_type: 'github',
+                  source_url: repo.url,
+                  source_author: repo.author,
+                  source_name: repo.repoName,
+                  source_stars: repo.stars,
+                  source_forks: repo.forks
+                };
+                
+                const saved = await saveAndNotify(promptData, 'github');
+                if (saved) {
+                  githubStats.extracted++;
+                  // 推送新提示词到 UI
+                  updateProgress('github', 'analyzing', `GitHub: ${i + 1}/${repos.length} 已分析，提取 ${githubStats.extracted} 个`, saved);
+                }
+              }
+            }
+          }
+          // 即使没有提取到也更新进度
+          updateProgress('github', 'analyzing', `GitHub: ${i + 1}/${repos.length} 已分析，提取 ${githubStats.extracted} 个`);
+        } catch (err) {
+          console.error(`[Crawler] Error analyzing repo:`, err);
+        }
+      }
+      console.log(`[Crawler] GitHub analysis done, extracted ${githubStats.extracted} prompts`);
+    };
+    
+    // 并发执行（全部采集时）或单独执行
+    if (jobType === 'all') {
+      await Promise.all([crawlRedditTask(), crawlGitHubTask()]);
+    } else if (jobType === 'reddit') {
+      await crawlRedditTask();
+    } else {
+      await crawlGitHubTask();
+    }
+    
+    // 检查是否被中断
+    if (abortSignal?.aborted) {
+      console.log('[Crawler] Task was cancelled');
+      await supabase.from('crawl_jobs').update({
+        status: 'failed',
+        completed_at: new Date().toISOString(),
+        error_message: '用户取消'
+      }).eq('id', jobId);
+      return { jobId, stats: { itemsFound: 0, itemsNew: 0, promptsExtracted: 0 } };
+    }
+    
+    // 提示词已经在分析过程中实时保存了，这里只需要更新任务状态
+    const totalFound = redditStats.found + githubStats.found;
+    const totalExtracted = redditStats.extracted + githubStats.extracted;
+    
+    // 更新任务状态
+    await supabase.from('crawl_jobs').update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      items_found: totalFound,
+      items_new: itemsNew,
+      prompts_extracted: totalExtracted
+    }).eq('id', jobId);
+    
+    onProgress?.({
+      phase: 'done',
+      message: '采集完成！',
+      itemsFound: totalFound,
+      promptsExtracted: totalExtracted,
+      reddit: { found: redditStats.found, extracted: redditStats.extracted },
+      github: { found: githubStats.found, extracted: githubStats.extracted }
+    });
+    
+    return { jobId, stats: { itemsFound: totalFound, itemsNew, promptsExtracted: totalExtracted } };
+    
+  } catch (error: any) {
+    await supabase.from('crawl_jobs').update({
+      status: 'failed',
+      completed_at: new Date().toISOString(),
+      error_message: error.message
+    }).eq('id', jobId);
+    
+    throw error;
+  }
 }

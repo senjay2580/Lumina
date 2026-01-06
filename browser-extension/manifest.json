@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Lumina 提示词助手",
+  "version": "1.0.0",
+  "description": "在任何网页上快速调用你的 AI 提示词库",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+L",
+        "windows": "Alt+Shift+L",
+        "mac": "Alt+Shift+L",
+        "linux": "Alt+Shift+L"
+      },
+      "description": "打开/关闭提示词面板"
+    }
+  }
+}
