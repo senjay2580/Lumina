@@ -40,7 +40,7 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
         onClick={onClose}
@@ -93,6 +93,7 @@ export interface ConfirmModalProps {
   confirmText?: string;
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info';
+  loading?: boolean;
 }
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
@@ -104,6 +105,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   confirmText = '确认',
   cancelText = '取消',
   type = 'info',
+  loading = false,
 }) => {
   const buttonStyles = {
     danger: 'bg-red-500 hover:bg-red-600 shadow-red-500/30',
@@ -119,15 +121,17 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
         <div className="flex gap-3">
           <button
             onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors"
+            disabled={loading}
+            className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors disabled:opacity-50"
           >
             {cancelText}
           </button>
           <button
-            onClick={() => { onConfirm(); onClose(); }}
-            className={`flex-1 py-2.5 rounded-xl text-white font-medium shadow-lg transition-all hover:-translate-y-0.5 ${buttonStyles[type]}`}
+            onClick={onConfirm}
+            disabled={loading}
+            className={`flex-1 py-2.5 rounded-xl text-white font-medium shadow-lg transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 ${buttonStyles[type]}`}
           >
-            {confirmText}
+            {loading ? '处理中...' : confirmText}
           </button>
         </div>
       </div>

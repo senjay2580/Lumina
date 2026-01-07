@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { getStoredUser } from '../lib/auth';
 import { preloadTrashData } from '../lib/usePreloadData';
 
-export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'RESOURCES' | 'SETTINGS' | 'TRASH' | 'FEISHU_GUIDE';
+export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'RESOURCES' | 'RSS_SUBSCRIPTIONS' | 'SETTINGS' | 'TRASH' | 'FEISHU_GUIDE';
 
 // 提示词采集图标（地球）
 const CrawlerIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -50,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
   const isPromptsActive = currentView === 'PROMPTS' || currentView === 'CRAWLER';
 
   // 主导航项（不包含设置和提示词子菜单）
-  const mainNavItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
+  const mainNavItems: { id: ViewType; label: string; icon: React.ReactNode; badge?: string }[] = [
     {
       id: 'HOME',
       label: '主页',
@@ -64,6 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
     {
       id: 'WORKFLOW',
       label: '工作流',
+      badge: 'Beta',
       icon: (
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M15 20v-2h-4v-5H9v2H2V9h7v2h2V6h4V4h7v6h-7V8h-2v8h2v-2h7v6z"/>
@@ -153,7 +154,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
             >
               {isActive && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
               <span className={isActive ? 'text-primary' : ''}>{item.icon}</span>
-              {!isCollapsed && <span className="font-medium text-sm">{item.label}</span>}
+              {!isCollapsed && (
+                <>
+                  <span className="font-medium text-sm">{item.label}</span>
+                  {item.badge && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-gradient-to-r from-violet-500 to-purple-500 text-white leading-none">
+                      {item.badge}
+                    </span>
+                  )}
+                </>
+              )}
             </button>
           );
         })}
@@ -257,6 +267,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
             </svg>
           </span>
           {!isCollapsed && <span className="font-medium text-sm">资源中心</span>}
+        </button>
+
+        {/* RSS 订阅 */}
+        <button 
+          onClick={() => onViewChange('RSS_SUBSCRIPTIONS')}
+          title={isCollapsed ? 'RSS 订阅' : undefined}
+          className={`w-full flex items-center gap-3 rounded-xl transition-all ${
+            isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
+          } ${
+            currentView === 'RSS_SUBSCRIPTIONS' 
+              ? 'bg-white/80 shadow-sm text-gray-900 backdrop-blur-sm' 
+              : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
+          }`}
+        >
+          {currentView === 'RSS_SUBSCRIPTIONS' && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
+          <span className={currentView === 'RSS_SUBSCRIPTIONS' ? 'text-primary' : ''}>
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1" fill="currentColor" />
+            </svg>
+          </span>
+          {!isCollapsed && <span className="font-medium text-sm">RSS 订阅</span>}
         </button>
 
         {/* 回收站 - 放最后，淡红色渐变 */}

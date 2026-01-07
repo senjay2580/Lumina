@@ -134,30 +134,6 @@ export function invalidateCache(key: string, userId?: string): void {
   }
 }
 
-// 使匹配模式的缓存失效
-export function invalidateCachePattern(pattern: string, userId?: string): void {
-  // 内存缓存
-  const memKeysToRemove: string[] = [];
-  memoryCache.forEach((_, k) => {
-    if (k.includes(pattern) && (!userId || k.includes(userId))) {
-      memKeysToRemove.push(k);
-    }
-  });
-  memKeysToRemove.forEach(k => memoryCache.delete(k));
-  
-  // localStorage
-  try {
-    const storageKeysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(CACHE_PREFIX) && key.includes(pattern) && (!userId || key.includes(userId))) {
-        storageKeysToRemove.push(key);
-      }
-    }
-    storageKeysToRemove.forEach(k => localStorage.removeItem(k));
-  } catch {}
-}
-
 // 清除用户所有缓存
 export function clearUserCache(userId: string): void {
   // 内存缓存
@@ -180,23 +156,6 @@ export function clearUserCache(userId: string): void {
     }
     storageKeysToRemove.forEach(k => localStorage.removeItem(k));
   } catch {}
-}
-
-// 获取缓存的数据版本（用于验证新鲜度）
-export function getCacheDataVersion(key: string, userId: string): string | undefined {
-  const memKey = getCacheKey(key, userId);
-  const memEntry = memoryCache.get(memKey);
-  if (memEntry) return memEntry.dataVersion;
-  
-  const storageEntry = readFromStorage<any>(key, userId);
-  return storageEntry?.dataVersion;
-}
-
-// 检查缓存是否需要更新（基于数据版本）
-export function isCacheStale(key: string, userId: string, latestVersion: string): boolean {
-  const cachedVersion = getCacheDataVersion(key, userId);
-  if (!cachedVersion) return true;
-  return cachedVersion !== latestVersion;
 }
 
 // 缓存键常量

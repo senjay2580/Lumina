@@ -133,3 +133,14 @@ export async function getCrawlerCredentials(userId: string) {
   if (error) return null
   return data
 }
+
+// 获取 Tavily API Key
+export async function getTavilyApiKey(userId: string): Promise<string | null> {
+  return getUserCredential(userId, 'tavily', 'api_key')
+}
+
+// 检查用户是否配置了 Tavily
+export async function hasTavilyConfigured(userId: string): Promise<boolean> {
+  const apiKey = await getTavilyApiKey(userId)
+  return !!apiKey
+}

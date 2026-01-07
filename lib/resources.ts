@@ -2,7 +2,7 @@
 import { supabase } from './supabase';
 
 // 资源类型
-export type ResourceType = 'link' | 'github' | 'document' | 'image';
+export type ResourceType = 'link' | 'github' | 'document' | 'image' | 'article';
 
 // 资源接口
 export interface Resource {
@@ -28,6 +28,7 @@ export interface ResourceStats {
   github: number;
   document: number;
   image: number;
+  article: number;
 }
 
 // 从 URL 生成标题
@@ -120,7 +121,8 @@ export async function fetchGitHubRepoInfo(owner: string, repo: string): Promise<
 export async function getResources(
   userId: string, 
   type?: ResourceType,
-  archived: boolean = false
+  archived: boolean = false,
+  excludeFolderItems: boolean = true // 默认排除已在文件夹中的资源
 ): Promise<Resource[]> {
   let query = supabase
     .from('resources')
@@ -128,6 +130,11 @@ export async function getResources(
     .eq('user_id', userId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
+
+  // 排除已在文件夹中的资源（只显示根目录的资源）
+  if (excludeFolderItems) {
+    query = query.is('folder_id', null);
+  }
 
   // 归档筛选
   if (archived) {
@@ -145,24 +152,37 @@ export async function getResources(
   return data || [];
 }
 
-// 获取资源统计
+// 获取资源统计（统计所有资源，包括文件夹内的）
 export async function getResourceStats(userId: string, archived: boolean = false): Promise<ResourceStats> {
-  const { data, error } = await supabase.rpc('get_resource_stats', { 
-    p_user_id: userId,
-    p_archived: archived
-  });
-  if (error) {
-    // 如果函数不存在，手动计算
-    const resources = await getResources(userId, undefined, archived);
-    return {
-      all: resources.length,
-      link: resources.filter(r => r.type === 'link').length,
-      github: resources.filter(r => r.type === 'github').length,
-      document: resources.filter(r => r.type === 'document').length,
-      image: resources.filter(r => r.type === 'image').length,
-    };
+  // 直接查询数据库统计所有资源（包括文件夹内的）
+  let query = supabase
+    .from('resources')
+    .select('type')
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+  
+  if (archived) {
+    query = query.not('archived_at', 'is', null);
+  } else {
+    query = query.is('archived_at', null);
   }
-  return data;
+  
+  const { data, error } = await query;
+  
+  if (error) {
+    console.error('Failed to get resource stats:', error);
+    return { all: 0, link: 0, github: 0, document: 0, image: 0, article: 0 };
+  }
+  
+  const resources = data || [];
+  return {
+    all: resources.length,
+    link: resources.filter(r => r.type === 'link').length,
+    github: resources.filter(r => r.type === 'github').length,
+    document: resources.filter(r => r.type === 'document').length,
+    image: resources.filter(r => r.type === 'image').length,
+    article: resources.filter(r => r.type === 'article').length,
+  };
 }
 
 // 创建链接资源

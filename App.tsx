@@ -7,6 +7,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { TrashPage } from './components/TrashPage';
 import PromptCrawlerPage from './components/PromptCrawlerPage';
 import ResourceCenterPage from './components/ResourceCenterPage';
+import RSSSubscriptionPage from './components/RSSSubscriptionPage';
 import { FeishuBotGuidePage } from './components/FeishuBotGuidePage';
 import { Sidebar, ViewType } from './components/Sidebar';
 import { AuthPage } from './components/AuthPage';
@@ -26,6 +27,7 @@ const VIEW_ROUTES: Record<ViewType, string> = {
   PROMPTS: 'prompts',
   CRAWLER: 'crawler',
   RESOURCES: 'resources',
+  RSS_SUBSCRIPTIONS: 'rss',
   SETTINGS: 'settings',
   TRASH: 'trash',
   FEISHU_GUIDE: 'feishu-guide',
@@ -230,6 +232,7 @@ const App: React.FC = () => {
           {currentView === 'PROMPTS' && <PromptManager promptBrowser={promptBrowser} />}
           {currentView === 'CRAWLER' && <PromptCrawlerPage userId={user.id} />}
           {currentView === 'RESOURCES' && <ResourceCenterPage userId={user.id} resourceViewer={resourceViewer} />}
+          {currentView === 'RSS_SUBSCRIPTIONS' && <RSSSubscriptionPage userId={user.id} />}
           {currentView === 'SETTINGS' && <SettingsPage user={user} onUserUpdate={setUser} />}
           {currentView === 'TRASH' && <TrashPage />}
         </div>

@@ -19,6 +19,7 @@ import {
   FeishuBindingStatus,
   FeishuBindCode,
 } from '../lib/feishu';
+import { getUserCredential, saveCredential } from '../lib/user-credentials';
 
 interface SettingsPageProps {
   user: User;
@@ -66,6 +67,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
   const [generatingCode, setGeneratingCode] = useState(false);
   const [unbindingFeishu, setUnbindingFeishu] = useState(false);
   const [feishuCodeCountdown, setFeishuCodeCountdown] = useState(0);
+
+  // Tavily 状态
+  const [tavilyApiKey, setTavilyApiKey] = useState('');
+  const [tavilyApiKeyInput, setTavilyApiKeyInput] = useState('');
+  const [loadingTavily, setLoadingTavily] = useState(true);
+  const [savingTavily, setSavingTavily] = useState(false);
+  const [showTavilyKey, setShowTavilyKey] = useState(false);
 
   const { toasts, removeToast, success, error } = useToast();
 
@@ -122,6 +130,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
       }
     };
     loadFeishuBinding();
+  }, [user.id]);
+
+  // 加载 Tavily API Key
+  useEffect(() => {
+    const loadTavilyKey = async () => {
+      setLoadingTavily(true);
+      try {
+        const key = await getUserCredential(user.id, 'tavily', 'api_key');
+        if (key) {
+          setTavilyApiKey(key);
+          setTavilyApiKeyInput(key);
+        }
+      } catch (err) {
+        console.error('加载 Tavily API Key 失败:', err);
+      } finally {
+        setLoadingTavily(false);
+      }
+    };
+    loadTavilyKey();
   }, [user.id]);
 
   // 加载 AI 提供商模板和用户配置
@@ -406,6 +433,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
       }
     } catch (err) {
       console.error('刷新绑定状态失败:', err);
+    }
+  };
+
+  // 保存 Tavily API Key
+  const handleSaveTavilyKey = async () => {
+    if (!tavilyApiKeyInput.trim()) {
+      error('请输入 API Key');
+      return;
+    }
+    
+    setSavingTavily(true);
+    try {
+      await saveCredential(user.id, 'tavily', 'api_key', tavilyApiKeyInput.trim(), 'Tavily Search API Key');
+      setTavilyApiKey(tavilyApiKeyInput.trim());
+      success('Tavily API Key 已保存');
+    } catch (err: any) {
+      error(err.message || '保存失败');
+    } finally {
+      setSavingTavily(false);
     }
   };
 
@@ -919,7 +965,108 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                   </div>
                 </div>
 
-                {/* 更多集成占位 */}
+                {/* Tavily Search 卡片 */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="p-5">
+                    <div className="flex items-start gap-3 mb-4">
+                      <div className="w-11 h-11 rounded-xl overflow-hidden flex items-center justify-center bg-blue-500/10 flex-shrink-0">
+                        <div 
+                          className="w-8 h-8"
+                          style={{
+                            backgroundImage: 'url(https://app.tavily.com/img/logo/logo.svg)',
+                            backgroundPosition: '0 center',
+                            backgroundSize: 'auto 100%',
+                            backgroundRepeat: 'no-repeat'
+                          }}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <h3 className="font-medium text-gray-900">Tavily Search</h3>
+                          {tavilyApiKey && <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-600 rounded-full">已配置</span>}
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-600 rounded-full">AI 搜索</span>
+                        </div>
+                        <p className="text-xs text-gray-500">为 AI 提供实时互联网搜索能力</p>
+                      </div>
+                    </div>
+                    
+                    {loadingTavily ? (
+                      <div className="flex items-center justify-center py-4">
+                        <svg className="w-5 h-5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                          <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                        </svg>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-xs text-gray-600 mb-2">
+                            Tavily 是专为 AI 优化的搜索 API，可以让 AI 实时搜索互联网获取最新信息。
+                          </p>
+                          <ul className="text-xs text-gray-500 space-y-1">
+                            <li>• 免费额度：1000 次/月</li>
+                            <li>• 用于资源中心的 AI 搜索功能</li>
+                          </ul>
+                        </div>
+                        
+                        {/* API Key 输入 */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-gray-700">API Key</label>
+                          <div className="relative">
+                            <input
+                              type={showTavilyKey ? 'text' : 'password'}
+                              value={tavilyApiKeyInput}
+                              onChange={(e) => setTavilyApiKeyInput(e.target.value)}
+                              placeholder="tvly-xxxxxxxxxxxxxxxx"
+                              className="w-full px-3 py-2 pr-10 rounded-lg border border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-2 ring-blue-500/20 outline-none transition-all text-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowTavilyKey(!showTavilyKey)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            >
+                              {showTavilyKey ? (
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                                  <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          <a
+                            href="https://tavily.com"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-center bg-gray-100 text-gray-700 hover:bg-gray-200 transition-all"
+                          >
+                            获取 API Key
+                          </a>
+                          <button
+                            onClick={handleSaveTavilyKey}
+                            disabled={savingTavily || !tavilyApiKeyInput.trim() || tavilyApiKeyInput === tavilyApiKey}
+                            className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                              savingTavily || !tavilyApiKeyInput.trim() || tavilyApiKeyInput === tavilyApiKey
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-blue-500 text-white hover:bg-blue-600'
+                            }`}
+                          >
+                            {savingTavily ? '保存中...' : '保存'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 更多集成提示 */}
                 <div className="p-5 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-center">
                   <p className="text-sm text-gray-400">更多集成即将推出</p>
                 </div>

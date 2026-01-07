@@ -1,0 +1,492 @@
+{
+  "name": "资源采集工作流 V2 (优化版)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] }
+      },
+      "id": "1",
+      "name": "定时触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {},
+      "id": "2",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 600]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "crawl_type", "value": "tools", "type": "string" },
+            { "id": "2", "name": "crawl_type_name", "value": "🛠️ 工具软件", "type": "string" },
+            { "id": "3", "name": "subreddits", "value": "SideProject,webdev,selfhosted,opensource,InternetIsBeautiful", "type": "string" },
+            { "id": "4", "name": "github_queries", "value": "awesome-tools,developer-tools,productivity-tools", "type": "string" },
+            { "id": "5", "name": "min_quality_score", "value": "7", "type": "number" },
+            { "id": "6", "name": "min_popularity_score", "value": "7", "type": "number" },
+            { "id": "7", "name": "ai_prompt", "value": "# 角色\n你是资深开发者工具评测专家，专注于发现2024-2025年最热门、高质量的工具。\n\n# 任务\n分析内容，提取优质、热门工具。必须使用web_search验证最近更新、社区热度。\n\n# 筛选标准\n✅ 必须满足至少3项：\n- GitHub > 1k stars 或 PH > 300 upvotes\n- 最近6个月增长 > 30%\n- 2024年后发布或最近3个月有更新\n- 集成AI/LLM能力\n- 独特解决方案\n\n❌ 排除：1年无更新、Stars<100、纯概念、付费墙\n\n# 输出JSON\n{\"items\": [{\"name\": \"名称\", \"description\": \"描述\", \"category\": \"分类\", \"url\": \"链接\", \"github_url\": \"仓库\", \"platforms\": [], \"is_free\": true, \"pricing\": \"价格\", \"highlights\": [], \"metrics\": {\"github_stars\": 5420, \"last_update\": \"2025-01\", \"trend\": \"上升\"}, \"alternatives\": [], \"use_cases\": [], \"quality\": 8.5, \"popularity_score\": 9.0}]}\n\n无符合返回 {\"items\": []}", "type": "string" },
+            { "id": "8", "name": "feishu_webhook", "value": "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID", "type": "string" },
+            { "id": "9", "name": "output_dir", "value": "/data/crawled", "type": "string" },
+            { "id": "10", "name": "email_to", "value": "your-email@example.com", "type": "string" },
+            { "id": "11", "name": "email_enabled", "value": "true", "type": "string" }
+          ]
+        }
+      },
+      "id": "3",
+      "name": "采集配置",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [300, 500]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const subreddits = $input.first().json.subreddits.split(',');\nconst config = $input.first().json;\nreturn subreddits.map(sub => ({ subreddit: sub.trim(), ...config }));"
+      },
+      "id": "4",
+      "name": "拆分Reddit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 200]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.reddit.com/r/{{ $json.subreddit }}/hot.json?limit=30&t=week&raw_json=1",
+        "options": {}
+      },
+      "id": "5",
+      "name": "获取Reddit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const posts = $input.first().json.data?.children || [];\nconst config = $input.first().json;\nconst results = [];\nfor (const child of posts) {\n  const post = child.data;\n  if (post.stickied || post.score < 20) continue;\n  const content = post.selftext || '';\n  if (content.length < 50) continue;\n  results.push({\n    title: post.title,\n    content: content.substring(0, 3000),\n    url: `https://reddit.com${post.permalink}`,\n    author: post.author,\n    source_name: `r/${post.subreddit}`,\n    source_type: 'reddit',\n    score: post.score\n  });\n}\nreturn results.slice(0, 15);"
+      },
+      "id": "6",
+      "name": "解析Reddit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const queries = $input.first().json.github_queries.split(',');\nconst config = $input.first().json;\nreturn queries.map(q => ({ query: q.trim(), ...config }));"
+      },
+      "id": "7",
+      "name": "拆分GitHub搜索",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 400]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/search/repositories?q={{ encodeURIComponent($json.query) }}+pushed:>2024-01-01&sort=stars&per_page=8",
+        "options": { "headers": { "parameters": [{ "name": "Accept", "value": "application/vnd.github+json" }] } }
+      },
+      "id": "8",
+      "name": "搜索GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400],
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const repos = $input.first().json.items || [];\nconst results = [];\nfor (const repo of repos) {\n  if (repo.stargazers_count < 100) continue;\n  results.push({\n    title: repo.name,\n    description: repo.description || '',\n    url: repo.html_url,\n    author: repo.owner?.login,\n    source_name: repo.full_name,\n    source_type: 'github',\n    stars: repo.stargazers_count,\n    forks: repo.forks_count,\n    language: repo.language,\n    updated_at: repo.updated_at,\n    readme_url: `https://api.github.com/repos/${repo.full_name}/readme`\n  });\n}\nreturn results;"
+      },
+      "id": "9",
+      "name": "解析GitHub仓库",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": { "url": "={{ $json.readme_url }}", "options": {} },
+      "id": "10",
+      "name": "获取README",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nlet readme = '';\ntry {\n  if (item.content && typeof item.content === 'string') {\n    readme = Buffer.from(item.content, 'base64').toString('utf-8').substring(0, 2500);\n  }\n} catch(e) {}\nreturn [{\n  title: item.title,\n  description: item.description,\n  content: readme || item.description,\n  url: item.url,\n  author: item.author,\n  source_name: item.source_name,\n  source_type: 'github',\n  stars: item.stars,\n  forks: item.forks,\n  language: item.language,\n  updated_at: item.updated_at\n}];"
+      },
+      "id": "11",
+      "name": "解码README",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 400]
+    },
+
+    {
+      "parameters": {
+        "url": "https://api.github.com/search/repositories?q=stars:>1000+pushed:>2024-06-01&sort=updated&per_page=10",
+        "options": { "headers": { "parameters": [{ "name": "Accept", "value": "application/vnd.github+json" }] } }
+      },
+      "id": "27",
+      "name": "获取GitHub Trending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 600],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const repos = $input.first().json.items || [];\nconst results = [];\nfor (const repo of repos.slice(0, 10)) {\n  if (repo.stargazers_count < 500) continue;\n  results.push({\n    title: repo.name,\n    description: repo.description || '',\n    url: repo.html_url,\n    author: repo.owner?.login,\n    source_name: repo.full_name,\n    source_type: 'github_trending',\n    stars: repo.stargazers_count,\n    forks: repo.forks_count,\n    language: repo.language,\n    updated_at: repo.updated_at\n  });\n}\nreturn results;"
+      },
+      "id": "28",
+      "name": "解析Trending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "url": "https://api.producthunt.com/v2/api/graphql",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "Authorization", "value": "Bearer YOUR_PRODUCT_HUNT_API_TOKEN" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"query\": \"{ posts(first: 15, order: VOTES) { edges { node { id name tagline description votesCount commentsCount createdAt website { url } } } } }\"}"
+      },
+      "id": "29",
+      "name": "获取Product Hunt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 800],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst posts = data?.data?.posts?.edges || [];\nconst results = [];\nfor (const edge of posts) {\n  const node = edge.node;\n  if (!node || node.votesCount < 50) continue;\n  results.push({\n    title: node.name,\n    description: node.tagline || node.description || '',\n    content: node.description || node.tagline || '',\n    url: node.website?.url || `https://www.producthunt.com/posts/${node.id}`,\n    source_name: 'Product Hunt',\n    source_type: 'producthunt',\n    votes: node.votesCount,\n    comments: node.commentsCount,\n    created_at: node.createdAt\n  });\n}\nreturn results.slice(0, 10);"
+      },
+      "id": "30",
+      "name": "解析Product Hunt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 800]
+    },
+    {
+      "parameters": { "url": "https://hacker-news.firebaseio.com/v0/topstories.json?limitToFirst=30", "options": {} },
+      "id": "31",
+      "name": "获取HN热榜ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 1000],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ids = $input.first().json || [];\nreturn ids.slice(0, 15).map(id => ({ id }));"
+      },
+      "id": "32",
+      "name": "拆分HN ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 1000]
+    },
+    {
+      "parameters": { "url": "=https://hacker-news.firebaseio.com/v0/item/{{ $json.id }}.json", "options": {} },
+      "id": "33",
+      "name": "获取HN详情",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 1000],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nif (!item || !item.title || item.score < 50) return [];\nif (item.type !== 'story' || item.dead || item.deleted) return [];\nreturn [{\n  title: item.title,\n  content: item.text || '',\n  url: item.url || `https://news.ycombinator.com/item?id=${item.id}`,\n  source_name: 'Hacker News',\n  source_type: 'hackernews',\n  score: item.score,\n  num_comments: item.descendants || 0,\n  author: item.by,\n  created_at: new Date(item.time * 1000).toISOString()\n}];"
+      },
+      "id": "34",
+      "name": "解析HN",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 1000]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// 合并所有数据源 - 使用代码节点替代Merge节点\nconst allItems = [];\n\n// 尝试从各个数据源获取数据\ntry {\n  const redditItems = $('解析Reddit').all();\n  for (const item of redditItems) allItems.push(item.json);\n} catch(e) {}\n\ntry {\n  const githubItems = $('解码README').all();\n  for (const item of githubItems) allItems.push(item.json);\n} catch(e) {}\n\ntry {\n  const trendingItems = $('解析Trending').all();\n  for (const item of trendingItems) allItems.push(item.json);\n} catch(e) {}\n\ntry {\n  const phItems = $('解析Product Hunt').all();\n  for (const item of phItems) allItems.push(item.json);\n} catch(e) {}\n\ntry {\n  const hnItems = $('解析HN').all();\n  for (const item of hnItems) allItems.push(item.json);\n} catch(e) {}\n\nconsole.log(`合并数据源: 共 ${allItems.length} 条`);\nreturn allItems;"
+      },
+      "id": "12",
+      "name": "合并所有数据源",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst config = $('采集配置').first().json;\n\n// 去重：基于URL\nconst seen = new Set();\nconst uniqueItems = [];\n\nfor (const itemWrapper of allItems) {\n  const item = itemWrapper.json;\n  const normalizedUrl = (item.url || '').toLowerCase().replace(/\\/+$/, '').replace(/^https?:\\/\\//, '');\n  if (!normalizedUrl || seen.has(normalizedUrl)) continue;\n  seen.add(normalizedUrl);\n  uniqueItems.push({ ...item, ...config });\n}\n\nconsole.log(`去重: ${allItems.length} -> ${uniqueItems.length}`);\nreturn uniqueItems;"
+      },
+      "id": "35",
+      "name": "去重处理",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst now = Date.now();\nconst sixMonthsAgo = now - (180 * 24 * 60 * 60 * 1000);\nconst results = [];\n\nfor (const itemWrapper of items) {\n  const item = itemWrapper.json;\n  \n  let isRecent = true;\n  if (item.updated_at) {\n    isRecent = new Date(item.updated_at).getTime() > sixMonthsAgo;\n  } else if (item.created_at) {\n    isRecent = new Date(item.created_at).getTime() > sixMonthsAgo;\n  }\n  \n  let isPopular = false;\n  if (item.source_type === 'github' || item.source_type === 'github_trending') {\n    isPopular = (item.stars || 0) >= 100;\n  } else if (item.source_type === 'reddit') {\n    isPopular = (item.score || 0) >= 20;\n  } else if (item.source_type === 'producthunt') {\n    isPopular = (item.votes || 0) >= 50;\n  } else if (item.source_type === 'hackernews') {\n    isPopular = (item.score || 0) >= 50;\n  } else {\n    isPopular = true;\n  }\n  \n  const hasContent = (item.content || item.description || '').length >= 20;\n  \n  if (isRecent && isPopular && hasContent) {\n    results.push(item);\n  }\n}\n\nconsole.log(`质量过滤: ${items.length} -> ${results.length}`);\nreturn results;"
+      },
+      "id": "36",
+      "name": "质量过滤",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2700, 600]
+    },
+
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.ai_prompt }}\n\n---\n来源: {{ $json.source_type }}\n标题: {{ $json.title }}\n{{ $json.description || '' }}\n{{ $json.content || '' }}\n{{ $json.stars ? '⭐ Stars: ' + $json.stars : '' }}\n{{ $json.updated_at ? '🔄 更新: ' + $json.updated_at : '' }}",
+        "options": { "systemMessage": "你是专业资源分析助手。严格按JSON格式输出。必须验证工具时效性和热度。" }
+      },
+      "id": "13",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [3000, 600]
+    },
+    {
+      "parameters": {
+        "model": "deepseek-chat",
+        "options": { "baseURL": "https://api.deepseek.com", "temperature": 0.3, "maxTokens": 2000 }
+      },
+      "id": "14",
+      "name": "DeepSeek Chat",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [3000, 820],
+      "credentials": { "openAiApi": { "id": "YOUR_DEEPSEEK_CREDENTIAL_ID", "name": "DeepSeek API" } }
+    },
+    {
+      "parameters": {
+        "name": "web_search",
+        "description": "搜索互联网验证工具信息：GitHub stars、最近更新、社区热度、是否维护。输入: 工具名+github 或 工具名+reddit",
+        "url": "https://api.tavily.com/search",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"api_key\": \"YOUR_TAVILY_API_KEY\", \"query\": \"{query}\", \"max_results\": 5, \"include_answer\": true, \"search_depth\": \"advanced\"}"
+      },
+      "id": "15",
+      "name": "网络搜索工具",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [3200, 820]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst config = $('采集配置').first().json;\nlet parsed;\n\ntry {\n  let content = input.output || input.text || input.message?.content || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    return [];\n  }\n} catch(e) {\n  console.log('JSON parse error:', e);\n  return [];\n}\n\nconst items = parsed.items || [];\nconst results = [];\n\nfor (const item of items) {\n  const qualityScore = item.quality || 0;\n  const popularityScore = item.popularity_score || 0;\n  \n  if (qualityScore >= (config.min_quality_score || 7) && popularityScore >= (config.min_popularity_score || 7)) {\n    results.push({\n      name: item.name || item.title,\n      description: item.description,\n      category: item.category,\n      resource_url: item.url,\n      github_url: item.github_url,\n      platforms: item.platforms || [],\n      is_free: item.is_free !== false,\n      pricing: item.pricing || '免费',\n      highlights: item.highlights || [],\n      metrics: item.metrics || {},\n      alternatives: item.alternatives || [],\n      use_cases: item.use_cases || [],\n      quality_score: qualityScore,\n      popularity_score: popularityScore,\n      combined_score: (qualityScore + popularityScore) / 2\n    });\n  }\n}\n\nconsole.log(`AI筛选: ${results.length} 个高质量资源`);\nreturn results;"
+      },
+      "id": "16",
+      "name": "解析AI结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 600]
+    },
+
+    {
+      "parameters": { "aggregate": "aggregateAllItemData", "options": {} },
+      "id": "17",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [3600, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.data || [];\nif (items.length === 0) return [{ sorted_items: [], total: 0 }];\n\nconst sorted = items.sort((a, b) => {\n  const scoreA = a.combined_score || 0;\n  const scoreB = b.combined_score || 0;\n  if (Math.abs(scoreA - scoreB) > 0.5) return scoreB - scoreA;\n  const popularityA = a.metrics?.github_stars || a.popularity_score || 0;\n  const popularityB = b.metrics?.github_stars || b.popularity_score || 0;\n  return popularityB - popularityA;\n});\n\nreturn [{ sorted_items: sorted, total: sorted.length }];"
+      },
+      "id": "37",
+      "name": "智能排序",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3900, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst items = data.sorted_items || [];\nconst config = $('采集配置').first().json;\n\nif (items.length === 0) {\n  return [{\n    markdown: '# 本次采集无结果\\n\\n未发现符合条件的高质量资源。',\n    items: [], total: 0, categories: [],\n    crawl_type: config.crawl_type,\n    crawl_type_name: config.crawl_type_name,\n    feishu_webhook: config.feishu_webhook,\n    output_dir: config.output_dir,\n    email_to: config.email_to,\n    email_enabled: config.email_enabled,\n    date: new Date().toLocaleDateString('zh-CN'),\n    filename: `${config.crawl_type}-${new Date().toISOString().split('T')[0]}.md`\n  }];\n}\n\nconst byCategory = {};\nfor (const item of items) {\n  const cat = item.category || '其他';\n  if (!byCategory[cat]) byCategory[cat] = [];\n  byCategory[cat].push(item);\n}\n\nconst crawlType = config.crawl_type_name || '资源采集';\nconst date = new Date().toLocaleDateString('zh-CN');\nconst filename = `${config.crawl_type}-${new Date().toISOString().split('T')[0]}.md`;\n\nlet md = `# ${crawlType} - ${date}\\n\\n`;\nmd += `> 🎯 本次采集 **${items.length}** 个高质量资源\\n`;\nmd += `> 📊 来源: Reddit + GitHub + Product Hunt + Hacker News\\n\\n`;\n\nfor (const [category, catItems] of Object.entries(byCategory)) {\n  md += `## ${category}\\n\\n`;\n  for (const item of catItems) {\n    const free = item.is_free ? ' 🆓' : '';\n    const badge = item.quality_score >= 9 ? ' 🏆' : item.quality_score >= 8 ? ' ⭐' : '';\n    md += `### ${item.name}${free}${badge}\\n\\n`;\n    md += `${item.description}\\n\\n`;\n    if (item.highlights?.length) md += `**亮点**: ${item.highlights.join(', ')}\\n\\n`;\n    if (item.resource_url) md += `🔗 [官网](${item.resource_url})`;\n    if (item.github_url) md += ` | [GitHub](${item.github_url})`;\n    md += `\\n\\n`;\n    if (item.metrics?.github_stars) md += `📊 ⭐ ${item.metrics.github_stars} stars\\n\\n`;\n    md += `📈 质量:${item.quality_score}/10 | 热度:${item.popularity_score}/10\\n\\n---\\n\\n`;\n  }\n}\n\nmd += `*采集时间: ${new Date().toLocaleString('zh-CN')}*`;\n\nreturn [{\n  markdown: md, items: items, total: items.length,\n  categories: Object.keys(byCategory),\n  crawl_type: config.crawl_type,\n  crawl_type_name: crawlType,\n  feishu_webhook: config.feishu_webhook,\n  output_dir: config.output_dir,\n  email_to: config.email_to,\n  email_enabled: config.email_enabled,\n  date: date, filename: filename\n}];"
+      },
+      "id": "18",
+      "name": "生成增强MD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4200, 600]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconsole.log('=== MD文件 ===');\nconsole.log(`文件名: ${data.filename}`);\nconsole.log(`资源数: ${data.total}`);\nconsole.log(data.markdown);\nreturn [$input.first().json];"
+      },
+      "id": "19",
+      "name": "输出MD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4500, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst items = data.items || [];\n\nif (items.length === 0) {\n  return [{\n    feishu_webhook: data.feishu_webhook,\n    card: { msg_type: 'interactive', card: { header: { title: { tag: 'plain_text', content: '采集完成 - 无新资源' }, template: 'grey' }, elements: [{ tag: 'div', text: { tag: 'plain_text', content: '本次采集未发现符合条件的资源' } }] } }\n  }];\n}\n\nconst byCategory = {};\nfor (const item of items) {\n  const cat = item.category || '其他';\n  if (!byCategory[cat]) byCategory[cat] = [];\n  byCategory[cat].push(item);\n}\n\nconst elements = [];\nelements.push({ tag: 'div', text: { tag: 'lark_md', content: `🎯 本次采集 **${items.length}** 个高质量资源` } });\nelements.push({ tag: 'hr' });\n\nfor (const [category, catItems] of Object.entries(byCategory)) {\n  elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**📁 ${category}** (${catItems.length}个)` } });\n  for (const item of catItems.slice(0, 5)) {\n    const free = item.is_free ? ' 🆓' : '';\n    const badge = item.quality_score >= 9 ? ' 🏆' : item.quality_score >= 8 ? ' ⭐' : '';\n    let content = `**${item.name}**${free}${badge}\\n${item.description || ''}`;\n    if (item.resource_url) content += `\\n[🔗 访问](${item.resource_url})`;\n    elements.push({ tag: 'div', text: { tag: 'lark_md', content: content } });\n  }\n  if (catItems.length > 5) elements.push({ tag: 'div', text: { tag: 'lark_md', content: `_...还有 ${catItems.length - 5} 个_` } });\n  elements.push({ tag: 'hr' });\n}\n\nelements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: `V2版 | ${new Date().toLocaleString('zh-CN')}` }] });\n\nreturn [{\n  feishu_webhook: data.feishu_webhook,\n  card: { msg_type: 'interactive', card: { header: { title: { tag: 'plain_text', content: `${data.crawl_type_name || '资源采集'} - ${data.date}` }, template: 'blue' }, elements: elements } },\n  markdown: data.markdown, filename: data.filename\n}];"
+      },
+      "id": "20",
+      "name": "构建飞书卡片",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4500, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.feishu_webhook }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.card) }}",
+        "options": {}
+      },
+      "id": "21",
+      "name": "发送飞书",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4800, 600],
+      "onError": "continueRegularOutput"
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst config = $('采集配置').first().json;\nconst mdContent = data.markdown || '';\nconst mdBase64 = Buffer.from(mdContent, 'utf-8').toString('base64');\n\nreturn [{\n  email_to: data.email_to || config.email_to,\n  email_enabled: data.email_enabled || config.email_enabled,\n  subject: `${data.crawl_type_name || '资源采集'} V2 - ${data.date} [${data.total}个]`,\n  filename: data.filename,\n  markdown: data.markdown,\n  md_base64: mdBase64,\n  total: data.total,\n  categories: data.categories,\n  crawl_type_name: data.crawl_type_name\n}];"
+      },
+      "id": "23",
+      "name": "准备邮件",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4500, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "1", "leftValue": "={{ $json.email_enabled }}", "rightValue": "true", "operator": { "type": "string", "operation": "equals" } }]
+        },
+        "options": {}
+      },
+      "id": "24",
+      "name": "检查邮件开关",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4800, 800]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@your-domain.com",
+        "toEmail": "={{ $json.email_to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "html": "=<html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><h1>🎯 {{ $json.crawl_type_name }}</h1><p>本次采集 <strong>{{ $json.total }}</strong> 个高质量资源</p><p>分类: {{ $json.categories.join(', ') }}</p><p>📎 完整列表见附件: {{ $json.filename }}</p><p style=\"color:#999;font-size:12px;\">采集时间: {{ new Date().toLocaleString('zh-CN') }}</p></body></html>",
+        "options": { "attachments": "={{ $json.filename }}", "attachmentsUi": { "attachmentsBinary": [{ "property": "data" }] } }
+      },
+      "id": "25",
+      "name": "发送邮件",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [5100, 750],
+      "credentials": { "smtp": { "id": "YOUR_SMTP_CREDENTIAL_ID", "name": "SMTP" } }
+    },
+    {
+      "parameters": { "jsCode": "return [{ email_skipped: true, reason: 'email_enabled is not true' }];" },
+      "id": "26",
+      "name": "跳过邮件",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5100, 950]
+    },
+    {
+      "parameters": {
+        "jsCode": "const feishuResult = $('发送飞书').first().json;\nconst mdData = $('生成增强MD').first().json;\nconst config = $('采集配置').first().json;\n\nlet emailSent = false;\ntry { emailSent = !!$('发送邮件').first(); } catch(e) {}\n\nreturn [{\n  success: true, version: 'V2',\n  total: mdData.total,\n  categories: mdData.categories,\n  crawl_type: mdData.crawl_type_name,\n  filename: mdData.filename,\n  data_sources: ['Reddit', 'GitHub Search', 'GitHub Trending', 'Product Hunt', 'Hacker News'],\n  feishu_sent: feishuResult?.StatusCode === 0 || feishuResult?.code === 0,\n  email_sent: emailSent,\n  email_to: config.email_to,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "22",
+      "name": "完成报告",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5400, 600]
+    }
+  ],
+
+  "connections": {
+    "定时触发": { "main": [[{ "node": "采集配置", "type": "main", "index": 0 }]] },
+    "手动触发": { "main": [[{ "node": "采集配置", "type": "main", "index": 0 }]] },
+    "采集配置": {
+      "main": [[
+        { "node": "拆分Reddit", "type": "main", "index": 0 },
+        { "node": "拆分GitHub搜索", "type": "main", "index": 0 },
+        { "node": "获取GitHub Trending", "type": "main", "index": 0 },
+        { "node": "获取Product Hunt", "type": "main", "index": 0 },
+        { "node": "获取HN热榜ID", "type": "main", "index": 0 }
+      ]]
+    },
+    "拆分Reddit": { "main": [[{ "node": "获取Reddit", "type": "main", "index": 0 }]] },
+    "获取Reddit": { "main": [[{ "node": "解析Reddit", "type": "main", "index": 0 }]] },
+    "解析Reddit": { "main": [[{ "node": "合并所有数据源", "type": "main", "index": 0 }]] },
+    "拆分GitHub搜索": { "main": [[{ "node": "搜索GitHub", "type": "main", "index": 0 }]] },
+    "搜索GitHub": { "main": [[{ "node": "解析GitHub仓库", "type": "main", "index": 0 }]] },
+    "解析GitHub仓库": { "main": [[{ "node": "获取README", "type": "main", "index": 0 }]] },
+    "获取README": { "main": [[{ "node": "解码README", "type": "main", "index": 0 }]] },
+    "解码README": { "main": [[{ "node": "合并所有数据源", "type": "main", "index": 0 }]] },
+    "获取GitHub Trending": { "main": [[{ "node": "解析Trending", "type": "main", "index": 0 }]] },
+    "解析Trending": { "main": [[{ "node": "合并所有数据源", "type": "main", "index": 0 }]] },
+    "获取Product Hunt": { "main": [[{ "node": "解析Product Hunt", "type": "main", "index": 0 }]] },
+    "解析Product Hunt": { "main": [[{ "node": "合并所有数据源", "type": "main", "index": 0 }]] },
+    "获取HN热榜ID": { "main": [[{ "node": "拆分HN ID", "type": "main", "index": 0 }]] },
+    "拆分HN ID": { "main": [[{ "node": "获取HN详情", "type": "main", "index": 0 }]] },
+    "获取HN详情": { "main": [[{ "node": "解析HN", "type": "main", "index": 0 }]] },
+    "解析HN": { "main": [[{ "node": "合并所有数据源", "type": "main", "index": 0 }]] },
+    "合并所有数据源": { "main": [[{ "node": "去重处理", "type": "main", "index": 0 }]] },
+    "去重处理": { "main": [[{ "node": "质量过滤", "type": "main", "index": 0 }]] },
+    "质量过滤": { "main": [[{ "node": "AI Agent", "type": "main", "index": 0 }]] },
+    "DeepSeek Chat": { "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "网络搜索工具": { "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]] },
+    "AI Agent": { "main": [[{ "node": "解析AI结果", "type": "main", "index": 0 }]] },
+    "解析AI结果": { "main": [[{ "node": "汇总结果", "type": "main", "index": 0 }]] },
+    "汇总结果": { "main": [[{ "node": "智能排序", "type": "main", "index": 0 }]] },
+    "智能排序": { "main": [[{ "node": "生成增强MD", "type": "main", "index": 0 }]] },
+    "生成增强MD": {
+      "main": [[
+        { "node": "输出MD", "type": "main", "index": 0 },
+        { "node": "构建飞书卡片", "type": "main", "index": 0 },
+        { "node": "准备邮件", "type": "main", "index": 0 }
+      ]]
+    },
+    "输出MD": { "main": [[{ "node": "完成报告", "type": "main", "index": 0 }]] },
+    "构建飞书卡片": { "main": [[{ "node": "发送飞书", "type": "main", "index": 0 }]] },
+    "发送飞书": { "main": [[{ "node": "完成报告", "type": "main", "index": 0 }]] },
+    "准备邮件": { "main": [[{ "node": "检查邮件开关", "type": "main", "index": 0 }]] },
+    "检查邮件开关": {
+      "main": [
+        [{ "node": "发送邮件", "type": "main", "index": 0 }],
+        [{ "node": "跳过邮件", "type": "main", "index": 0 }]
+      ]
+    },
+    "发送邮件": { "main": [[{ "node": "完成报告", "type": "main", "index": 0 }]] },
+    "跳过邮件": { "main": [[{ "node": "完成报告", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

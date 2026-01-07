@@ -16,3 +16,11 @@ export { VerificationInput } from './VerificationInput';
 export type { VerificationInputProps } from './VerificationInput';
 
 export { LoadingSpinner } from './LoadingSpinner';
+
+export { Button } from './Button';
+
+export { Tooltip } from './Tooltip';
+
+export { FolderView } from './FolderView';
+export { FolderCard } from './FolderCard';
+export { DragFolderPreview } from './DragFolderPreview';
