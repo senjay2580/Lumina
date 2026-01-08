@@ -26,7 +26,7 @@ const AI_MODEL = Deno.env.get('AI_MODEL') || '';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -228,7 +228,7 @@ function parseCommand(text: string): { command: string; args: string } | null {
     const parts = trimmed.slice(1).split(/\s+/);
     const cmd = parts[0].toLowerCase();
     // 只识别这些指令，其他的不算指令
-    if (['help', 'list', 'search', 'stats', 'unbind', 'bind', 'debug'].includes(cmd)) {
+    if (['help', 'list', 'search', 'stats', 'unbind', 'bind', 'debug', 'github', 'reddit', 'crawl'].includes(cmd)) {
       return { command: cmd, args: parts.slice(1).join(' ') };
     }
   }
@@ -608,8 +608,9 @@ function generateHelpCard(): object {
       { tag: 'hr' },
       { tag: 'div', text: { tag: 'lark_md', content: '**🔮 AI 智能搜索：**\n直接输入你想找的内容！\n• "AI 工具"\n• "React 文档"\n• "GitHub 项目"' } },
       { tag: 'hr' },
-      { tag: 'div', text: { tag: 'lark_md', content: '**指令：**\n• `/help` - 显示帮助\n• `/list` - 查看最近7天资源\n• `/list 30` - 最近30天全部资源\n• `/list image` - 最近7天图片\n• `/list document 30` - 最近30天文档\n• `/search 关键词` - 搜索资源\n• `/stats` - 查看统计\n• `/unbind` - 解绑账号' } },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: '💡 图片和文档可点击标题直接预览/下载' }] },
+      { tag: 'div', text: { tag: 'lark_md', content: '**🕷️ 提示词采集：**\n• `/github 关键词` - 采集 GitHub 仓库\n• `/reddit 版块名` - 采集 Reddit 帖子\n\n示例：\n• `/github prompt-engineering cursor-rules`\n• `/reddit ChatGPT PromptEngineering`\n\n最多支持 3 个关键词/版块' } },
+      { tag: 'hr' },
+      { tag: 'div', text: { tag: 'lark_md', content: '**其他指令：**\n• `/help` - 显示帮助\n• `/list` - 查看最近7天资源\n• `/list 30` - 最近30天全部资源\n• `/search 关键词` - 搜索资源\n• `/stats` - 查看统计\n• `/unbind` - 解绑账号' } },
     ],
   };
 }
@@ -974,6 +975,517 @@ async function handleStatsCommand(userId: string): Promise<object> {
   };
 }
 
+// ============ 提示词爬虫（断点续采版）============
+
+// 爬虫配置（只保留阈值，关键词由用户指定）
+const CRAWL_CONFIG = {
+  min_reddit_score: 10,
+  min_github_stars: 50,
+  max_execution_time: 45000
+};
+
+// 清理 HTML 标签和多余空白
+function cleanContent(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, '')           // 移除 HTML 标签
+    .replace(/!\[.*?\]\(.*?\)/g, '')   // 移除 Markdown 图片
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // 保留链接文字
+    .replace(/```[\s\S]*?```/g, '')    // 移除代码块
+    .replace(/`[^`]*`/g, '')           // 移除行内代码
+    .replace(/#{1,6}\s*/g, '')         // 移除标题标记
+    .replace(/\*\*|__/g, '')           // 移除加粗
+    .replace(/\*|_/g, '')              // 移除斜体
+    .replace(/\s+/g, ' ')              // 合并空白
+    .trim();
+}
+
+// 爬虫进度类型
+interface CrawlProgress {
+  id?: string;
+  user_id: string;
+  job_type: 'reddit' | 'github' | 'all';
+  reddit_index: number;
+  github_index: number;
+  reddit_found: number;
+  reddit_extracted: number;
+  github_found: number;
+  github_extracted: number;
+  started_at: string;
+  updated_at: string;
+  status: 'running' | 'completed';
+}
+
+// 获取或创建爬虫进度
+async function getCrawlProgress(userId: string, jobType: 'reddit' | 'github' | 'all'): Promise<CrawlProgress | null> {
+  const { data, error } = await supabase
+    .from('crawl_progress')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('job_type', jobType)
+    .eq('status', 'running')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  
+  if (error) {
+    console.error('[Crawl] getCrawlProgress error:', error);
+  }
+  return data;
+}
+
+// 保存爬虫进度（使用 update 而不是 upsert）
+async function saveCrawlProgress(progress: CrawlProgress & { id?: string }): Promise<void> {
+  if (!progress.id) {
+    console.error('[Crawl] saveCrawlProgress: no id');
+    return;
+  }
+  
+  const { error } = await supabase
+    .from('crawl_progress')
+    .update({
+      reddit_index: progress.reddit_index,
+      github_index: progress.github_index,
+      reddit_found: progress.reddit_found,
+      reddit_extracted: progress.reddit_extracted,
+      github_found: progress.github_found,
+      github_extracted: progress.github_extracted,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', progress.id);
+  
+  if (error) {
+    console.error('[Crawl] saveCrawlProgress error:', error);
+  }
+}
+
+// 创建新的爬虫进度
+async function createCrawlProgress(userId: string, jobType: 'reddit' | 'github' | 'all'): Promise<CrawlProgress & { id: string }> {
+  const now = new Date().toISOString();
+  
+  const { data, error } = await supabase
+    .from('crawl_progress')
+    .insert({
+      user_id: userId,
+      job_type: jobType,
+      reddit_index: 0,
+      github_index: 0,
+      reddit_found: 0,
+      reddit_extracted: 0,
+      github_found: 0,
+      github_extracted: 0,
+      started_at: now,
+      updated_at: now,
+      status: 'running'
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('[Crawl] createCrawlProgress error:', error);
+    throw new Error(`创建进度失败: ${error.message}`);
+  }
+  
+  console.log('[Crawl] Created progress:', data.id);
+  return data;
+}
+
+// 标记进度完成
+async function completeCrawlProgress(userId: string, jobType: 'reddit' | 'github' | 'all'): Promise<void> {
+  const { error } = await supabase
+    .from('crawl_progress')
+    .update({ status: 'completed', updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .eq('job_type', jobType)
+    .eq('status', 'running');
+}
+
+// 计算内容哈希（用于去重）
+async function computeContentHash(content: string): Promise<string> {
+  const normalized = content.toLowerCase().replace(/[^\w\s\u4e00-\u9fff]/g, '').replace(/\s+/g, ' ').trim();
+  const encoder = new TextEncoder();
+  const data = encoder.encode(normalized);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 爬取单个 Reddit 子版块
+async function crawlSingleSubreddit(subreddit: string, minScore: number): Promise<any[]> {
+  const results: any[] = [];
+  
+  // CORS 代理列表（服务端也可以用）
+  const corsProxies = [
+    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
+  
+  try {
+    console.log(`[Crawl] Fetching r/${subreddit}...`);
+    
+    const targetUrl = `https://www.reddit.com/r/${subreddit}/hot.json?limit=30&raw_json=1`;
+    let data = null;
+    
+    // 尝试不同的代理
+    for (const proxyFn of corsProxies) {
+      try {
+        const proxyUrl = proxyFn(targetUrl);
+        console.log(`[Crawl] Trying proxy for r/${subreddit}...`);
+        
+        const response = await fetch(proxyUrl, {
+          headers: { 
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        if (response.ok) {
+          data = await response.json();
+          console.log(`[Crawl] r/${subreddit} proxy success`);
+          break;
+        }
+      } catch (proxyErr) {
+        console.log(`[Crawl] Proxy failed for r/${subreddit}, trying next...`);
+      }
+    }
+    
+    if (!data) {
+      console.log(`[Crawl] r/${subreddit} failed: all proxies failed`);
+      return results;
+    }
+    
+    const children = data?.data?.children || [];
+    
+    for (const child of children) {
+      const post = child.data;
+      if (post.stickied || post.score < minScore) continue;
+      if (!post.title || !post.selftext || post.selftext.length < 50) continue;
+      
+      results.push({
+        id: post.id,
+        title: post.title,
+        content: post.selftext,
+        url: `https://reddit.com${post.permalink}`,
+        author: post.author,
+        subreddit: post.subreddit
+      });
+    }
+    
+    console.log(`[Crawl] r/${subreddit}: found ${results.length} posts`);
+  } catch (e) {
+    console.error(`[Crawl] Error crawling r/${subreddit}:`, e);
+  }
+  
+  return results;
+}
+
+// 爬取单个 GitHub 搜索词
+async function crawlSingleGitHubQuery(query: string, minStars: number): Promise<any[]> {
+  const results: any[] = [];
+  
+  try {
+    console.log(`[Crawl] Searching GitHub "${query}" (minStars: ${minStars})...`);
+    
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=10`;
+    console.log(`[Crawl] GitHub API URL: ${url}`);
+    
+    const response = await fetch(url, { 
+      headers: { 
+        'Accept': 'application/vnd.github.v3+json', 
+        'User-Agent': 'Lumina-Bot/1.0' 
+      } 
+    });
+    
+    console.log(`[Crawl] GitHub response status: ${response.status}`);
+    
+    if (!response.ok) {
+      const errText = await response.text();
+      console.log(`[Crawl] GitHub search failed: ${response.status} - ${errText}`);
+      return results;
+    }
+    
+    const data = await response.json();
+    const items = data?.items || [];
+    console.log(`[Crawl] GitHub returned ${items.length} items, total_count: ${data?.total_count}`);
+    
+    for (const repo of items) {
+      console.log(`[Crawl] Checking repo: ${repo.full_name}, stars: ${repo.stargazers_count}`);
+      
+      if (repo.stargazers_count < minStars) {
+        console.log(`[Crawl] Skipping ${repo.full_name}: stars ${repo.stargazers_count} < ${minStars}`);
+        continue;
+      }
+      
+      // 尝试获取 README
+      let readme = '';
+      try {
+        const readmeRes = await fetch(
+          `https://api.github.com/repos/${repo.full_name}/readme`,
+          { headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Lumina-Bot/1.0' } }
+        );
+        if (readmeRes.ok) {
+          const readmeData = await readmeRes.json();
+          readme = atob(readmeData.content || '').substring(0, 2000);
+        }
+      } catch (e) {
+        console.log(`[Crawl] Failed to get README for ${repo.full_name}`);
+      }
+      
+      results.push({
+        id: repo.full_name,
+        title: repo.name,
+        content: `${repo.description || ''}\n\n${readme}`,
+        url: repo.html_url,
+        author: repo.owner.login,
+        repoName: repo.full_name,
+        stars: repo.stargazers_count,
+        forks: repo.forks_count,
+        pushedAt: repo.pushed_at
+      });
+    }
+    
+    console.log(`[Crawl] GitHub "${query}": found ${results.length} repos with >= ${minStars} stars`);
+  } catch (e) {
+    console.error(`[Crawl] Error searching GitHub "${query}":`, e);
+  }
+  
+  return results;
+}
+
+// 批量爬取 Reddit（服务端版本）
+async function crawlRedditServer(subreddits: string[], minScore: number): Promise<any[]> {
+  const allPosts: any[] = [];
+  
+  for (const subreddit of subreddits) {
+    const posts = await crawlSingleSubreddit(subreddit, minScore);
+    allPosts.push(...posts);
+    // 避免请求过快
+    await new Promise(r => setTimeout(r, 500));
+  }
+  
+  return allPosts;
+}
+
+// 批量爬取 GitHub（服务端版本）
+async function crawlGitHubServer(queries: string[], minStars: number): Promise<any[]> {
+  const allRepos: any[] = [];
+  const seenRepos = new Set<string>();
+  
+  for (const query of queries) {
+    const repos = await crawlSingleGitHubQuery(query, minStars);
+    for (const repo of repos) {
+      if (!seenRepos.has(repo.id)) {
+        seenRepos.add(repo.id);
+        allRepos.push(repo);
+      }
+    }
+    // 避免请求过快
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  
+  return allRepos;
+}
+
+// AI 分析提取提示词
+async function analyzeWithAIServer(
+  content: string,
+  sourceType: string,
+  title: string
+): Promise<{ prompts: Array<{ title: string; content: string; category: string; quality: number }>; analysis: any } | null> {
+  if (!AI_API_KEY || !AI_BASE_URL || !AI_MODEL) return null;
+  if (content.trim().length < 50) return null;
+
+  const systemPrompt = `你是 AI 提示词专家。分析内容，提取高质量 AI 提示词。
+输出 JSON：{"prompts": [{ "title": "标题", "content": "完整提示词", "category": "分类", "quality": 8.5 }], "analysis": { "summary": "摘要", "language": "语言" }}
+评分：10分=专业级，7-9=高质量，4-6=一般，1-3=低质量。无提示词返回空数组。`;
+
+  try {
+    const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `来源: ${sourceType}\n标题: ${title}\n\n${content.substring(0, 2000)}` }
+        ],
+        temperature: 0.3,
+      }),
+    });
+    
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content || '';
+    
+    // 尝试解析 JSON
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    return null;
+  } catch (e) {
+    console.error('[Crawl] AI analysis error:', e);
+    return null;
+  }
+}
+
+// 快速爬虫（不做 AI 分析，直接保存到 extracted_prompts 表）
+async function executeQuickCrawl(
+  jobType: 'github' | 'reddit',
+  userId: string,
+  openId: string,
+  keywords: string[]  // 用户指定的关键词
+): Promise<void> {
+  const startTime = Date.now();
+  
+  const isGitHub = jobType === 'github';
+  // 最多 3 个关键词
+  const sources = keywords.slice(0, 3);
+  
+  console.log(`[QuickCrawl] Starting ${jobType} crawl for user ${userId}`);
+  console.log(`[QuickCrawl] Keywords:`, sources);
+  
+  await sendTextMessage(openId, `🚀 开始采集 ${isGitHub ? 'GitHub' : 'Reddit'}...\n\n${isGitHub ? '搜索词' : '版块'}：${sources.join(', ')}`);
+  
+  let found = 0;
+  let saved = 0;
+  const seenIds = new Set<string>();
+  
+  try {
+    for (const source of sources) {
+      if (Date.now() - startTime > 40000) {
+        console.log('[QuickCrawl] Timeout approaching, stopping');
+        break;
+      }
+      
+      console.log(`[QuickCrawl] Processing: ${source}`);
+      
+      if (isGitHub) {
+        // GitHub 爬取
+        const repos = await crawlSingleGitHubQuery(source, CRAWL_CONFIG.min_github_stars);
+        console.log(`[QuickCrawl] GitHub "${source}" returned ${repos.length} repos`);
+        
+        for (const repo of repos) {
+          if (seenIds.has(repo.id)) continue;
+          seenIds.add(repo.id);
+          found++;
+          
+          const contentHash = await computeContentHash(repo.url + repo.title);
+          
+          const { data: existing, error: selectError } = await supabase
+            .from('extracted_prompts')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('content_hash', contentHash)
+            .maybeSingle();
+          
+          if (selectError) {
+            console.error('[QuickCrawl] Select error:', selectError);
+          }
+          
+          if (!existing) {
+            const { error } = await supabase.from('extracted_prompts').insert({
+              user_id: userId,
+              prompt_title: repo.title,
+              prompt_content: cleanContent(repo.content).substring(0, 5000),
+              suggested_category: 'github',
+              quality_score: 7.0,
+              language: 'en',
+              source_type: 'github',
+              source_url: repo.url,
+              source_name: repo.repoName,
+              source_author: repo.author,
+              source_stars: repo.stars,
+              source_forks: repo.forks,
+              content_hash: contentHash
+            });
+            
+            if (!error) {
+              saved++;
+              console.log(`[QuickCrawl] Saved: ${repo.title}`);
+            } else {
+              console.error('[QuickCrawl] Insert error:', error);
+            }
+          } else {
+            console.log(`[QuickCrawl] Already exists: ${repo.title}`);
+          }
+        }
+      } else {
+        // Reddit 爬取
+        const posts = await crawlSingleSubreddit(source, CRAWL_CONFIG.min_reddit_score);
+        console.log(`[QuickCrawl] Reddit r/${source} returned ${posts.length} posts`);
+        
+        for (const post of posts) {
+          if (seenIds.has(post.id)) continue;
+          seenIds.add(post.id);
+          found++;
+          
+          const contentHash = await computeContentHash(post.url + post.title);
+          
+          const { data: existing, error: selectError } = await supabase
+            .from('extracted_prompts')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('content_hash', contentHash)
+            .maybeSingle();
+          
+          if (selectError) {
+            console.error('[QuickCrawl] Select error:', selectError);
+          }
+          
+          if (!existing) {
+            const { error } = await supabase.from('extracted_prompts').insert({
+              user_id: userId,
+              prompt_title: post.title,
+              prompt_content: cleanContent(post.content).substring(0, 5000),
+              suggested_category: 'reddit',
+              quality_score: 7.0,
+              language: 'en',
+              source_type: 'reddit',
+              source_url: post.url,
+              source_name: `r/${post.subreddit}`,
+              source_author: post.author,
+              content_hash: contentHash
+            });
+            
+            if (!error) {
+              saved++;
+              console.log(`[QuickCrawl] Saved: ${post.title}`);
+            } else {
+              console.error('[QuickCrawl] Insert error:', error);
+            }
+          } else {
+            console.log(`[QuickCrawl] Already exists: ${post.title}`);
+          }
+        }
+      }
+      
+      await new Promise(r => setTimeout(r, 500));
+    }
+    
+    const duration = Math.round((Date.now() - startTime) / 1000);
+    console.log(`[QuickCrawl] Completed: found=${found}, saved=${saved}, duration=${duration}s`);
+    
+    const resultCard = {
+      config: { wide_screen_mode: true },
+      header: { title: { tag: 'plain_text', content: '✅ 采集完成' }, template: 'green' },
+      elements: [
+        { tag: 'div', fields: [
+          { is_short: true, text: { tag: 'lark_md', content: `**📊 发现${isGitHub ? '仓库' : '帖子'}**\n${found} 个` } },
+          { is_short: true, text: { tag: 'lark_md', content: `**💾 新增保存**\n${saved} 个` } },
+        ] },
+        { tag: 'hr' },
+        { tag: 'note', elements: [{ tag: 'plain_text', content: `⏱️ 耗时 ${duration} 秒 | 已保存到「提示词采集」页面` }] },
+      ],
+    };
+    
+    await sendCardMessage(openId, resultCard);
+    
+  } catch (error: any) {
+    console.error('[QuickCrawl] Error:', error);
+    await sendTextMessage(openId, `❌ 采集出错: ${error.message}\n\n已保存 ${saved} 个。`);
+  }
+}
+
 // ============ 消息处理 ============
 async function handleMessage(event: any): Promise<void> {
   const { message, sender } = event;
@@ -1062,6 +1574,30 @@ async function handleMessage(event: any): Promise<void> {
         }
         case 'stats': await sendCardMessage(openId, await handleStatsCommand(userId)); return;
         case 'unbind': await sendTextMessage(openId, await handleUnbindCommand(openId)); return;
+        case 'github': {
+          // 解析用户指定的关键词
+          const keywords = cmd.args.split(/[\s,，]+/).filter(k => k.trim());
+          if (keywords.length === 0) {
+            await sendTextMessage(openId, '❓ 请指定搜索关键词（最多 3 个）\n\n示例：\n• `/github prompt-engineering`\n• `/github cursor-rules awesome-prompts`\n• `/github comfyui, stable-diffusion`');
+            return;
+          }
+          await executeQuickCrawl('github', userId, openId, keywords);
+          return;
+        }
+        case 'reddit': {
+          // 解析用户指定的版块名
+          const subreddits = cmd.args.split(/[\s,，]+/).filter(k => k.trim());
+          if (subreddits.length === 0) {
+            await sendTextMessage(openId, '❓ 请指定 Reddit 版块名（最多 3 个）\n\n示例：\n• `/reddit ChatGPT`\n• `/reddit cursor vibecoding`\n• `/reddit PromptEngineering, comfyui`');
+            return;
+          }
+          await executeQuickCrawl('reddit', userId, openId, subreddits);
+          return;
+        }
+        case 'crawl': {
+          await sendTextMessage(openId, '❓ 请使用具体的采集指令：\n\n• `/github 关键词1 关键词2` - 采集 GitHub\n• `/reddit 版块1 版块2` - 采集 Reddit\n\n示例：\n• `/github prompt-engineering cursor-rules`\n• `/reddit ChatGPT PromptEngineering`');
+          return;
+        }
       }
     }
 

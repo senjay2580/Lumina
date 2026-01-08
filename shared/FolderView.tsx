@@ -828,8 +828,8 @@ export function FolderView({
                         ) : (
                           <Link2 className="w-4 h-4 text-green-500 flex-shrink-0" />
                         )}
-                        <Tooltip content={resource.title}>
-                          <span className="text-sm text-gray-900 truncate">{resource.title}</span>
+                        <Tooltip content={resource.title} className="overflow-hidden">
+                          <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
                         </Tooltip>
                       </div>
                       <div className="text-xs text-gray-400">
@@ -880,8 +880,8 @@ export function FolderView({
                           )}
                         </div>
                       )}
-                      <Tooltip content={resource.title}>
-                        <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all">{resource.title}</span>
+                      <Tooltip content={resource.title} className="w-full overflow-hidden">
+                        <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all block">{resource.title}</span>
                       </Tooltip>
                       {/* 三个点菜单 */}
                       <div className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100">

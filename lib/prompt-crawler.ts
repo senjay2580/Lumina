@@ -18,6 +18,7 @@ export interface CrawledPrompt {
   source_name: string | null;
   source_stars: number | null;
   source_forks: number | null;
+  source_updated_at: string | null; // GitHub 仓库最新提交时间
   created_at: string;
 }
 
@@ -238,30 +239,49 @@ async function computeContentHash(content: string): Promise<string> {
     .join('');
 }
 
-// 爬取 Reddit
+// 爬取 Reddit（使用 CORS 代理绕过浏览器限制）
 async function crawlReddit(subreddits: string[], minScore: number): Promise<any[]> {
   const results: any[] = [];
+  
+  // CORS 代理列表（按优先级排序）
+  const corsProxies = [
+    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
   
   for (const subreddit of subreddits) {
     try {
       console.log(`[Reddit] Fetching r/${subreddit}...`);
       
-      const response = await fetch(
-        `https://www.reddit.com/r/${subreddit}/hot.json?limit=50&raw_json=1`,
-        {
-          headers: {
-            'Accept': 'application/json'
-          }
-        }
-      );
+      const targetUrl = `https://www.reddit.com/r/${subreddit}/hot.json?limit=50&raw_json=1`;
+      let data = null;
       
-      if (!response.ok) {
-        console.log(`[Reddit] r/${subreddit} failed: ${response.status}`);
+      // 尝试不同的代理
+      for (const proxyFn of corsProxies) {
+        try {
+          const proxyUrl = proxyFn(targetUrl);
+          console.log(`[Reddit] Trying proxy: ${proxyUrl.substring(0, 50)}...`);
+          
+          const response = await fetch(proxyUrl, {
+            headers: { 'Accept': 'application/json' }
+          });
+          
+          if (response.ok) {
+            data = await response.json();
+            break;
+          }
+        } catch (proxyErr) {
+          console.log(`[Reddit] Proxy failed, trying next...`);
+        }
+      }
+      
+      if (!data) {
+        console.log(`[Reddit] r/${subreddit} failed: all proxies failed`);
         continue;
       }
       
-      const data = await response.json();
       const children = data?.data?.children || [];
+      const beforeCount = results.length;
       
       for (const child of children) {
         const post = child.data;
@@ -285,7 +305,8 @@ async function crawlReddit(subreddits: string[], minScore: number): Promise<any[
         });
       }
       
-      console.log(`[Reddit] r/${subreddit}: found ${results.length} posts with content`);
+      const newCount = results.length - beforeCount;
+      console.log(`[Reddit] r/${subreddit}: +${newCount} posts (total: ${results.length})`);
       
       // 延迟避免速率限制
       await new Promise(r => setTimeout(r, 1500));
@@ -345,7 +366,8 @@ async function crawlGitHub(queries: string[], minStars: number, token?: string):
           author: repo.owner.login,
           repoName: repo.full_name,
           stars: repo.stargazers_count,
-          forks: repo.forks_count
+          forks: repo.forks_count,
+          pushedAt: repo.pushed_at // 最新提交时间
         });
       }
       
@@ -552,6 +574,8 @@ export async function triggerCrawl(
       redditStats.found = posts.length;
       redditStats.total = posts.length;
       console.log(`[Crawler] Reddit crawl done, ${posts.length} posts to analyze`);
+      // 爬取完成后立即更新进度，显示发现数量
+      updateProgress('reddit', 'crawling', `Reddit 爬取完成，发现 ${posts.length} 条内容`);
       updateProgress('reddit', 'analyzing', `分析 ${posts.length} 条 Reddit 内容...`);
       
       for (let i = 0; i < posts.length; i++) {
@@ -619,6 +643,8 @@ export async function triggerCrawl(
       githubStats.found = repos.length;
       githubStats.total = repos.length;
       console.log(`[Crawler] GitHub crawl done, ${repos.length} repos to analyze`);
+      // 爬取完成后立即更新进度，显示发现数量
+      updateProgress('github', 'crawling', `GitHub 爬取完成，发现 ${repos.length} 个仓库`);
       updateProgress('github', 'analyzing', `分析 ${repos.length} 个 GitHub 仓库...`);
       
       for (let i = 0; i < repos.length; i++) {
@@ -655,7 +681,8 @@ export async function triggerCrawl(
                   source_author: repo.author,
                   source_name: repo.repoName,
                   source_stars: repo.stars,
-                  source_forks: repo.forks
+                  source_forks: repo.forks,
+                  source_updated_at: repo.pushedAt // 最新提交时间
                 };
                 
                 const saved = await saveAndNotify(promptData, 'github');

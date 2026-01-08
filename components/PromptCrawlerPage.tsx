@@ -956,8 +956,9 @@ function PromptList({
             <motion.div key={prompt.id} layout
               className={`group bg-white rounded-2xl p-5 border transition-all hover:shadow-md ${
                 isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'
-              }`}>
-              <div className="flex items-start gap-4">
+              }`}
+              style={{ minHeight: '140px' }}>
+              <div className="flex items-start gap-4 h-full">
                 {/* 选择框 */}
                 {selectMode && (
                   <button onClick={() => onToggleSelect(prompt.id)}
@@ -1021,6 +1022,13 @@ function PromptList({
                         {formatTime(prompt.created_at)}
                       </span>
                     )}
+                    {/* GitHub 显示最新提交时间 */}
+                    {isGitHub && prompt.source_updated_at && (
+                      <span className="inline-flex items-center gap-1 text-xs text-gray-400" title="最新提交">
+                        <Clock className="w-3 h-3" />
+                        {formatTime(prompt.source_updated_at)}
+                      </span>
+                    )}
                   </div>
 
                   {/* 标题 */}
@@ -1029,7 +1037,13 @@ function PromptList({
                   </h3>
 
                   {/* 内容预览 */}
-                  <p className="text-sm text-gray-500 line-clamp-2 mb-3">{prompt.prompt_content}</p>
+                  <p className="text-sm text-gray-500 mb-3 overflow-hidden break-all" style={{ 
+                    display: '-webkit-box', 
+                    WebkitLineClamp: 2, 
+                    WebkitBoxOrient: 'vertical',
+                    maxHeight: '2.8em',
+                    wordBreak: 'break-all'
+                  }}>{prompt.prompt_content}</p>
 
                   {/* 来源信息 */}
                   <div className="flex items-center gap-3 text-xs">

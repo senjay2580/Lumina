@@ -121,7 +121,7 @@ export function Tooltip({
         onMouseDown={hideTooltip}
         onFocus={showTooltip}
         onBlur={hideTooltip}
-        className={`inline-flex ${className}`}
+        className={`inline-flex min-w-0 ${className}`}
       >
         {children}
       </div>
