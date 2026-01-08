@@ -224,11 +224,10 @@ async function uploadFileResource(
   return { title: fileName, type };
 }
 
-// 处理列表指令 - 返回交互式卡片
-async function handleListCommand(userId: string, typeFilter?: string, days?: number): Promise<object> {
-  const since = days 
-    ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-    : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+// 处理列表指令 - 返回多张卡片（每张最多 15 条）
+async function handleListCommand(userId: string, openId: string, typeFilter?: string, days?: number): Promise<void> {
+  const actualDays = days || 7;
+  const since = new Date(Date.now() - actualDays * 24 * 60 * 60 * 1000).toISOString();
 
   let query = supabase
     .from('resources')
@@ -237,8 +236,7 @@ async function handleListCommand(userId: string, typeFilter?: string, days?: num
     .is('deleted_at', null)
     .is('archived_at', null)
     .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(10);
+    .order('created_at', { ascending: false });
 
   // 按类型筛选
   if (typeFilter && typeFilter !== 'all') {
@@ -253,6 +251,7 @@ async function handleListCommand(userId: string, typeFilter?: string, days?: num
     github: 'GitHub',
     document: '文档',
     image: '图片',
+    article: '文章',
   };
 
   const typeEmoji: Record<string, string> = {
@@ -260,33 +259,51 @@ async function handleListCommand(userId: string, typeFilter?: string, days?: num
     github: '📦',
     document: '📄',
     image: '🖼️',
+    article: '📰',
   };
 
-  // 构建卡片
-  const elements: any[] = [];
-
-  // 分类筛选按钮
-  elements.push({
-    tag: 'action',
-    actions: [
-      { tag: 'button', text: { tag: 'plain_text', content: '全部' }, type: typeFilter === 'all' || !typeFilter ? 'primary' : 'default', value: { action: 'list', type: 'all', days } },
-      { tag: 'button', text: { tag: 'plain_text', content: '🔗 链接' }, type: typeFilter === 'link' ? 'primary' : 'default', value: { action: 'list', type: 'link', days } },
-      { tag: 'button', text: { tag: 'plain_text', content: '📦 GitHub' }, type: typeFilter === 'github' ? 'primary' : 'default', value: { action: 'list', type: 'github', days } },
-      { tag: 'button', text: { tag: 'plain_text', content: '📄 文档' }, type: typeFilter === 'document' ? 'primary' : 'default', value: { action: 'list', type: 'document', days } },
-      { tag: 'button', text: { tag: 'plain_text', content: '🖼️ 图片' }, type: typeFilter === 'image' ? 'primary' : 'default', value: { action: 'list', type: 'image', days } },
-    ],
-  });
-
-  elements.push({ tag: 'hr' });
-
+  // 如果没有数据，发送空结果卡片
   if (error || !data || data.length === 0) {
-    elements.push({
-      tag: 'div',
-      text: { tag: 'plain_text', content: `📭 最近 ${days || 7} 天没有${typeFilter && typeFilter !== 'all' ? typeLabels[typeFilter] : ''}资源` },
-    });
-  } else {
+    const emptyCard = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: `📋 资源列表${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}` },
+        template: 'orange',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: { tag: 'plain_text', content: `📭 最近 ${actualDays} 天没有${typeFilter && typeFilter !== 'all' ? typeLabels[typeFilter] : ''}资源` },
+        },
+      ],
+    };
+    await sendCardMessage(openId, emptyCard);
+    return;
+  }
+
+  // 分批发送，每批最多 15 条
+  const BATCH_SIZE = 15;
+  const totalCount = data.length;
+  const totalPages = Math.ceil(totalCount / BATCH_SIZE);
+
+  for (let page = 0; page < totalPages; page++) {
+    const start = page * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, totalCount);
+    const batch = data.slice(start, end);
+    
+    const elements: any[] = [];
+
+    // 第一张卡片显示统计
+    if (page === 0) {
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: `**共 ${totalCount} 条资源** · 最近 ${actualDays} 天` },
+      });
+      elements.push({ tag: 'hr' });
+    }
+
     // 资源列表
-    data.forEach((r, i) => {
+    batch.forEach((r, i) => {
       const emoji = typeEmoji[r.type] || '📎';
       const date = new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
       
@@ -311,31 +328,33 @@ async function handleListCommand(userId: string, typeFilter?: string, days?: num
         ],
       });
       
-      if (i < data.length - 1) {
+      if (i < batch.length - 1) {
         elements.push({ tag: 'hr' });
       }
     });
+
+    // 构建卡片
+    const card = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { 
+          tag: 'plain_text', 
+          content: totalPages > 1 
+            ? `📋 资源列表 (${page + 1}/${totalPages})${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}`
+            : `📋 资源列表${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}`
+        },
+        template: 'orange',
+      },
+      elements,
+    };
+
+    await sendCardMessage(openId, card);
+    
+    // 避免发送过快被限流
+    if (page < totalPages - 1) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
   }
-
-  // 底部操作
-  elements.push({ tag: 'hr' });
-  elements.push({
-    tag: 'action',
-    actions: [
-      { tag: 'button', text: { tag: 'plain_text', content: '最近 7 天' }, type: days === 7 || !days ? 'primary' : 'default', value: { action: 'list', type: typeFilter || 'all', days: 7 } },
-      { tag: 'button', text: { tag: 'plain_text', content: '最近 30 天' }, type: days === 30 ? 'primary' : 'default', value: { action: 'list', type: typeFilter || 'all', days: 30 } },
-      { tag: 'button', text: { tag: 'plain_text', content: '最近 90 天' }, type: days === 90 ? 'primary' : 'default', value: { action: 'list', type: typeFilter || 'all', days: 90 } },
-    ],
-  });
-
-  return {
-    config: { wide_screen_mode: true },
-    header: {
-      title: { tag: 'plain_text', content: `📋 资源列表${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}` },
-      template: 'orange',
-    },
-    elements,
-  };
 }
 
 // 处理搜索指令 - 返回交互式卡片
@@ -351,7 +370,7 @@ async function handleSearchCommand(userId: string, keyword: string, typeFilter?:
     .is('deleted_at', null)
     .ilike('title', `%${keyword}%`)
     .order('created_at', { ascending: false })
-    .limit(10);
+    .limit(50);  // 提高上限到 50 条
 
   if (typeFilter && typeFilter !== 'all') {
     query = query.eq('type', typeFilter);
@@ -565,8 +584,7 @@ async function handleMessage(event: any): Promise<void> {
             }
           }
           
-          const listCard = await handleListCommand(userId, typeFilter, days);
-          await sendCardMessage(openId, listCard);
+          await handleListCommand(userId, openId, typeFilter, days);
           return;
         }
         case 'search': {

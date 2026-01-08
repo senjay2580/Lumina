@@ -31,6 +31,81 @@ async function parseFeed(feedUrl: string) {
   }
 }
 
+// 查找或创建文章文件夹（按公众号/订阅源名称）
+async function findOrCreateArticleFolder(
+  supabase: any,
+  userId: string,
+  sourceName: string
+): Promise<string | null> {
+  if (!sourceName) return null
+
+  // 查找已存在的文件夹
+  const { data: existingFolder } = await supabase
+    .from('resource_folders')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('resource_type', 'article')
+    .eq('name', sourceName)
+    .is('deleted_at', null)
+    .maybeSingle()
+
+  if (existingFolder) {
+    return existingFolder.id
+  }
+
+  // 检查该来源是否有足够的文章（至少1篇已存在）才创建文件夹
+  const { count } = await supabase
+    .from('resources')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('type', 'article')
+    .eq('metadata->>subscription_title', sourceName)
+    .is('deleted_at', null)
+
+  // 如果已有1篇，加上新的就是2篇，可以创建文件夹
+  if (count && count >= 1) {
+    // 获取当前最大 position
+    const { data: maxData } = await supabase
+      .from('resource_folders')
+      .select('position')
+      .eq('user_id', userId)
+      .order('position', { ascending: false })
+      .limit(1)
+      .single()
+    
+    const nextPosition = (maxData?.position || 0) + 1
+
+    const { data: newFolder, error } = await supabase
+      .from('resource_folders')
+      .insert({
+        user_id: userId,
+        name: sourceName,
+        parent_id: null,
+        resource_type: 'article',
+        color: '#f97316', // 橙色
+        position: nextPosition
+      })
+      .select('id')
+      .single()
+
+    if (!error && newFolder) {
+      // 将已存在的同来源文章也移到新文件夹
+      await supabase
+        .from('resources')
+        .update({ folder_id: newFolder.id })
+        .eq('user_id', userId)
+        .eq('type', 'article')
+        .eq('metadata->>subscription_title', sourceName)
+        .is('folder_id', null)
+        .is('deleted_at', null)
+
+      return newFolder.id
+    }
+  }
+
+  return null
+}
+
 Deno.serve(async (req) => {
   // Handle CORS
   if (req.method === 'OPTIONS') {
@@ -148,6 +223,11 @@ Deno.serve(async (req) => {
           }
 
           // 创建新资源
+          const sourceName = subscription.title
+          
+          // 查找或创建对应的文件夹
+          const folderId = await findOrCreateArticleFolder(supabase, subscription.user_id, sourceName)
+          
           const { data: resource, error: resError } = await supabase
             .from('resources')
             .insert({
@@ -156,6 +236,7 @@ Deno.serve(async (req) => {
               title: item.title,
               description: item.description?.replace(/<[^>]*>/g, '').slice(0, 500) || null,
               url: item.link,
+              folder_id: folderId, // 自动归类到文件夹
               metadata: {
                 source: 'rss',
                 subscription_id: subscription.id,

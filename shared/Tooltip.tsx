@@ -118,6 +118,7 @@ export function Tooltip({
         ref={triggerRef}
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
+        onMouseDown={hideTooltip}
         onFocus={showTooltip}
         onBlur={hideTooltip}
         className={`inline-flex ${className}`}

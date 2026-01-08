@@ -1,4 +1,4 @@
-// 文件夹视图组件 - 可拖拽窗口样式
+// 文件夹视图组�?- 可拖拽窗口样�?
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -55,7 +55,7 @@ interface FolderViewProps {
   onFolderUpdate?: () => void;
 }
 
-// 子文件夹行组件 - 带三个点菜单
+// 子文件夹行组�?- 带三个点菜单
 function SubFolderRow({ 
   folder, 
   onClick, 
@@ -175,10 +175,10 @@ function SubFolderRow({
         </div>
       </div>
 
-      {/* 三个点菜单 */}
+      {/* 三个点菜�?*/}
       {showMenu && createPortal(
         <>
-          <div className="fixed inset-0 z-[9998]" onClick={() => setShowMenu(false)} />
+          <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -196,13 +196,13 @@ function SubFolderRow({
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); setIsEditing(true); }}
               className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
             >
-              <Edit3 className="w-3.5 h-3.5" /> 重命名
+              <Edit3 className="w-3.5 h-3.5" /> 重命�?
             </button>
             <button 
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleMoveOut(); }}
               className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
             >
-              <FolderOutput className="w-3.5 h-3.5" /> 移出文件夹
+              <FolderOutput className="w-3.5 h-3.5" /> 移出文件�?
             </button>
             <button 
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleArchive(); }}
@@ -290,7 +290,7 @@ function SubFolderGridItem({
         </div>
         <span className="text-xs text-gray-700 mt-1 truncate w-full text-center">{folder.name}</span>
         
-        {/* 三个点菜单按钮 */}
+        {/* 三个点菜单按�?*/}
         <div 
           className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100"
           onClick={e => e.stopPropagation()}
@@ -308,10 +308,10 @@ function SubFolderGridItem({
         </div>
       </div>
 
-      {/* 三个点菜单 */}
+      {/* 三个点菜�?*/}
       {showMenu && createPortal(
         <>
-          <div className="fixed inset-0 z-[9998]" onClick={() => setShowMenu(false)} />
+          <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -329,7 +329,7 @@ function SubFolderGridItem({
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleMoveOut(); }}
               className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
             >
-              <FolderOutput className="w-3.5 h-3.5" /> 移出文件夹
+              <FolderOutput className="w-3.5 h-3.5" /> 移出文件�?
             </button>
             <div className="border-t border-gray-100 my-1" />
             <button 
@@ -380,7 +380,7 @@ export function FolderView({
   const [isDeleting, setIsDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // 窗口状态 - 居中显示
+  // 窗口状�?- 居中显示
   const [position, setPosition] = useState(() => ({
     x: Math.max(0, (window.innerWidth - 600) / 2),
     y: Math.max(0, (window.innerHeight - 500) / 2)
@@ -399,7 +399,7 @@ export function FolderView({
     size: { width: 600, height: 500 } 
   });
 
-  // 加载文件夹内容
+  // 加载文件夹内�?
   const loadFolderContent = async (folderId: string) => {
     setLoading(true);
     try {
@@ -424,7 +424,7 @@ export function FolderView({
 
   useEffect(() => {
     if (isOpen) {
-      // 每次打开时重新计算居中位置
+      // 每次打开时重新计算居中位�?
       const centerX = Math.max(0, (window.innerWidth - size.width) / 2);
       const centerY = Math.max(0, (window.innerHeight - size.height) / 2);
       setPosition({ x: centerX, y: centerY });
@@ -539,10 +539,10 @@ export function FolderView({
     setIsDeleting(true);
     try {
       await deleteFolder(currentFolder.id);
-      // 先关闭确认弹窗和文件夹视图，再触发更新
+      // 先关闭确认弹窗和文件夹视图，再触发更�?
       setShowDeleteConfirm(false);
       onClose();
-      // 延迟触发更新，避免动画冲突
+      // 延迟触发更新，避免动画冲�?
       setTimeout(() => {
         onFolderUpdate?.();
       }, 100);
@@ -567,7 +567,7 @@ export function FolderView({
     }
   };
 
-  // 删除资源（软删除到回收站）- 乐观更新
+  // 删除资源（软删除到回收站�? 乐观更新
   const handleDeleteResource = async (resourceId: string) => {
     // 乐观更新
     const originalResources = [...resources];
@@ -618,7 +618,7 @@ export function FolderView({
     }
   };
 
-  // 生成资源菜单项
+  // 生成资源菜单�?
   const getResourceMenuItems = (resource: Resource): MenuItem[] => [
     menuItemGenerators.open(() => onResourceClick?.(resource)),
     menuItemGenerators.moveOut(() => handleMoveOut(resource.id)),
@@ -662,7 +662,7 @@ export function FolderView({
             }}
             className="flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200"
           >
-            {/* 标题栏 */}
+            {/* 标题�?*/}
             <div
               className="flex items-center h-10 px-3 bg-gray-100 border-b border-gray-200 select-none"
               onMouseDown={handleDragStart}
@@ -697,7 +697,7 @@ export function FolderView({
                   {showMenu && (
                     <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-10">
                       <button onClick={() => { setShowMenu(false); setIsEditing(true); }} className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 flex items-center gap-2">
-                        <Edit3 className="w-3.5 h-3.5" /> 重命名
+                        <Edit3 className="w-3.5 h-3.5" /> 重命�?
                       </button>
                       <button onClick={() => { setShowMenu(false); setShowDeleteConfirm(true); }} className="w-full px-3 py-1.5 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2">
                         <Trash2 className="w-3.5 h-3.5" /> 删除
@@ -714,7 +714,7 @@ export function FolderView({
               </div>
             </div>
 
-            {/* 文件夹信息 */}
+            {/* 文件夹信�?*/}
             <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50">
               <div className="flex items-center gap-3">
                 <FolderOpenIcon size={40} />

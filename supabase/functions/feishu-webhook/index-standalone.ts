@@ -608,7 +608,8 @@ function generateHelpCard(): object {
       { tag: 'hr' },
       { tag: 'div', text: { tag: 'lark_md', content: '**🔮 AI 智能搜索：**\n直接输入你想找的内容！\n• "AI 工具"\n• "React 文档"\n• "GitHub 项目"' } },
       { tag: 'hr' },
-      { tag: 'div', text: { tag: 'lark_md', content: '**指令：**\n• `/help` - 显示帮助\n• `/list` - 查看最近资源\n• `/list link 30` - 最近30天的链接\n• `/search 关键词` - 搜索资源\n• `/stats` - 查看统计\n• `/unbind` - 解绑账号' } },
+      { tag: 'div', text: { tag: 'lark_md', content: '**指令：**\n• `/help` - 显示帮助\n• `/list` - 查看最近7天资源\n• `/list 30` - 最近30天全部资源\n• `/list image` - 最近7天图片\n• `/list document 30` - 最近30天文档\n• `/search 关键词` - 搜索资源\n• `/stats` - 查看统计\n• `/unbind` - 解绑账号' } },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: '💡 图片和文档可点击标题直接预览/下载' }] },
     ],
   };
 }
@@ -732,38 +733,188 @@ async function uploadFileResource(userId: string, blob: Blob, fileName: string, 
   return { title: fileName, type };
 }
 
-async function handleListCommand(userId: string, typeFilter?: string, days?: number): Promise<object> {
-  const since = new Date(Date.now() - (days || 7) * 24 * 60 * 60 * 1000).toISOString();
-  let query = supabase.from('resources').select('title, type, url, created_at')
-    .eq('user_id', userId).is('deleted_at', null).is('archived_at', null)
-    .gte('created_at', since).order('created_at', { ascending: false }).limit(10);
+// 生成文件公开 URL
+function getFilePublicUrl(storagePath: string): string {
+  return `${SUPABASE_URL}/storage/v1/object/public/resources/${storagePath}`;
+}
 
-  if (typeFilter && typeFilter !== 'all') query = query.eq('type', typeFilter);
-  const { data } = await query;
+// 处理列表指令 - 返回多张卡片（每张最多 15 条），支持图片/文档预览
+async function handleListCommand(userId: string, openId: string, typeFilter?: string, days?: number): Promise<void> {
+  const actualDays = days || 7;
+  const since = new Date(Date.now() - actualDays * 24 * 60 * 60 * 1000).toISOString();
 
-  const typeLabels: Record<string, string> = { all: '全部', link: '链接', github: 'GitHub', document: '文档', image: '图片' };
-  const typeEmoji: Record<string, string> = { link: '🔗', github: '📦', document: '📄', image: '🖼️' };
-  const elements: any[] = [];
+  let query = supabase
+    .from('resources')
+    .select('title, type, url, storage_path, created_at')
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .is('archived_at', null)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false });
 
-  if (!data || data.length === 0) {
-    elements.push({ tag: 'div', text: { tag: 'plain_text', content: `📭 最近 ${days || 7} 天没有资源` } });
-  } else {
-    data.forEach((r: any) => {
-      const emoji = typeEmoji[r.type] || '📎';
-      const date = new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-      elements.push({
-        tag: 'div', fields: [{ is_short: false, text: { tag: 'lark_md', content: r.url ? `${emoji} **[${r.title}](${r.url})**` : `${emoji} **${r.title}**` } }],
-      });
-      elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: `${typeLabels[r.type] || r.type} · ${date}` }] });
-      elements.push({ tag: 'hr' });
-    });
+  if (typeFilter && typeFilter !== 'all') {
+    query = query.eq('type', typeFilter);
   }
 
-  return {
-    config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: `📋 资源列表` }, template: 'orange' },
-    elements,
+  const { data, error } = await query;
+
+  const typeLabels: Record<string, string> = {
+    all: '全部',
+    link: '链接',
+    github: 'GitHub',
+    document: '文档',
+    image: '图片',
   };
+
+  const typeEmoji: Record<string, string> = {
+    link: '🔗',
+    github: '📦',
+    document: '📄',
+    image: '🖼️',
+  };
+
+  // 如果没有数据，发送空结果卡片
+  if (error || !data || data.length === 0) {
+    const emptyCard = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: `📋 资源列表${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}` },
+        template: 'orange',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: { tag: 'plain_text', content: `📭 最近 ${actualDays} 天没有${typeFilter && typeFilter !== 'all' ? typeLabels[typeFilter] : ''}资源` },
+        },
+      ],
+    };
+    await sendCardMessage(openId, emptyCard);
+    return;
+  }
+
+  // 分批发送，每批最多 15 条
+  const BATCH_SIZE = 15;
+  const totalCount = data.length;
+  const totalPages = Math.ceil(totalCount / BATCH_SIZE);
+
+  for (let page = 0; page < totalPages; page++) {
+    const start = page * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, totalCount);
+    const batch = data.slice(start, end);
+    
+    const elements: any[] = [];
+
+    // 第一张卡片显示统计
+    if (page === 0) {
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: `**共 ${totalCount} 条资源** · 最近 ${actualDays} 天` },
+      });
+      elements.push({ tag: 'hr' });
+    }
+
+    // 资源列表
+    batch.forEach((r: any, i: number) => {
+      const emoji = typeEmoji[r.type] || '📎';
+      const date = new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+      
+      // 图片类型：显示可点击的预览链接
+      if (r.type === 'image' && r.storage_path) {
+        const imageUrl = getFilePublicUrl(r.storage_path);
+        
+        elements.push({
+          tag: 'div',
+          fields: [
+            {
+              is_short: false,
+              text: {
+                tag: 'lark_md',
+                content: `${emoji} **[${r.title}](${imageUrl})**`,
+              },
+            },
+          ],
+        });
+        elements.push({
+          tag: 'note',
+          elements: [
+            { tag: 'plain_text', content: `${typeLabels[r.type] || r.type} · ${date} · 点击查看大图` },
+          ],
+        });
+      }
+      // 文档类型：显示下载链接
+      else if (r.type === 'document' && r.storage_path) {
+        const fileUrl = getFilePublicUrl(r.storage_path);
+        
+        elements.push({
+          tag: 'div',
+          fields: [
+            {
+              is_short: false,
+              text: {
+                tag: 'lark_md',
+                content: `${emoji} **[${r.title}](${fileUrl})**`,
+              },
+            },
+          ],
+        });
+        elements.push({
+          tag: 'note',
+          elements: [
+            { tag: 'plain_text', content: `${typeLabels[r.type] || r.type} · ${date} · 点击下载/预览` },
+          ],
+        });
+      }
+      // 链接/GitHub 类型：显示可点击链接
+      else {
+        elements.push({
+          tag: 'div',
+          fields: [
+            {
+              is_short: false,
+              text: {
+                tag: 'lark_md',
+                content: r.url 
+                  ? `${emoji} **[${r.title}](${r.url})**`
+                  : `${emoji} **${r.title}**`,
+              },
+            },
+          ],
+        });
+        elements.push({
+          tag: 'note',
+          elements: [
+            { tag: 'plain_text', content: `${typeLabels[r.type] || r.type} · ${date}` },
+          ],
+        });
+      }
+      
+      if (i < batch.length - 1) {
+        elements.push({ tag: 'hr' });
+      }
+    });
+
+    // 构建卡片
+    const card = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { 
+          tag: 'plain_text', 
+          content: totalPages > 1 
+            ? `📋 资源列表 (${page + 1}/${totalPages})${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}`
+            : `📋 资源列表${typeFilter && typeFilter !== 'all' ? ` · ${typeLabels[typeFilter]}` : ''}`
+        },
+        template: 'orange',
+      },
+      elements,
+    };
+
+    await sendCardMessage(openId, card);
+    
+    // 避免发送过快被限流
+    if (page < totalPages - 1) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
 }
 
 async function handleSearchCommand(userId: string, keyword: string): Promise<object | string> {
@@ -771,7 +922,7 @@ async function handleSearchCommand(userId: string, keyword: string): Promise<obj
 
   const { data } = await supabase.from('resources').select('title, type, url, created_at')
     .eq('user_id', userId).is('deleted_at', null).ilike('title', `%${keyword}%`)
-    .order('created_at', { ascending: false }).limit(10);
+    .order('created_at', { ascending: false }).limit(50);
 
   const typeEmoji: Record<string, string> = { link: '🔗', github: '📦', document: '📄', image: '🖼️' };
   const elements: any[] = [];
@@ -900,7 +1051,7 @@ async function handleMessage(event: any): Promise<void> {
             if (typeMap[arg.toLowerCase()]) typeFilter = typeMap[arg.toLowerCase()];
             else if (!isNaN(parseInt(arg))) days = parseInt(arg);
           }
-          await sendCardMessage(openId, await handleListCommand(userId, typeFilter, days));
+          await handleListCommand(userId, openId, typeFilter, days);
           return;
         }
         case 'search': {

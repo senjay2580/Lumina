@@ -35,7 +35,10 @@ import {
   List,
   ChevronLeft,
   Package,
-  FileImage
+  FileImage,
+  TrendingUp,
+  BookOpen,
+  Zap
 } from 'lucide-react';
 // @ts-ignore - Github is deprecated but still works
 import { Github } from 'lucide-react';
@@ -43,6 +46,7 @@ import { FileTypeIcon } from '../shared/FileTypeIcon';
 import { TavilySearch, type TavilySearchResult } from '../shared/TavilySearch';
 import { Modal, ConfirmModal } from '../shared/Modal';
 import { Tooltip } from '../shared/Tooltip';
+import { Button } from '../shared/Button';
 import { FolderView } from '../shared/FolderView';
 import { FolderCard } from '../shared/FolderCard';
 import { DragFolderPreview } from '../shared/DragFolderPreview';
@@ -58,7 +62,8 @@ import {
   deleteFolder,
   archiveFolder,
   unarchiveFolder,
-  getArchivedFolders
+  getArchivedFolders,
+  autoClassifyArticlesBySource
 } from '../lib/resource-folders';
 import { useResourceDrag } from '../lib/useResourceDrag';
 import {
@@ -77,6 +82,9 @@ import {
   downloadFile,
   canOpenInViewer
 } from '../lib/resources';
+import { fetchRecommendedResources, fetchDetailsForResources, fetchFeaturedProjects, groupByYear, formatStars, type RecommendedResource, type FeaturedCategory } from '../lib/recommended-resources';
+import { getDefaultProvider, type AIProvider } from '../lib/ai-providers';
+import { streamAIResponse } from '../lib/ai-prompt-assistant';
 
 import { ResourceViewerHook } from '../lib/useResourceViewer';
 
@@ -131,6 +139,7 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
   const [activeType, setActiveType] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showAISearch, setShowAISearch] = useState(false);
+  const [showRecommended, setShowRecommended] = useState(false);
   const [allResources, setAllResources] = useState<Resource[]>([]); // 所有资源（用于客户端过滤）
   const [resources, setResources] = useState<Resource[]>([]);
   const [allFolders, setAllFolders] = useState<ResourceFolder[]>([]); // 所有文件夹
@@ -165,7 +174,8 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 20;
+  const [isClassifying, setIsClassifying] = useState(false); // 一键分类文章状态
+  const pageSize = 10;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Toast 提示
@@ -546,19 +556,32 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
               <p className="text-gray-500 text-sm">管理你的资源库</p>
             </div>
           </div>
-          <Tooltip content="AI 搜索 (Tavily)">
-            <button
-              onClick={() => setShowAISearch(!showAISearch)}
-              className={`px-4 py-2.5 rounded-xl border transition-all flex items-center gap-2 text-sm font-medium ${
-                showAISearch 
-                  ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white border-transparent' 
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" />
-              AI 搜索
-            </button>
-          </Tooltip>
+          <div className="flex items-center gap-2">
+            <Tooltip content="推荐资源 (GitHubDaily)">
+              <div>
+                <Button
+                  variant="dark"
+                  size="md"
+                  onClick={() => setShowRecommended(true)}
+                  icon={<TrendingUp className="w-4 h-4" />}
+                >
+                  推荐
+                </Button>
+              </div>
+            </Tooltip>
+            <Tooltip content="AI 搜索 (Tavily)">
+              <div>
+                <Button
+                  variant="gradient"
+                  size="md"
+                  onClick={() => setShowAISearch(!showAISearch)}
+                  icon={<Sparkles className="w-4 h-4" />}
+                >
+                  AI 搜索
+                </Button>
+              </div>
+            </Tooltip>
+          </div>
         </div>
 
         {/* 统一添加资源入口 */}
@@ -596,22 +619,25 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
                 accept="image/*,.pdf,.doc,.docx,.txt,.md,.json"
                 onChange={e => handleFileUpload(e.target.files)}
               />
-              <button
+              <Button
+                variant="ghost"
+                size="md"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isAdding}
-                className="px-4 py-3.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-all flex items-center gap-2 text-gray-600 text-sm font-medium disabled:opacity-50"
+                icon={<Upload className="w-4 h-4" />}
               >
-                <Upload className="w-4 h-4" />
                 上传文件
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
                 onClick={handleAddLink}
                 data-add-link-btn
                 disabled={!addInputValue.trim() || isAdding}
-                className="px-6 py-3.5 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                loading={isAdding}
               >
-                {isAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : '添加'}
-              </button>
+                添加
+              </Button>
             </div>
             <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
               <button
@@ -708,19 +734,52 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
               className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
             />
           </div>
+          {/* 一键分类文章按钮 - 仅在文章类型下显示 */}
+          {activeType === 'article' && stats.article > 1 && (
+            <Tooltip content="按公众号/订阅源自动分类文章到文件夹">
+              <div>
+                <Button
+                  variant="gradientGreen"
+                  size="md"
+                  onClick={async () => {
+                    if (!userId || isClassifying) return;
+                    setIsClassifying(true);
+                    try {
+                      const result = await autoClassifyArticlesBySource(userId);
+                      if (result.moved > 0) {
+                        showToast(`已创建 ${result.created} 个文件夹，归类 ${result.moved} 篇文章`);
+                        await loadData();
+                      } else if (result.skipped > 0) {
+                        showToast('所有文章已分类或来源文章数不足');
+                      } else {
+                        showToast('没有需要分类的文章');
+                      }
+                    } catch (err) {
+                      console.error('分类失败:', err);
+                      showToast('分类失败，请重试');
+                    } finally {
+                      setIsClassifying(false);
+                    }
+                  }}
+                  disabled={isClassifying}
+                  loading={isClassifying}
+                  icon={<Folder className="w-4 h-4" />}
+                >
+                  一键分类
+                </Button>
+              </div>
+            </Tooltip>
+          )}
           <Tooltip content={showArchived ? '返回资源列表' : `查看归档 (${archivedCount})`}>
             <div className="relative">
-              <button
+              <Button
+                variant={showArchived ? 'primary' : 'ghost'}
+                size="md"
                 onClick={() => setShowArchived(!showArchived)}
-                className={`px-4 py-3 rounded-xl border transition-all flex items-center gap-2 text-sm font-medium ${
-                  showArchived 
-                    ? 'bg-primary text-white border-primary' 
-                    : 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100 hover:border-orange-300'
-                }`}
+                icon={<Archive className="w-4 h-4" />}
               >
-                <Archive className="w-4 h-4" />
                 {showArchived ? '已归档' : '归档'}
-              </button>
+              </Button>
               {!showArchived && archivedCount > 0 && (
                 <span className="absolute -top-2 -right-2 min-w-[20px] h-[20px] px-1.5 flex items-center justify-center bg-red-500 text-white text-[11px] font-bold rounded-full shadow-sm">
                   {archivedCount > 99 ? '99+' : archivedCount}
@@ -729,17 +788,16 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
             </div>
           </Tooltip>
           <Tooltip content={isSelectionMode ? '退出多选' : '批量选择'}>
-            <button
-              onClick={() => setIsSelectionMode(!isSelectionMode)}
-              className={`px-4 py-3 rounded-xl border transition-all flex items-center gap-2 text-sm font-medium ${
-                isSelectionMode 
-                  ? 'bg-red-500 text-white border-red-500' 
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-              }`}
-            >
-              <Check className="w-4 h-4" />
-              {isSelectionMode ? '取消' : '多选'}
-            </button>
+            <div>
+              <Button
+                variant={isSelectionMode ? 'danger' : 'ghost'}
+                size="md"
+                onClick={() => setIsSelectionMode(!isSelectionMode)}
+                icon={<Check className="w-4 h-4" />}
+              >
+                {isSelectionMode ? '取消' : '多选'}
+              </Button>
+            </div>
           </Tooltip>
           {/* 视图切换 */}
           <div className="flex items-center bg-gray-100 rounded-xl p-1">
@@ -1087,6 +1145,19 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
             })()
           ) : (
             /* 网格视图 */
+            (() => {
+              // 合并文件夹和资源，计算分页
+              const allGridItems: Array<{ type: 'folder' | 'resource'; data: ResourceFolder | Resource }> = [
+                ...(!currentFolderId ? filteredFolders.map(f => ({ type: 'folder' as const, data: f })) : []),
+                ...filteredResources.map(r => ({ type: 'resource' as const, data: r }))
+              ];
+              const totalGridItems = allGridItems.length;
+              const totalGridPages = Math.ceil(totalGridItems / pageSize);
+              const gridStartIndex = (currentPage - 1) * pageSize;
+              const gridEndIndex = gridStartIndex + pageSize;
+              const pageGridItems = allGridItems.slice(gridStartIndex, gridEndIndex);
+
+              return (
             <div className="relative">
               {/* 过渡加载指示器 */}
               <AnimatePresence>
@@ -1110,74 +1181,130 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
                 animate={{ opacity: isTransitioning ? 0.3 : 1 }}
                 transition={{ duration: 0.15 }}
               >
-              {/* 文件夹列表 */}
-              {!currentFolderId && filteredFolders.map((folder) => (
+              {/* 分页后的项目 */}
+              {pageGridItems.map((item) => item.type === 'folder' ? (
                 <FolderCard
-                  key={folder.id}
-                  folder={folder}
-                  onClick={() => setOpenFolder(folder)}
+                  key={`folder-${item.data.id}`}
+                  folder={item.data as ResourceFolder}
+                  onClick={() => setOpenFolder(item.data as ResourceFolder)}
                   onUpdate={loadData}
-                  onDelete={() => handleDeleteFolder(folder.id)}
-                  isDragOver={dragState.dropTarget.type === 'folder' && dragState.dropTarget.id === folder.id}
-                  canDrop={dragState.dropTarget.type === 'folder' && dragState.dropTarget.id === folder.id ? dragState.canDrop : true}
+                  onDelete={() => handleDeleteFolder(item.data.id)}
+                  isDragOver={dragState.dropTarget.type === 'folder' && dragState.dropTarget.id === item.data.id}
+                  canDrop={dragState.dropTarget.type === 'folder' && dragState.dropTarget.id === item.data.id ? dragState.canDrop : true}
                   isSelectionMode={isSelectionMode}
-                  isSelected={selectedIds.has(folder.id)}
+                  isSelected={selectedIds.has(item.data.id)}
                   onToggleSelect={toggleSelect}
                   draggable={!isSelectionMode}
-                  onDragStart={(e) => handleFolderDragStart(folder, e)}
+                  onDragStart={(e) => handleFolderDragStart(item.data as ResourceFolder, e)}
                   onDrag={handleDrag}
                   onDragEnd={handleDragEnd}
-                  isDragging={dragState.draggedFolder?.id === folder.id}
+                  isDragging={dragState.draggedFolder?.id === item.data.id}
                   onDragOver={(e) => {
                     e.preventDefault();
-                    if (dragState.draggedResource || (dragState.draggedFolder && dragState.draggedFolder.id !== folder.id)) {
-                      handleDragEnterFolder(folder);
+                    if (dragState.draggedResource || (dragState.draggedFolder && dragState.draggedFolder.id !== item.data.id)) {
+                      handleDragEnterFolder(item.data as ResourceFolder);
                     }
                   }}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                 />
-              ))}
-              
-              {/* 资源列表 */}
-              {filteredResources.map((resource) => (
+              ) : (
                 <div
-                  key={resource.id}
+                  key={`resource-${item.data.id}`}
                   draggable={!isSelectionMode}
-                  onDragStart={(e) => handleDragStart(resource, e)}
+                  onDragStart={(e) => handleDragStart(item.data as Resource, e)}
                   onDrag={handleDrag}
                   onDragEnd={handleDragEnd}
                   onDragOver={(e) => {
                     e.preventDefault();
-                    if (dragState.draggedResource && dragState.draggedResource.id !== resource.id) {
-                      handleDragEnterResource(resource);
+                    if (dragState.draggedResource && dragState.draggedResource.id !== item.data.id) {
+                      handleDragEnterResource(item.data as Resource);
                     }
                   }}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   className={`relative ${
-                    dragState.dropTarget.type === 'resource' && dragState.dropTarget.id === resource.id
+                    dragState.dropTarget.type === 'resource' && dragState.dropTarget.id === item.data.id
                       ? 'ring-2 ring-indigo-400 ring-offset-2 rounded-2xl'
                       : ''
-                  } ${dragState.draggedResource?.id === resource.id ? 'opacity-30' : ''}`}
+                  } ${dragState.draggedResource?.id === item.data.id ? 'opacity-30' : ''}`}
                 >
                   <ResourceCard 
-                    resource={resource} 
+                    resource={item.data as Resource} 
                     onDelete={handleDelete}
                     onUpdate={loadData}
                     onOpenInViewer={resourceViewer?.openResource}
                     onShowToast={showToast}
                     onConfirmDownload={handleConfirmDownload}
                     isSelectionMode={isSelectionMode}
-                    isSelected={selectedIds.has(resource.id)}
+                    isSelected={selectedIds.has(item.data.id)}
                     onToggleSelect={toggleSelect}
                   />
                 </div>
               ))}
             </motion.div>
+            
+            {/* 网格视图分页 */}
+            {totalGridPages > 1 && (
+              <div className="flex items-center justify-between mt-4 px-4 py-3 bg-white rounded-xl border border-gray-200">
+                <div className="text-sm text-gray-500">
+                  共 {totalGridItems} 项，第 {currentPage}/{totalGridPages} 页
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  {Array.from({ length: Math.min(5, totalGridPages) }, (_, i) => {
+                    let pageNum: number;
+                    if (totalGridPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalGridPages - 2) {
+                      pageNum = totalGridPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
+                          currentPage === pageNum
+                            ? 'bg-primary text-white'
+                            : 'hover:bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalGridPages, p + 1))}
+                    disabled={currentPage === totalGridPages}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {totalGridItems === 0 && (
+              <div className="text-center py-12 text-gray-400 text-sm">暂无内容</div>
+            )}
             </div>
+              );
+            })()
           )}
         </div>
+
+        {/* 推荐资源区域 - 始终显示在资源列表下方 */}
+        {/* 已移到头部按钮，点击弹出全屏页面 */}
 
         {/* 拖拽创建文件夹预览 */}
         <DragFolderPreview
@@ -1231,6 +1358,27 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
           )}
         </AnimatePresence>
       </div>
+
+      {/* 推荐资源弹窗 */}
+      <AnimatePresence>
+        {showRecommended && (
+          <RecommendedResourcesModal
+            isOpen={showRecommended}
+            onClose={() => setShowRecommended(false)}
+            userId={userId}
+            onAddResource={async (url: string) => {
+              if (!userId) return;
+              try {
+                await createLinkResource(userId, url);
+                await loadData();
+                showToast('已添加到资源库');
+              } catch (err) {
+                console.error('Failed to add resource:', err);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* 下载确认弹窗 - Portal 到 body */}
       {downloadConfirm && createPortal(
@@ -1592,62 +1740,60 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
     }
   };
 
-  // 编辑弹窗
-  const EditModal = () => (
-    createPortal(
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setIsEditing(false)}>
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.95 }}
-          onClick={e => e.stopPropagation()}
-          className="bg-white rounded-2xl w-full max-w-md overflow-hidden"
-        >
-          <div className="flex items-center justify-between p-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-900">编辑资源</h3>
-            <button onClick={() => setIsEditing(false)} className="p-1 rounded-lg hover:bg-gray-100">
-              <X className="w-5 h-5 text-gray-400" />
-            </button>
+  // 编辑弹窗 - 直接内联渲染，避免函数组件导致的重新挂载问题
+  const editModal = isEditing && createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setIsEditing(false)}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        onClick={e => e.stopPropagation()}
+        className="bg-white rounded-2xl w-full max-w-md overflow-hidden"
+      >
+        <div className="flex items-center justify-between p-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-900">编辑资源</h3>
+          <button onClick={() => setIsEditing(false)} className="p-1 rounded-lg hover:bg-gray-100">
+            <X className="w-5 h-5 text-gray-400" />
+          </button>
+        </div>
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">标题</label>
+            <input
+              type="text"
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none"
+            />
           </div>
-          <div className="p-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">标题</label>
-              <input
-                type="text"
-                value={editTitle}
-                onChange={e => setEditTitle(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">描述（可选）</label>
-              <textarea
-                value={editDescription}
-                onChange={e => setEditDescription(e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">描述（可选）</label>
+            <textarea
+              value={editDescription}
+              onChange={e => setEditDescription(e.target.value)}
+              rows={3}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+            />
           </div>
-          <div className="flex justify-end gap-2 p-4 border-t border-gray-100 bg-gray-50">
-            <button
-              onClick={() => setIsEditing(false)}
-              className="px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-200 transition-all"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!editTitle.trim() || isSaving}
-              className="px-4 py-2 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50 flex items-center gap-2"
-            >
-              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : '保存'}
-            </button>
-          </div>
-        </motion.div>
-      </div>,
-      document.body
-    )
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-gray-100 bg-gray-50">
+          <button
+            onClick={() => setIsEditing(false)}
+            className="px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-200 transition-all"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!editTitle.trim() || isSaving}
+            className="px-4 py-2 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50 flex items-center gap-2"
+          >
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : '保存'}
+          </button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
   );
 
   // 处理卡片点击
@@ -1691,7 +1837,7 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
       transition={{ duration: 0.15 }}
       className={`break-inside-avoid mb-4 ${isSelectionMode ? 'cursor-pointer' : ''} ${isSelected ? 'ring-2 ring-primary ring-offset-2 rounded-2xl' : ''}`}
     >
-      {isEditing && <EditModal />}
+      {editModal}
       
       {/* GitHub 项目卡片 */}
       {resource.type === 'github' ? (
@@ -1790,11 +1936,6 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
             >
               <SelectionCheckbox />
               <div className="flex items-start gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  isTodayArticle ? 'bg-orange-500' : 'bg-orange-50'
-                }`}>
-                  <Newspaper className={`w-5 h-5 ${isTodayArticle ? 'text-white' : 'text-orange-500'}`} />
-                </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1819,10 +1960,10 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
                   )}
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-2 text-[10px] text-gray-400">
                     {resource.metadata?.subscription_title && (
-                      <span className="px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded whitespace-nowrap">{resource.metadata.subscription_title}</span>
+                      <span className="px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded truncate max-w-[120px]">{resource.metadata.subscription_title}</span>
                     )}
                     {resource.metadata?.author && resource.metadata.author !== resource.metadata?.subscription_title && (
-                      <span className="text-orange-600 font-medium whitespace-nowrap">{resource.metadata.author}</span>
+                      <span className="text-orange-600 font-medium truncate max-w-[80px]">{resource.metadata.author}</span>
                     )}
                     <span className={`flex items-center gap-1 whitespace-nowrap ${isTodayArticle ? 'text-orange-600 font-medium' : ''}`}>
                       <Clock className="w-3 h-3" />
@@ -1922,8 +2063,8 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
         <>
           <div 
             className="fixed inset-0 z-[9998]" 
-            onClick={() => setContextMenu(null)}
-            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+            onClick={(e) => { e.stopPropagation(); setContextMenu(null); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
           />
           <ContextMenuContent
             position={contextMenu}
@@ -2232,7 +2373,7 @@ function ResourceListRow({
           <>
             <div 
               className="fixed inset-0 z-[9998]" 
-              onClick={() => setShowMenu(false)}
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -2290,8 +2431,8 @@ function ResourceListRow({
           <>
             <div 
               className="fixed inset-0 z-[9998]" 
-              onClick={() => setContextMenu(null)}
-              onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+              onClick={(e) => { e.stopPropagation(); setContextMenu(null); }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -2396,6 +2537,27 @@ function ResourceListRow({
     const Icon = config.icon;
     const id = resource.id;
     const previewInfo = canOpenInViewer(resource);
+    const [isEditingResource, setIsEditingResource] = useState(false);
+    const [editTitle, setEditTitle] = useState(resource.title);
+    const [editDescription, setEditDescription] = useState(resource.description || '');
+    const [isSavingResource, setIsSavingResource] = useState(false);
+
+    const handleSaveResource = async () => {
+      if (!editTitle.trim()) return;
+      setIsSavingResource(true);
+      try {
+        await updateResource(resource.id, {
+          title: editTitle.trim(),
+          description: editDescription.trim() || undefined,
+        });
+        setIsEditingResource(false);
+        onUpdate?.();
+      } catch (err) {
+        console.error('Failed to update resource:', err);
+      } finally {
+        setIsSavingResource(false);
+      }
+    };
 
     const handleOpen = async () => {
       if (previewInfo.canPreview && resource.storage_path && onOpenInViewer) {
@@ -2461,7 +2623,65 @@ function ResourceListRow({
       }
     }, [showMenu]);
 
+    // 编辑弹窗 - 直接内联渲染，避免函数组件导致的重新挂载问题
+    const editModal = isEditingResource && createPortal(
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setIsEditingResource(false)}>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          onClick={e => e.stopPropagation()}
+          className="bg-white rounded-2xl w-full max-w-md overflow-hidden"
+        >
+          <div className="flex items-center justify-between p-4 border-b border-gray-100">
+            <h3 className="font-semibold text-gray-900">编辑资源</h3>
+            <button onClick={() => setIsEditingResource(false)} className="p-1 rounded-lg hover:bg-gray-100">
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+          <div className="p-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">标题</label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={e => setEditTitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">描述（可选）</label>
+              <textarea
+                value={editDescription}
+                onChange={e => setEditDescription(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none resize-none"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 p-4 border-t border-gray-100 bg-gray-50">
+            <button
+              onClick={() => setIsEditingResource(false)}
+              className="px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-200 transition-all"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleSaveResource}
+              disabled={!editTitle.trim() || isSavingResource}
+              className="px-4 py-2 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSavingResource ? <Loader2 className="w-4 h-4 animate-spin" /> : '保存'}
+            </button>
+          </div>
+        </motion.div>
+      </div>,
+      document.body
+    );
+
     return (
+      <>
+      {editModal}
       <div 
         className={`grid grid-cols-[auto_1fr_120px_100px_80px] gap-4 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors items-center ${
           isSelected ? 'bg-primary/5' : ''
@@ -2539,14 +2759,21 @@ function ResourceListRow({
               onClick={(e) => e.stopPropagation()}
             >
               <button 
-                onClick={() => { setShowMenu(false); handleOpen(); }}
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleOpen(); }}
                 className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"
               >
                 <ExternalLink className="w-3.5 h-3.5" /> 打开
               </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); setIsEditingResource(true); }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Edit3 className="w-3.5 h-3.5" /> 编辑
+              </button>
               {resource.storage_path && (
                 <button 
-                  onClick={async () => { 
+                  onClick={async (e) => { 
+                    e.stopPropagation();
                     setShowMenu(false); 
                     if (resource.storage_path && resource.file_name) {
                       await downloadFile(resource.storage_path, resource.file_name);
@@ -2558,7 +2785,7 @@ function ResourceListRow({
                 </button>
               )}
               <button 
-                onClick={() => { setShowMenu(false); handleArchive(); }}
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleArchive(); }}
                 className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"
               >
                 {resource.archived_at ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
@@ -2566,7 +2793,7 @@ function ResourceListRow({
               </button>
               <div className="border-t border-gray-100 my-1" />
               <button 
-                onClick={() => { setShowMenu(false); handleDelete(); }}
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleDelete(); }}
                 className="w-full px-3 py-2 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
               >
                 <Trash2 className="w-3.5 h-3.5" /> 删除
@@ -2581,24 +2808,32 @@ function ResourceListRow({
           <>
             <div 
               className="fixed inset-0 z-[9998]" 
-              onClick={() => setContextMenu(null)}
-              onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+              onClick={(e) => { e.stopPropagation(); setContextMenu(null); }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
               className="bg-white rounded-xl shadow-lg border border-gray-100 py-1.5 z-[9999] min-w-[140px]"
+              onClick={(e) => e.stopPropagation()}
             >
               <button 
-                onClick={() => { setContextMenu(null); handleOpen(); }}
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); handleOpen(); }}
                 className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"
               >
                 <ExternalLink className="w-3.5 h-3.5" /> 打开
               </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); setIsEditingResource(true); }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Edit3 className="w-3.5 h-3.5" /> 编辑
+              </button>
               {resource.storage_path && (
                 <button 
-                  onClick={async () => { 
+                  onClick={async (e) => { 
+                    e.stopPropagation();
                     setContextMenu(null); 
                     if (resource.storage_path && resource.file_name) {
                       await downloadFile(resource.storage_path, resource.file_name);
@@ -2610,7 +2845,7 @@ function ResourceListRow({
                 </button>
               )}
               <button 
-                onClick={() => { setContextMenu(null); handleArchive(); }}
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); handleArchive(); }}
                 className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"
               >
                 {resource.archived_at ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
@@ -2618,7 +2853,7 @@ function ResourceListRow({
               </button>
               <div className="border-t border-gray-100 my-1" />
               <button 
-                onClick={() => { setContextMenu(null); handleDelete(); }}
+                onClick={(e) => { e.stopPropagation(); setContextMenu(null); handleDelete(); }}
                 className="w-full px-3 py-2 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
               >
                 <Trash2 className="w-3.5 h-3.5" /> 删除
@@ -2628,8 +2863,1330 @@ function ResourceListRow({
           document.body
         )}
       </div>
+      </>
     );
   }
 
   return null;
+}
+
+// 推荐资源全屏弹窗组件 - 实时从 GitHubDaily 获取数据
+function RecommendedResourcesModal({ 
+  isOpen,
+  onClose,
+  userId, 
+  onAddResource 
+}: { 
+  isOpen: boolean;
+  onClose: () => void;
+  userId?: string;
+  onAddResource: (url: string) => Promise<void>;
+}) {
+  const [resources, setResources] = useState<RecommendedResource[]>([]);
+  const [featuredProjects, setFeaturedProjects] = useState<RecommendedResource[]>([]);
+  const [featuredCategories, setFeaturedCategories] = useState<FeaturedCategory[]>([]);
+  const [selectedFeaturedCategory, setSelectedFeaturedCategory] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [addingUrl, setAddingUrl] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFeatured, setShowFeatured] = useState(false); // 显示精选复盘
+  
+  // 分页状态
+  const PAGE_SIZE = 20;
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const [featuredDisplayCount, setFeaturedDisplayCount] = useState(PAGE_SIZE); // 精选分页
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [loadingFeaturedDetails, setLoadingFeaturedDetails] = useState(false); // 精选详情加载
+  const detailsAbortRef = useRef<AbortController | null>(null);
+  const featuredDetailsAbortRef = useRef<AbortController | null>(null);
+  
+  // AI 搜索状态
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiSearching, setAiSearching] = useState(false);
+  const [aiResults, setAiResults] = useState<RecommendedResource[]>([]);
+  const [aiResponse, setAiResponse] = useState('');
+  const [showAiMode, setShowAiMode] = useState(false);
+  
+  // AI 对话历史（用于记忆和持久化）
+  const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [recommendedUrls, setRecommendedUrls] = useState<Set<string>>(new Set()); // 已推荐过的项目 URL
+  
+  // localStorage key
+  const AI_CHAT_STORAGE_KEY = 'recommended_ai_chat_history';
+  const AI_RECOMMENDED_URLS_KEY = 'recommended_ai_urls';
+  
+  // 从 localStorage 恢复对话历史
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const savedHistory = localStorage.getItem(AI_CHAT_STORAGE_KEY);
+      const savedUrls = localStorage.getItem(AI_RECOMMENDED_URLS_KEY);
+      if (savedHistory) {
+        const parsed = JSON.parse(savedHistory);
+        setAiChatHistory(parsed);
+        // 恢复最后一次的 AI 回复
+        const lastAssistant = parsed.filter((m: any) => m.role === 'assistant').pop();
+        if (lastAssistant) {
+          setAiResponse(lastAssistant.content);
+        }
+      }
+      if (savedUrls) {
+        setRecommendedUrls(new Set(JSON.parse(savedUrls)));
+      }
+    } catch (e) {
+      console.error('Failed to restore AI chat history:', e);
+    }
+  }, [isOpen]);
+  
+  // 保存对话历史到 localStorage
+  const saveAiHistory = (history: Array<{ role: 'user' | 'assistant'; content: string }>, urls: Set<string>) => {
+    try {
+      localStorage.setItem(AI_CHAT_STORAGE_KEY, JSON.stringify(history));
+      localStorage.setItem(AI_RECOMMENDED_URLS_KEY, JSON.stringify(Array.from(urls)));
+    } catch (e) {
+      console.error('Failed to save AI chat history:', e);
+    }
+  };
+  
+  // 清除 AI 对话历史
+  const clearAiHistory = () => {
+    setAiChatHistory([]);
+    setRecommendedUrls(new Set());
+    setAiResponse('');
+    setAiResults([]);
+    setAiQuery('');
+    localStorage.removeItem(AI_CHAT_STORAGE_KEY);
+    localStorage.removeItem(AI_RECOMMENDED_URLS_KEY);
+  };
+
+  // 加载数据
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    // 并行加载资源和精选项目
+    Promise.all([
+      fetchRecommendedResources(),
+      fetchFeaturedProjects()
+    ]).then(([resourcesData, featuredData]) => {
+      setResources(resourcesData);
+      setFeaturedProjects(featuredData.projects);
+      setFeaturedCategories(featuredData.categories);
+      // 默认选中最新年份
+      const years = Object.keys(groupByYear(resourcesData)).sort().reverse();
+      if (years.length > 0 && !selectedCategory) {
+        setSelectedCategory(years[0]);
+      }
+    })
+      .catch(err => {
+        console.error('Failed to fetch resources:', err);
+        setError('加载失败，请稍后重试');
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [isOpen]);
+  
+  // 渐进式加载详情 - 当显示的资源变化时触发
+  useEffect(() => {
+    if (loading || showAiMode || searchQuery) return;
+    
+    // 取消之前的请求
+    if (detailsAbortRef.current) {
+      detailsAbortRef.current.abort();
+    }
+    
+    // 获取当前年份的资源
+    const resourcesByYear = groupByYear(resources);
+    const currentYearResources = selectedCategory && resourcesByYear[selectedCategory] 
+      ? resourcesByYear[selectedCategory] 
+      : [];
+    
+    // 只获取当前显示的资源的详情
+    const displayedResources = currentYearResources.slice(0, displayCount);
+    const needDetails = displayedResources.filter(r => !r.detailsLoaded);
+    
+    if (needDetails.length === 0) return;
+    
+    const abortController = new AbortController();
+    detailsAbortRef.current = abortController;
+    setLoadingDetails(true);
+    
+    fetchDetailsForResources(
+      displayedResources,
+      (updated) => {
+        // 更新资源列表中对应的项
+        setResources(prev => {
+          const newResources = [...prev];
+          for (const u of updated) {
+            const idx = newResources.findIndex(r => r.url === u.url);
+            if (idx !== -1) {
+              newResources[idx] = u;
+            }
+          }
+          return newResources;
+        });
+      },
+      abortController.signal
+    ).finally(() => {
+      if (!abortController.signal.aborted) {
+        setLoadingDetails(false);
+      }
+    });
+    
+    return () => {
+      abortController.abort();
+    };
+  }, [loading, selectedCategory, displayCount, showAiMode, searchQuery]);
+  
+  // 切换年份时重置分页
+  useEffect(() => {
+    setDisplayCount(PAGE_SIZE);
+  }, [selectedCategory]);
+  
+  // 精选项目渐进式加载详情
+  useEffect(() => {
+    if (loading || !showFeatured) return;
+    
+    // 取消之前的请求
+    if (featuredDetailsAbortRef.current) {
+      featuredDetailsAbortRef.current.abort();
+    }
+    
+    // 根据选中的分类过滤
+    const filteredFeatured = selectedFeaturedCategory
+      ? featuredProjects.filter(p => p.category === selectedFeaturedCategory)
+      : featuredProjects;
+    
+    // 只获取当前显示的资源的详情
+    const displayedFeatured = filteredFeatured.slice(0, featuredDisplayCount);
+    const needDetails = displayedFeatured.filter(r => !r.detailsLoaded);
+    
+    if (needDetails.length === 0) return;
+    
+    const abortController = new AbortController();
+    featuredDetailsAbortRef.current = abortController;
+    setLoadingFeaturedDetails(true);
+    
+    fetchDetailsForResources(
+      displayedFeatured,
+      (updated) => {
+        // 更新精选项目列表中对应的项
+        setFeaturedProjects(prev => {
+          const newProjects = [...prev];
+          for (const u of updated) {
+            const idx = newProjects.findIndex(r => r.url === u.url);
+            if (idx !== -1) {
+              newProjects[idx] = { ...newProjects[idx], ...u };
+            }
+          }
+          return newProjects;
+        });
+      },
+      abortController.signal
+    ).finally(() => {
+      if (!abortController.signal.aborted) {
+        setLoadingFeaturedDetails(false);
+      }
+    });
+    
+    return () => {
+      abortController.abort();
+    };
+  }, [loading, showFeatured, selectedFeaturedCategory, featuredDisplayCount, featuredProjects.length]);
+  
+  // 切换精选分类时重置分页
+  useEffect(() => {
+    setFeaturedDisplayCount(PAGE_SIZE);
+  }, [selectedFeaturedCategory]);
+  
+  // 项目 AI 分析状态
+  const [analyzeTarget, setAnalyzeTarget] = useState<RecommendedResource | null>(null);
+  const [analyzePosition, setAnalyzePosition] = useState<{ x: number; y: number; placement: 'right' | 'left' | 'bottom' } | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeResult, setAnalyzeResult] = useState('');
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  
+  // 打开 AI 分析弹窗 - 智能位置计算
+  const handleOpenAnalyze = (resource: RecommendedResource, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const popupWidth = 340;
+    const popupHeight = 420;
+    const padding = 12;
+    
+    // 计算最佳位置
+    let x: number, y: number;
+    let placement: 'right' | 'left' | 'bottom' = 'right';
+    
+    // 优先右侧
+    if (rect.right + padding + popupWidth < window.innerWidth) {
+      x = rect.right + padding;
+      y = rect.top;
+      placement = 'right';
+    }
+    // 其次左侧
+    else if (rect.left - padding - popupWidth > 0) {
+      x = rect.left - padding - popupWidth;
+      y = rect.top;
+      placement = 'left';
+    }
+    // 最后底部
+    else {
+      x = Math.max(padding, Math.min(rect.left, window.innerWidth - popupWidth - padding));
+      y = rect.bottom + padding;
+      placement = 'bottom';
+    }
+    
+    // 垂直方向调整：如果底部溢出，向上移动
+    if (y + popupHeight > window.innerHeight - padding) {
+      y = Math.max(padding, window.innerHeight - popupHeight - padding);
+    }
+    
+    setAnalyzeTarget(resource);
+    setAnalyzePosition({ x, y, placement });
+    setAnalyzeResult('');
+    setAnalyzing(false);
+  };
+  
+  // 关闭 AI 分析弹窗
+  const handleCloseAnalyze = () => {
+    if (analyzeAbortRef.current) {
+      analyzeAbortRef.current.abort();
+    }
+    setAnalyzeTarget(null);
+    setAnalyzePosition(null);
+    setAnalyzeResult('');
+    setAnalyzing(false);
+  };
+  
+  // 快速 AI 分析
+  const handleQuickAnalyze = async () => {
+    if (!analyzeTarget || !userId) return;
+    
+    // 取消之前的请求
+    if (analyzeAbortRef.current) {
+      analyzeAbortRef.current.abort();
+    }
+    
+    const abortController = new AbortController();
+    analyzeAbortRef.current = abortController;
+    
+    setAnalyzing(true);
+    setAnalyzeResult('');
+    
+    try {
+      const provider = await getDefaultProvider(userId);
+      if (!provider) {
+        setAnalyzeResult('请先在设置中配置 AI 提供商');
+        setAnalyzing(false);
+        return;
+      }
+      
+      const systemPrompt = `你是一个 GitHub 项目分析专家。请用简洁的中文分析这个开源项目，包括：
+1. 项目简介（一句话说明是什么）
+2. 核心功能（3-5 个要点）
+3. 适用场景
+4. 技术栈
+5. 上手难度（简单/中等/困难）
+
+请保持简洁，总字数控制在 300 字以内。`;
+
+      const userPrompt = `请分析这个 GitHub 项目：
+- 名称：${analyzeTarget.title}
+- 地址：${analyzeTarget.url}
+- 描述：${analyzeTarget.description || '无'}
+- 语言：${analyzeTarget.language || '未知'}
+- Stars：${analyzeTarget.stars || '未知'}
+- Topics：${analyzeTarget.topics?.join(', ') || '无'}`;
+
+      let fullResponse = '';
+      
+      for await (const chunk of streamAIResponse(provider, systemPrompt, userPrompt)) {
+        if (abortController.signal.aborted) break;
+        fullResponse += chunk;
+        setAnalyzeResult(fullResponse);
+      }
+    } catch (err) {
+      if (!abortController.signal.aborted) {
+        console.error('AI analyze failed:', err);
+        setAnalyzeResult('分析失败，请稍后重试');
+      }
+    } finally {
+      if (!abortController.signal.aborted) {
+        setAnalyzing(false);
+      }
+    }
+  };
+  
+  // 打开 DeepWiki
+  const handleOpenDeepWiki = () => {
+    if (!analyzeTarget) return;
+    const deepWikiUrl = `https://deepwiki.com/${analyzeTarget.owner}/${analyzeTarget.repo}`;
+    window.open(deepWikiUrl, '_blank');
+  };
+
+  // AI 搜索功能 - 流式友好输出，带记忆
+  const handleAiSearch = async () => {
+    if (!aiQuery.trim() || !userId) return;
+    
+    setAiSearching(true);
+    setAiResponse('');
+    setShowAiMode(true);
+    
+    // 保存用户问题到历史
+    const userMessage = { role: 'user' as const, content: aiQuery };
+    const newHistory = [...aiChatHistory, userMessage];
+    
+    try {
+      // 获取默认 AI 提供商
+      const provider = await getDefaultProvider(userId);
+      if (!provider) {
+        setAiResponse('请先在设置中配置 AI 提供商');
+        setAiSearching(false);
+        return;
+      }
+      
+      // 基于当前选择的年份分类搜索
+      const currentResources = selectedCategory 
+        ? resources.filter(r => r.year === selectedCategory)
+        : resources;
+      
+      // 过滤掉已推荐过的项目（用于追问场景）
+      const availableResources = currentResources.filter(r => !recommendedUrls.has(r.url));
+      
+      // 如果没有可用资源了，提示用户
+      if (availableResources.length === 0 && recommendedUrls.size > 0) {
+        const response = `当前${selectedCategory ? ` ${selectedCategory} 年` : ''}分类下的项目已全部推荐完毕！\n\n你可以：\n1. 切换到其他年份查看更多项目\n2. 点击"清除对话"重新开始\n3. 使用搜索功能查找特定项目`;
+        setAiResponse(response);
+        const assistantMessage = { role: 'assistant' as const, content: response };
+        const finalHistory = [...newHistory, assistantMessage];
+        setAiChatHistory(finalHistory);
+        saveAiHistory(finalHistory, recommendedUrls);
+        setAiSearching(false);
+        return;
+      }
+      
+      // 构建资源列表（增加到 200 个以提供更多选择）
+      const resourceList = availableResources.slice(0, 200).map(r => 
+        `- ${r.title}: ${r.description || '无描述'} (${r.url})`
+      ).join('\n');
+      
+      // 构建对话历史上下文
+      const historyContext = aiChatHistory.length > 0 
+        ? `\n\n之前的对话：\n${aiChatHistory.slice(-6).map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content.slice(0, 200)}${m.content.length > 200 ? '...' : ''}`).join('\n')}`
+        : '';
+      
+      // 已推荐项目提示
+      const excludeHint = recommendedUrls.size > 0 
+        ? `\n\n重要：以下项目已经推荐过，请不要重复推荐：\n${Array.from(recommendedUrls).slice(-20).join('\n')}`
+        : '';
+      
+      const systemPrompt = `你是一个专业的 GitHub 开源项目推荐助手。你的任务是根据用户的具体需求，从提供的项目列表中精准匹配最相关的项目。
+
+## 搜索范围
+- 当前年份：${selectedCategory || '全部年份'}
+- 可用项目：${availableResources.length} 个
+
+## 推荐原则
+1. **精准匹配**：仔细分析用户需求的关键词和意图，只推荐真正相关的项目
+2. **多样性**：不要只推荐某一类项目（如 AI 类），要根据用户需求覆盖不同类型
+3. **相关性优先**：按相关程度排序，最相关的放前面
+4. **诚实推荐**：如果列表中没有完全匹配的项目，推荐最接近的，并说明差异
+
+## 用户需求分析
+- 如果用户问"前端"相关，优先推荐 React/Vue/CSS/UI 组件等项目
+- 如果用户问"后端"相关，优先推荐 Node/Python/Go/数据库等项目
+- 如果用户问"工具"相关，优先推荐效率工具、CLI 工具、开发工具等
+- 如果用户问"学习"相关，优先推荐教程、文档、示例项目等
+- 如果用户问"AI"相关，才推荐 AI/ML/LLM 相关项目
+
+## 回复格式
+根据你的需求"${aiQuery}"，我为你找到了以下项目：
+
+1. **项目名称**
+   - 链接：https://github.com/owner/repo
+   - 推荐理由：（说明为什么这个项目符合用户需求）
+
+## 注意事项
+- 只推荐列表中存在的项目，绝对不要编造
+- 推荐 6-10 个最相关的项目
+- 如果用户说"还有吗"、"更多"、"继续"，推荐新项目不要重复
+- 没有相关项目时，诚实告知并建议修改关键词或切换年份
+- 链接格式必须是 https://github.com/owner/repo${historyContext}${excludeHint}`;
+
+      const userPrompt = `用户问题：${aiQuery}
+
+可选项目列表（${selectedCategory ? `${selectedCategory}年` : '全部'}）：
+${resourceList}
+
+请根据用户问题，从上述列表中推荐最相关的项目。`;
+
+      let fullResponse = '';
+      const foundUrls = new Set<string>();
+      const newRecommendedUrls = new Set(recommendedUrls);
+      
+      for await (const chunk of streamAIResponse(provider, systemPrompt, userPrompt)) {
+        fullResponse += chunk;
+        setAiResponse(fullResponse);
+        
+        // 实时解析已提到的项目 URL，边输出边显示卡片
+        const urlMatches = fullResponse.matchAll(/https:\/\/github\.com\/[^\s\)，。,.\]）]+/g);
+        for (const match of urlMatches) {
+          const url = match[0].replace(/[,，。.、\]）)]+$/, ''); // 去掉末尾标点
+          if (!foundUrls.has(url)) {
+            foundUrls.add(url);
+            newRecommendedUrls.add(url); // 记录已推荐
+            const found = resources.find(r => r.url.toLowerCase() === url.toLowerCase());
+            if (found) {
+              setAiResults(prev => {
+                if (prev.some(p => p.url === found.url)) return prev;
+                return [...prev, found];
+              });
+            }
+          }
+        }
+      }
+      
+      // 保存 AI 回复到历史
+      const assistantMessage = { role: 'assistant' as const, content: fullResponse };
+      const finalHistory = [...newHistory, assistantMessage];
+      setAiChatHistory(finalHistory);
+      setRecommendedUrls(newRecommendedUrls);
+      saveAiHistory(finalHistory, newRecommendedUrls);
+      
+      // 清空输入框
+      setAiQuery('');
+    } catch (err) {
+      console.error('AI search failed:', err);
+      setAiResponse('AI 搜索失败，请稍后重试');
+    } finally {
+      setAiSearching(false);
+    }
+  };
+
+  const handleAdd = async (url: string) => {
+    if (!userId) return;
+    setAddingUrl(url);
+    try {
+      await onAddResource(url);
+    } finally {
+      setAddingUrl(null);
+    }
+  };
+
+  // 按年份分组
+  const resourcesByYear = groupByYear(resources);
+  const years = Object.keys(resourcesByYear).sort().reverse(); // 最新年份优先
+
+  // 过滤资源（带分页）
+  const allFilteredResources = searchQuery
+    ? resources.filter(r => 
+        r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.description?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : selectedCategory && resourcesByYear[selectedCategory] 
+      ? resourcesByYear[selectedCategory] 
+      : [];
+  
+  // 当前显示的资源（分页）
+  const filteredResources = searchQuery 
+    ? allFilteredResources // 搜索时显示全部结果
+    : allFilteredResources.slice(0, displayCount);
+  
+  // 是否还有更多
+  const hasMore = !searchQuery && allFilteredResources.length > displayCount;
+  
+  // 加载更多
+  const handleLoadMore = () => {
+    setDisplayCount(prev => prev + PAGE_SIZE);
+  };
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ duration: 0.2 }}
+        onClick={e => e.stopPropagation()}
+        className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+      >
+        {/* 头部 */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
+              <TrendingUp className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">推荐资源</h2>
+              <p className="text-sm text-gray-500">
+                实时同步自 GitHubDaily · {loading ? '加载中...' : `${resources.length} 个项目`}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                setLoading(true);
+                fetchRecommendedResources(true)
+                  .then(setResources)
+                  .finally(() => setLoading(false));
+              }}
+              disabled={loading}
+              className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            >
+              <Loader2 className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              刷新
+            </button>
+            <a 
+              href="https://github.com/GitHubDaily/GitHubDaily" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 flex items-center gap-1.5 transition-colors"
+            >
+              <Github className="w-4 h-4" />
+              源仓库
+            </a>
+            <button 
+              onClick={onClose}
+              className="p-2 rounded-xl hover:bg-gray-100 transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+        </div>
+
+        {/* 搜索和年份分类 */}
+        <div className="p-4 border-b border-gray-100 bg-gray-50/50">
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* 普通搜索框 */}
+            <div className="relative flex-1 min-w-[200px] max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="搜索项目..."
+                value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); setShowAiMode(false); }}
+                className="w-full pl-9 pr-4 py-2 rounded-xl border border-gray-200 bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none text-sm"
+              />
+            </div>
+            {/* AI 搜索框 */}
+            <div className="relative flex-1 min-w-[250px] max-w-md">
+              <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-purple-500" />
+              <input
+                type="text"
+                placeholder={selectedCategory ? `在 ${selectedCategory} 年项目中搜索...` : 'AI 智能推荐：描述你想要的项目...'}
+                value={aiQuery}
+                onChange={e => setAiQuery(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAiSearch()}
+                className="w-full pl-9 pr-20 py-2 rounded-xl border border-purple-200 bg-purple-50/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-200 outline-none text-sm"
+              />
+              <button
+                onClick={handleAiSearch}
+                disabled={aiSearching || !aiQuery.trim()}
+                className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 rounded-lg bg-purple-500 text-white text-xs font-medium hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {aiSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                问 AI
+              </button>
+            </div>
+            {/* 精选按钮 + 年份标签 */}
+            <div className="flex flex-wrap gap-2">
+              {/* 精选复盘按钮 */}
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => { setShowFeatured(true); setSearchQuery(''); setShowAiMode(false); }}
+                icon={<Star className="w-3.5 h-3.5" />}
+              >
+                精选 ({featuredProjects.length})
+              </Button>
+              {/* AI 推荐入口 - 有历史记录时显示 */}
+              {aiResults.length > 0 && (
+                <Button
+                  variant="purple"
+                  size="sm"
+                  onClick={() => { setShowAiMode(true); setSearchQuery(''); setShowFeatured(false); }}
+                  icon={<Sparkles className="w-3.5 h-3.5" />}
+                >
+                  AI 推荐 ({aiResults.length})
+                </Button>
+              )}
+              {years.map(year => (
+                <Button
+                  key={year}
+                  variant={selectedCategory === year && !searchQuery && !showAiMode && !showFeatured ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => { setSelectedCategory(year); setSearchQuery(''); setShowAiMode(false); setShowFeatured(false); }}
+                >
+                  {year} ({resourcesByYear[year].length})
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 资源列表 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* 精选复盘 */}
+          {showFeatured && !showAiMode && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Star className="w-5 h-5 text-orange-500" />
+                <h3 className="font-semibold text-gray-900">2025 年复盘</h3>
+                <span className="text-sm text-gray-500">来自 GitHubDaily README · {featuredProjects.length} 个项目</span>
+                <button
+                  onClick={() => setShowFeatured(false)}
+                  className="ml-auto text-sm text-gray-500 hover:text-gray-700"
+                >
+                  返回列表
+                </button>
+              </div>
+              
+              {/* 分类标签 */}
+              <div className="flex flex-wrap gap-2 mb-4">
+                <Button
+                  variant={!selectedFeaturedCategory ? 'primary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setSelectedFeaturedCategory(null)}
+                >
+                  全部 ({featuredProjects.length})
+                </Button>
+                {featuredCategories.map(cat => (
+                  <Button
+                    key={cat.name}
+                    variant={selectedFeaturedCategory === cat.name ? 'primary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setSelectedFeaturedCategory(cat.name)}
+                  >
+                    {cat.name} ({cat.count})
+                  </Button>
+                ))}
+              </div>
+              
+              {/* 项目卡片 - 复用年份列表的样式 */}
+              {(() => {
+                const filteredFeatured = selectedFeaturedCategory
+                  ? featuredProjects.filter(p => p.category === selectedFeaturedCategory)
+                  : featuredProjects;
+                const displayedFeatured = filteredFeatured.slice(0, featuredDisplayCount);
+                const hasMoreFeatured = filteredFeatured.length > featuredDisplayCount;
+                
+                return (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {displayedFeatured.map((resource) => (
+                        <motion.div
+                          key={resource.url}
+                          layout
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="relative group p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/30 hover:shadow-lg transition-all"
+                        >
+                          {/* AI 分析按钮 - 右上角 */}
+                          <Tooltip content="AI 分析">
+                            <button
+                              onClick={(e) => handleOpenAnalyze(resource, e)}
+                              className="absolute top-3 right-3 p-1.5 rounded-lg text-purple-400 hover:text-purple-600 hover:bg-purple-50 transition-all opacity-0 group-hover:opacity-100"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                          <div className="flex items-start gap-3">
+                            {/* 头像 */}
+                            {resource.avatar ? (
+                              <img 
+                                src={resource.avatar} 
+                                alt={resource.title}
+                                className="w-12 h-12 rounded-xl flex-shrink-0 object-cover"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center flex-shrink-0">
+                                <Github className="w-6 h-6 text-white" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0 pr-6">
+                              <div className="flex items-center gap-2 mb-1">
+                                <a
+                                  href={resource.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-semibold text-gray-900 hover:text-primary truncate"
+                                >
+                                  {resource.title}
+                                </a>
+                                {/* Star 数 */}
+                                {resource.stars && resource.stars > 0 && (
+                                  <span className="flex items-center gap-0.5 text-xs text-amber-600 flex-shrink-0">
+                                    <Star className="w-3 h-3 fill-current" />
+                                    {formatStars(resource.stars)}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-500 line-clamp-2">{resource.description || '暂无描述'}</p>
+                              {/* 标签 */}
+                              {resource.topics && resource.topics.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {resource.topics.slice(0, 3).map(topic => (
+                                    <span key={topic} className="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                                      {topic}
+                                    </span>
+                                  ))}
+                                  {resource.topics.length > 3 && (
+                                    <span className="text-xs text-gray-400">+{resource.topics.length - 3}</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                            <div className="flex items-center gap-2">
+                              {resource.category && (
+                                <span className="text-xs text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">
+                                  {resource.category}
+                                </span>
+                              )}
+                              {resource.language && (
+                                <span className="text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full">
+                                  {resource.language}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleAdd(resource.url)}
+                              disabled={addingUrl === resource.url}
+                              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                              {addingUrl === resource.url ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Plus className="w-3.5 h-3.5" />
+                              )}
+                              添加
+                            </button>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                    
+                    {displayedFeatured.length === 0 && !loading && (
+                      <div className="text-center py-12 text-gray-500">
+                        暂无精选项目
+                      </div>
+                    )}
+                    
+                    {/* 加载更多按钮 */}
+                    {hasMoreFeatured && (
+                      <div className="flex justify-center mt-6">
+                        <button
+                          onClick={() => setFeaturedDisplayCount(prev => prev + PAGE_SIZE)}
+                          disabled={loadingFeaturedDetails}
+                          className="px-6 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-all flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {loadingFeaturedDetails ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              加载详情中...
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="w-4 h-4" />
+                              加载更多 ({featuredDisplayCount}/{filteredFeatured.length})
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                    
+                    {/* 加载详情进度提示 */}
+                    {loadingFeaturedDetails && !hasMoreFeatured && (
+                      <div className="flex justify-center mt-4">
+                        <span className="text-sm text-gray-500 flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          正在获取项目详情...
+                        </span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+              
+              {loading && featuredProjects.length === 0 && (
+                <div className="flex items-center justify-center py-12 gap-2 text-gray-500">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>正在加载精选项目...</span>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* AI 搜索结果 */}
+          {showAiMode && !showFeatured && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="w-5 h-5 text-purple-500" />
+                <h3 className="font-semibold text-gray-900">AI 推荐结果</h3>
+                {selectedCategory && (
+                  <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-600">
+                    {selectedCategory} 年
+                  </span>
+                )}
+                {recommendedUrls.size > 0 && (
+                  <span className="text-xs text-gray-400">
+                    已推荐 {recommendedUrls.size} 个
+                  </span>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  {aiChatHistory.length > 0 && (
+                    <button
+                      onClick={clearAiHistory}
+                      className="text-xs text-red-500 hover:text-red-600 flex items-center gap-1"
+                    >
+                      <X className="w-3 h-3" />
+                      清除对话
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setShowAiMode(false); }}
+                    className="text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    返回列表
+                  </button>
+                </div>
+              </div>
+              
+              {/* AI 回复文本 */}
+              {aiResponse && (
+                <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-4 mb-4">
+                  <div className="flex items-start gap-3">
+                    {aiSearching && <Loader2 className="w-5 h-5 animate-spin text-purple-500 mt-0.5 flex-shrink-0" />}
+                    {!aiSearching && <Sparkles className="w-5 h-5 text-purple-500 mt-0.5 flex-shrink-0" />}
+                    <div className="flex-1 prose prose-sm prose-purple max-w-none">
+                      <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                        {aiResponse}
+                        {aiSearching && <span className="inline-block w-1.5 h-4 bg-purple-500 animate-pulse ml-0.5" />}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* 追问提示 */}
+              {!aiSearching && aiResponse && aiResults.length > 0 && (
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+                  <p className="text-xs text-blue-600">
+                    💡 提示：你可以继续输入"还有吗"、"更多推荐"等来获取更多项目，AI 会记住已推荐的内容避免重复。
+                  </p>
+                </div>
+              )}
+              
+              {/* 匹配到的项目卡片 */}
+              {aiResults.length > 0 && (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm font-medium text-gray-700">找到 {aiResults.length} 个相关项目</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {aiResults.map((resource: any) => (
+                      <motion.div
+                        key={resource.url}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="relative p-4 bg-white border-2 border-purple-200 rounded-xl hover:shadow-lg transition-all group"
+                      >
+                        {/* AI 分析按钮 - 右上角 */}
+                        <Tooltip content="AI 分析">
+                          <button
+                            onClick={(e) => handleOpenAnalyze(resource, e)}
+                            className="absolute top-3 right-3 p-1.5 rounded-lg text-purple-400 hover:text-purple-600 hover:bg-purple-50 transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
+                        <div className="flex items-start gap-3">
+                          {resource.avatar ? (
+                            <img src={resource.avatar} alt={resource.title} className="w-12 h-12 rounded-xl flex-shrink-0 object-cover" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center flex-shrink-0">
+                              <Github className="w-6 h-6 text-white" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0 pr-6">
+                            <div className="flex items-center gap-2 mb-1">
+                              <a href={resource.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-gray-900 hover:text-primary truncate">
+                                {resource.title}
+                              </a>
+                              {resource.stars && resource.stars > 0 && (
+                                <span className="flex items-center gap-0.5 text-xs text-amber-600 flex-shrink-0">
+                                  <Star className="w-3 h-3 fill-current" />{formatStars(resource.stars)}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500 line-clamp-2">{resource.description || '暂无描述'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-end mt-3 pt-3 border-t border-gray-100 gap-2">
+                          <button
+                            onClick={() => handleAdd(resource.url)}
+                            disabled={addingUrl === resource.url}
+                            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all disabled:opacity-50 flex items-center gap-1.5"
+                          >
+                            {addingUrl === resource.url ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                            添加
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </>
+              )}
+              
+              {!aiSearching && !aiResponse && (
+                <div className="text-center py-8 text-gray-500">
+                  输入问题后点击「问 AI」开始搜索
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* 普通列表 */}
+          {!showAiMode && !showFeatured && (loading ? (
+            <div className="space-y-4">
+              {/* 骨架屏加载动画 */}
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="p-4 bg-gray-100 rounded-xl animate-pulse">
+                  <div className="flex items-start gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-gray-200" />
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-5 bg-gray-200 rounded w-32" />
+                        <div className="h-4 bg-gray-200 rounded w-12" />
+                      </div>
+                      <div className="h-4 bg-gray-200 rounded w-full" />
+                      <div className="h-4 bg-gray-200 rounded w-3/4" />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
+                    <div className="flex gap-2">
+                      <div className="h-5 bg-gray-200 rounded w-12" />
+                      <div className="h-5 bg-gray-200 rounded w-16" />
+                    </div>
+                    <div className="h-8 bg-gray-200 rounded w-16" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                <X className="w-8 h-8 text-red-500" />
+              </div>
+              <p className="text-gray-500 mb-4">{error}</p>
+              <button
+                onClick={() => {
+                  setLoading(true);
+                  setError(null);
+                  fetchRecommendedResources(true)
+                    .then(setResources)
+                    .catch(() => setError('加载失败'))
+                    .finally(() => setLoading(false));
+                }}
+                className="px-4 py-2 rounded-xl bg-primary text-white"
+              >
+                重试
+              </button>
+            </div>
+          ) : (
+            <>
+              {searchQuery && (
+                <p className="text-sm text-gray-500 mb-4">
+                  搜索 "{searchQuery}" 找到 {filteredResources.length} 个结果
+                </p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredResources.map((resource) => (
+                  <motion.div
+                    key={resource.url}
+                    layout
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="relative group p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/30 hover:shadow-lg transition-all"
+                  >
+                    {/* AI 分析按钮 - 右上角 */}
+                    <Tooltip content="AI 分析">
+                      <button
+                        onClick={(e) => handleOpenAnalyze(resource, e)}
+                        className="absolute top-3 right-3 p-1.5 rounded-lg text-purple-400 hover:text-purple-600 hover:bg-purple-50 transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
+                    <div className="flex items-start gap-3">
+                      {/* 头像 */}
+                      {resource.avatar ? (
+                        <img 
+                          src={resource.avatar} 
+                          alt={resource.title}
+                          className="w-12 h-12 rounded-xl flex-shrink-0 object-cover"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center flex-shrink-0">
+                          <Github className="w-6 h-6 text-white" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0 pr-6">
+                        <div className="flex items-center gap-2 mb-1">
+                          <a
+                            href={resource.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold text-gray-900 hover:text-primary truncate"
+                          >
+                            {resource.title}
+                          </a>
+                          {/* Star 数 */}
+                          {resource.stars && resource.stars > 0 && (
+                            <span className="flex items-center gap-0.5 text-xs text-amber-600 flex-shrink-0">
+                              <Star className="w-3 h-3 fill-current" />
+                              {formatStars(resource.stars)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-500 line-clamp-2">{resource.description || '暂无描述'}</p>
+                        {/* 标签 */}
+                        {resource.topics && resource.topics.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {resource.topics.slice(0, 3).map(topic => (
+                              <span key={topic} className="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                                {topic}
+                              </span>
+                            ))}
+                            {resource.topics.length > 3 && (
+                              <span className="text-xs text-gray-400">+{resource.topics.length - 3}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                      <div className="flex items-center gap-2">
+                        {resource.year && (
+                          <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                            {resource.year}
+                          </span>
+                        )}
+                        {resource.language && (
+                          <span className="text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full">
+                            {resource.language}
+                          </span>
+                        )}
+                        {resource.category && resource.category !== '其他' && (
+                          <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{resource.category}</span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleAdd(resource.url)}
+                        disabled={addingUrl === resource.url}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {addingUrl === resource.url ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Plus className="w-3.5 h-3.5" />
+                        )}
+                        添加
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+              {filteredResources.length === 0 && !loading && (
+                <div className="text-center py-12 text-gray-500">
+                  {searchQuery ? '没有找到匹配的项目' : '该年份暂无项目'}
+                </div>
+              )}
+              
+              {/* 加载更多按钮 */}
+              {hasMore && (
+                <div className="flex justify-center mt-6">
+                  <button
+                    onClick={handleLoadMore}
+                    disabled={loadingDetails}
+                    className="px-6 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-all flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {loadingDetails ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        加载详情中...
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4" />
+                        加载更多 ({displayCount}/{allFilteredResources.length})
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+              
+              {/* 加载详情进度提示 */}
+              {loadingDetails && !hasMore && (
+                <div className="flex justify-center mt-4">
+                  <span className="text-sm text-gray-500 flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    正在获取项目详情...
+                  </span>
+                </div>
+              )}
+            </>
+          ))}
+        </div>
+        
+        {/* AI 分析悬浮窗口 */}
+        <AnimatePresence>
+          {analyzeTarget && analyzePosition && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.15 }}
+              style={{
+                position: 'fixed',
+                left: analyzePosition.x,
+                top: analyzePosition.y,
+                zIndex: 60
+              }}
+              className="w-[320px] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden"
+            >
+              {/* 头部 */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-blue-50">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-white" />
+                  </div>
+                  <span className="font-semibold text-gray-900">AI 项目分析</span>
+                </div>
+                <button
+                  onClick={handleCloseAnalyze}
+                  className="p-1.5 rounded-lg hover:bg-white/80 transition-colors"
+                >
+                  <X className="w-4 h-4 text-gray-400" />
+                </button>
+              </div>
+              
+              {/* 项目信息 */}
+              <div className="px-4 py-3 bg-gray-50/50">
+                <div className="flex items-start gap-3">
+                  {analyzeTarget.avatar ? (
+                    <img src={analyzeTarget.avatar} alt={analyzeTarget.title} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg bg-gray-900 flex items-center justify-center flex-shrink-0">
+                      <Github className="w-5 h-5 text-white" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium text-gray-900 truncate">{analyzeTarget.title}</div>
+                      {analyzeTarget.stars && (
+                        <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full flex-shrink-0">
+                          <Star className="w-3 h-3 fill-current" />
+                          {formatStars(analyzeTarget.stars)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">{analyzeTarget.owner}/{analyzeTarget.repo}</div>
+                    {analyzeTarget.description && (
+                      <div className="text-xs text-gray-600 mt-1.5 line-clamp-2">{analyzeTarget.description}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              {/* 操作按钮 */}
+              {!analyzeResult && !analyzing && (
+                <div className="p-4 space-y-3">
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={handleQuickAnalyze}
+                    icon={<Zap className="w-4 h-4" />}
+                    className="w-full justify-center"
+                  >
+                    快速了解
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="md"
+                    onClick={handleOpenDeepWiki}
+                    icon={<BookOpen className="w-4 h-4" />}
+                    className="w-full justify-center"
+                  >
+                    详细了解 (DeepWiki)
+                  </Button>
+                  <p className="text-xs text-gray-400 text-center pt-1">
+                    DeepWiki 提供完整的项目文档和交互式问答
+                  </p>
+                </div>
+              )}
+              
+              {/* AI 分析结果 */}
+              {(analyzing || analyzeResult) && (
+                <div className="p-4">
+                  <div className="max-h-[260px] overflow-y-auto">
+                    {analyzing && !analyzeResult && (
+                      <div className="flex items-center gap-2 text-purple-600">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="text-sm">正在分析项目...</span>
+                      </div>
+                    )}
+                    {analyzeResult && (
+                      <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                        {analyzeResult}
+                        {analyzing && <span className="inline-block w-1.5 h-4 bg-purple-500 animate-pulse ml-0.5" />}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* 底部操作 */}
+                  <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-100">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { setAnalyzeResult(''); setAnalyzing(false); }}
+                      className="flex-1"
+                    >
+                      重新选择
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleOpenDeepWiki}
+                      icon={<BookOpen className="w-3.5 h-3.5" />}
+                      className="flex-1"
+                    >
+                      DeepWiki
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </motion.div>,
+    document.body
+  );
 }

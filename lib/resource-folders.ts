@@ -505,3 +505,148 @@ export async function getArchivedFolders(userId: string): Promise<ResourceFolder
   if (error) throw error;
   return data || [];;
 }
+
+
+// 按公众号/订阅源名称自动分类文章
+// 返回分类结果统计
+export async function autoClassifyArticlesBySource(userId: string): Promise<{
+  created: number;  // 新创建的文件夹数
+  moved: number;    // 移动的文章数
+  skipped: number;  // 跳过的文章数（只有1篇或已在文件夹中）
+}> {
+  // 1. 获取所有未归档、未删除、不在文件夹中的文章
+  const { data: articles, error: articlesError } = await supabase
+    .from('resources')
+    .select('id, title, metadata')
+    .eq('user_id', userId)
+    .eq('type', 'article')
+    .is('folder_id', null)
+    .is('deleted_at', null)
+    .is('archived_at', null);
+
+  if (articlesError) throw articlesError;
+  if (!articles || articles.length === 0) {
+    return { created: 0, moved: 0, skipped: 0 };
+  }
+
+  // 2. 按公众号/订阅源名称分组
+  const groupedBySource: Record<string, { id: string; title: string }[]> = {};
+  for (const article of articles) {
+    const sourceName = article.metadata?.subscription_title || article.metadata?.author || '未知来源';
+    if (!groupedBySource[sourceName]) {
+      groupedBySource[sourceName] = [];
+    }
+    groupedBySource[sourceName].push({ id: article.id, title: article.title });
+  }
+
+  // 3. 获取已存在的文章类型文件夹
+  const { data: existingFolders, error: foldersError } = await supabase
+    .from('resource_folders')
+    .select('id, name')
+    .eq('user_id', userId)
+    .eq('resource_type', 'article')
+    .is('deleted_at', null);
+
+  if (foldersError) throw foldersError;
+
+  // 创建文件夹名称到ID的映射
+  const folderNameToId: Record<string, string> = {};
+  for (const folder of existingFolders || []) {
+    folderNameToId[folder.name] = folder.id;
+  }
+
+  let created = 0;
+  let moved = 0;
+  let skipped = 0;
+
+  // 4. 处理每个分组
+  for (const [sourceName, sourceArticles] of Object.entries(groupedBySource)) {
+    // 只有1篇文章的来源，跳过不创建文件夹
+    if (sourceArticles.length < 2) {
+      skipped += sourceArticles.length;
+      continue;
+    }
+
+    let folderId = folderNameToId[sourceName];
+
+    // 如果文件夹不存在，创建新文件夹
+    if (!folderId) {
+      const newFolder = await createFolder(userId, 'article', sourceName, null, '#f97316'); // 橙色
+      folderId = newFolder.id;
+      folderNameToId[sourceName] = folderId;
+      created++;
+    }
+
+    // 移动文章到文件夹
+    const articleIds = sourceArticles.map(a => a.id);
+    await moveResourcesToFolder(articleIds, folderId);
+    moved += articleIds.length;
+  }
+
+  return { created, moved, skipped };
+}
+
+// 根据公众号名称查找或创建文件夹
+export async function findOrCreateArticleFolder(
+  userId: string,
+  sourceName: string
+): Promise<string | null> {
+  if (!sourceName) return null;
+
+  // 查找已存在的文件夹
+  const { data: existingFolder } = await supabase
+    .from('resource_folders')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('resource_type', 'article')
+    .eq('name', sourceName)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (existingFolder) {
+    return existingFolder.id;
+  }
+
+  // 检查该来源是否有足够的文章（至少2篇）才创建文件夹
+  const { count } = await supabase
+    .from('resources')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('type', 'article')
+    .eq('metadata->>subscription_title', sourceName)
+    .is('deleted_at', null);
+
+  // 如果已有1篇，加上新的就是2篇，可以创建文件夹
+  if (count && count >= 1) {
+    const newFolder = await createFolder(userId, 'article', sourceName, null, '#f97316');
+    return newFolder.id;
+  }
+
+  return null;
+}
+
+// 将单篇文章归类到对应的公众号文件夹（如果存在）
+export async function classifyArticleToFolder(
+  userId: string,
+  resourceId: string,
+  sourceName: string
+): Promise<boolean> {
+  if (!sourceName) return false;
+
+  // 查找已存在的文件夹
+  const { data: existingFolder } = await supabase
+    .from('resource_folders')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('resource_type', 'article')
+    .eq('name', sourceName)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (existingFolder) {
+    await moveResourceToFolder(resourceId, existingFolder.id);
+    return true;
+  }
+
+  return false;
+}

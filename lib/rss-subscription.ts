@@ -171,10 +171,14 @@ async function saveRSSItems(
     is_synced: false
   }))
   
-  // 使用 upsert 避免重复
+  // 使用 upsert 避免重复，但使用 ignoreDuplicates 来保留已存在记录的 is_synced 和 is_read 状态
+  // 这样已同步的文章不会被重置为未同步状态
   const { error } = await supabase
     .from('rss_items')
-    .upsert(records, { onConflict: 'subscription_id,guid' })
+    .upsert(records, { 
+      onConflict: 'subscription_id,guid',
+      ignoreDuplicates: true  // 如果记录已存在，跳过而不是更新
+    })
   
   if (error) console.error('保存 RSS 条目失败:', error)
 }
@@ -573,10 +577,11 @@ export async function toggleAutoSync(subscriptionId: string, autoSync: boolean):
 }
 
 // 将单篇文章同步到资源中心
+// 返回: { resourceId: string | null, isNew: boolean }
 export async function syncItemToResource(
   item: RSSItem,
   subscription: RSSSubscription
-): Promise<string | null> {
+): Promise<{ resourceId: string | null; isNew: boolean }> {
   // 检查是否已同步且资源还存在
   if (item.is_synced && item.synced_resource_id) {
     // 验证资源是否还存在（未被删除）
@@ -588,14 +593,14 @@ export async function syncItemToResource(
       .maybeSingle()
     
     if (existingResource) {
-      return item.synced_resource_id
+      return { resourceId: item.synced_resource_id, isNew: false }
     }
     // 资源已被删除，重置同步状态，但不重新同步（用户主动删除的）
     await supabase
       .from('rss_items')
       .update({ is_synced: true }) // 保持已同步状态，避免重复添加
       .eq('id', item.id)
-    return null
+    return { resourceId: null, isNew: false }
   }
   
   // 检查资源中心是否已存在相同 URL 的资源（包括不同类型）
@@ -608,12 +613,12 @@ export async function syncItemToResource(
     .maybeSingle()
   
   if (existingByUrl) {
-    // URL 已存在，标记为已同步
+    // URL 已存在，标记为已同步，但不计入新同步数量
     await supabase
       .from('rss_items')
       .update({ is_synced: true, synced_resource_id: existingByUrl.id })
       .eq('id', item.id)
-    return existingByUrl.id
+    return { resourceId: existingByUrl.id, isNew: false }
   }
   
   // 检查是否存在相同标题的文章（同一订阅源）
@@ -627,12 +632,12 @@ export async function syncItemToResource(
     .maybeSingle()
   
   if (existingByTitle) {
-    // 标题已存在，标记为已同步
+    // 标题已存在，标记为已同步，但不计入新同步数量
     await supabase
       .from('rss_items')
       .update({ is_synced: true, synced_resource_id: existingByTitle.id })
       .eq('id', item.id)
-    return existingByTitle.id
+    return { resourceId: existingByTitle.id, isNew: false }
   }
   
   // 创建新资源
@@ -658,7 +663,7 @@ export async function syncItemToResource(
   
   if (error) {
     console.error('同步文章到资源中心失败:', error)
-    return null
+    return { resourceId: null, isNew: false }
   }
   
   // 更新文章同步状态
@@ -667,7 +672,7 @@ export async function syncItemToResource(
     .update({ is_synced: true, synced_resource_id: resource.id })
     .eq('id', item.id)
   
-  return resource.id
+  return { resourceId: resource.id, isNew: true }
 }
 
 // 同步订阅的所有未同步文章到资源中心（并发执行）
@@ -702,7 +707,8 @@ export async function syncSubscriptionToResources(subscriptionId: string): Promi
     const results = await Promise.all(
       batch.map(item => syncItemToResource(item, subscription))
     )
-    synced += results.filter(id => id !== null).length
+    // 只计算真正新创建的资源数量
+    synced += results.filter(r => r.isNew).length
   }
   
   return synced

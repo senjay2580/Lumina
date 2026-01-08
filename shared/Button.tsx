@@ -2,7 +2,7 @@
 import { forwardRef, ButtonHTMLAttributes, ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 
-type ButtonVariant = 'primary' | 'secondary' | 'success' | 'danger' | 'ghost'
+type ButtonVariant = 'primary' | 'secondary' | 'success' | 'danger' | 'ghost' | 'purple' | 'dark' | 'gradient' | 'gradientGreen'
 type ButtonSize = 'sm' | 'md' | 'lg'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -33,6 +33,22 @@ const variantStyles: Record<ButtonVariant, { base: string; shadow: string }> = {
   ghost: {
     base: 'bg-gray-100 border-gray-200 text-gray-700 hover:bg-gray-200',
     shadow: '#d1d5db'
+  },
+  purple: {
+    base: 'bg-[#9b59b6] border-[#a569bd] text-white hover:bg-[#8e44ad]',
+    shadow: '#7d3c98'
+  },
+  dark: {
+    base: 'bg-gray-900 border-gray-800 text-white hover:bg-gray-800',
+    shadow: '#374151'
+  },
+  gradient: {
+    base: 'bg-gradient-to-r from-blue-500 to-blue-600 border-transparent text-white hover:from-blue-600 hover:to-blue-700',
+    shadow: '#1d4ed8'
+  },
+  gradientGreen: {
+    base: 'bg-gradient-to-r from-green-500 to-emerald-600 border-transparent text-white hover:from-green-600 hover:to-emerald-700',
+    shadow: '#059669'
   }
 }
 
@@ -61,7 +77,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           ${className}
         `}
         style={{
-          boxShadow: disabled || loading ? 'none' : `0px 4px 0px 0px ${styles.shadow}`,
+          boxShadow: `0px 4px 0px 0px ${styles.shadow}`,
         }}
         onMouseDown={(e) => {
           if (!disabled && !loading) {

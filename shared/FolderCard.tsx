@@ -260,8 +260,8 @@ export function FolderCard({
         <>
           <div 
             className="fixed inset-0 z-[9998]" 
-            onClick={() => setContextMenu(null)}
-            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+            onClick={(e) => { e.stopPropagation(); setContextMenu(null); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
