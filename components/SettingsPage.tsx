@@ -75,6 +75,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
   const [savingTavily, setSavingTavily] = useState(false);
   const [showTavilyKey, setShowTavilyKey] = useState(false);
 
+  // GitHub Token 状态
+  const [githubToken, setGithubToken] = useState('');
+  const [githubTokenInput, setGithubTokenInput] = useState('');
+  const [loadingGithub, setLoadingGithub] = useState(true);
+  const [savingGithub, setSavingGithub] = useState(false);
+  const [showGithubToken, setShowGithubToken] = useState(false);
+
   const { toasts, removeToast, success, error } = useToast();
 
   // 计算密码强度
@@ -132,23 +139,32 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
     loadFeishuBinding();
   }, [user.id]);
 
-  // 加载 Tavily API Key
+  // 加载 Tavily API Key 和 GitHub Token
   useEffect(() => {
-    const loadTavilyKey = async () => {
+    const loadCredentials = async () => {
       setLoadingTavily(true);
+      setLoadingGithub(true);
       try {
-        const key = await getUserCredential(user.id, 'tavily', 'api_key');
-        if (key) {
-          setTavilyApiKey(key);
-          setTavilyApiKeyInput(key);
+        const [tavilyKey, ghToken] = await Promise.all([
+          getUserCredential(user.id, 'tavily', 'api_key'),
+          getUserCredential(user.id, 'github', 'personal_access_token')
+        ]);
+        if (tavilyKey) {
+          setTavilyApiKey(tavilyKey);
+          setTavilyApiKeyInput(tavilyKey);
+        }
+        if (ghToken) {
+          setGithubToken(ghToken);
+          setGithubTokenInput(ghToken);
         }
       } catch (err) {
-        console.error('加载 Tavily API Key 失败:', err);
+        console.error('加载凭证失败:', err);
       } finally {
         setLoadingTavily(false);
+        setLoadingGithub(false);
       }
     };
-    loadTavilyKey();
+    loadCredentials();
   }, [user.id]);
 
   // 加载 AI 提供商模板和用户配置
@@ -452,6 +468,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
       error(err.message || '保存失败');
     } finally {
       setSavingTavily(false);
+    }
+  };
+
+  // 保存 GitHub Token
+  const handleSaveGithubToken = async () => {
+    if (!githubTokenInput.trim()) {
+      error('请输入 Token');
+      return;
+    }
+    
+    setSavingGithub(true);
+    try {
+      await saveCredential(user.id, 'github', 'personal_access_token', githubTokenInput.trim(), 'GitHub Personal Access Token');
+      setGithubToken(githubTokenInput.trim());
+      success('GitHub Token 已保存');
+    } catch (err: any) {
+      error(err.message || '保存失败');
+    } finally {
+      setSavingGithub(false);
     }
   };
 
@@ -1059,6 +1094,101 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdate }
                             }`}
                           >
                             {savingTavily ? '保存中...' : '保存'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* GitHub Token 卡片 */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="p-5">
+                    <div className="flex items-start gap-3 mb-4">
+                      <div className="w-11 h-11 rounded-xl overflow-hidden flex items-center justify-center bg-gray-900 flex-shrink-0">
+                        <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <h3 className="font-medium text-gray-900">GitHub Token</h3>
+                          {githubToken && <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-600 rounded-full">已配置</span>}
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-600 rounded-full">提示词采集</span>
+                        </div>
+                        <p className="text-xs text-gray-500">提升 GitHub API 请求限制</p>
+                      </div>
+                    </div>
+                    
+                    {loadingGithub ? (
+                      <div className="flex items-center justify-center py-4">
+                        <svg className="w-5 h-5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                          <path d="M12 2a10 10 0 0110 10" strokeLinecap="round" />
+                        </svg>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-gray-50 rounded-lg">
+                          <p className="text-xs text-gray-600 mb-2">
+                            配置 GitHub Personal Access Token 可大幅提升提示词采集的 API 限制。
+                          </p>
+                          <ul className="text-xs text-gray-500 space-y-1">
+                            <li>• 未配置：60 次/小时，延迟 2 秒</li>
+                            <li>• 已配置：5000 次/小时，延迟 0.5 秒</li>
+                          </ul>
+                        </div>
+                        
+                        {/* Token 输入 */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-gray-700">Personal Access Token</label>
+                          <div className="relative">
+                            <input
+                              type={showGithubToken ? 'text' : 'password'}
+                              value={githubTokenInput}
+                              onChange={(e) => setGithubTokenInput(e.target.value)}
+                              placeholder="ghp_xxxxxxxxxxxxxxxx"
+                              className="w-full px-3 py-2 pr-10 rounded-lg border border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-2 ring-gray-500/20 outline-none transition-all text-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowGithubToken(!showGithubToken)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            >
+                              {showGithubToken ? (
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                                  <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          <a
+                            href="https://github.com/settings/tokens/new?description=Lumina%20Prompt%20Crawler&scopes=public_repo"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-center bg-gray-100 text-gray-700 hover:bg-gray-200 transition-all"
+                          >
+                            创建 Token
+                          </a>
+                          <button
+                            onClick={handleSaveGithubToken}
+                            disabled={savingGithub || !githubTokenInput.trim() || githubTokenInput === githubToken}
+                            className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                              savingGithub || !githubTokenInput.trim() || githubTokenInput === githubToken
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-gray-900 text-white hover:bg-gray-800'
+                            }`}
+                          >
+                            {savingGithub ? '保存中...' : '保存'}
                           </button>
                         </div>
                       </div>

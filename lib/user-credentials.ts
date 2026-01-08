@@ -144,3 +144,14 @@ export async function hasTavilyConfigured(userId: string): Promise<boolean> {
   const apiKey = await getTavilyApiKey(userId)
   return !!apiKey
 }
+
+// 获取 GitHub Personal Access Token
+export async function getGithubToken(userId: string): Promise<string | null> {
+  return getUserCredential(userId, 'github', 'personal_access_token')
+}
+
+// 检查用户是否配置了 GitHub Token
+export async function hasGithubTokenConfigured(userId: string): Promise<boolean> {
+  const token = await getGithubToken(userId)
+  return !!token
+}

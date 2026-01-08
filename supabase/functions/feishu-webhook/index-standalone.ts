@@ -1122,7 +1122,7 @@ async function crawlSingleSubreddit(subreddit: string, minScore: number): Promis
     console.log(`[Crawl] Fetching r/${subreddit}...`);
     
     const targetUrl = `https://www.reddit.com/r/${subreddit}/hot.json?limit=30&raw_json=1`;
-    let data = null;
+    let data: any = null;
     
     // 尝试不同的代理
     for (const proxyFn of corsProxies) {
@@ -1328,7 +1328,7 @@ async function analyzeWithAIServer(
   }
 }
 
-// 快速爬虫（不做 AI 分析，直接保存到 extracted_prompts 表）
+// 快速爬虫（优化版：并发请求 + 批量插入）
 async function executeQuickCrawl(
   jobType: 'github' | 'reddit',
   userId: string,
@@ -1348,118 +1348,91 @@ async function executeQuickCrawl(
   
   let found = 0;
   let saved = 0;
-  const seenIds = new Set<string>();
   
   try {
-    for (const source of sources) {
-      if (Date.now() - startTime > 40000) {
-        console.log('[QuickCrawl] Timeout approaching, stopping');
-        break;
-      }
+    // 1. 并发爬取所有源
+    const crawlPromises = sources.map(source => 
+      isGitHub 
+        ? crawlSingleGitHubQuery(source, CRAWL_CONFIG.min_github_stars)
+        : crawlSingleSubreddit(source, CRAWL_CONFIG.min_reddit_score)
+    );
+    
+    const results = await Promise.all(crawlPromises);
+    const allItems = results.flat();
+    
+    // 去重
+    const seenIds = new Set<string>();
+    const uniqueItems = allItems.filter(item => {
+      if (seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
+    
+    found = uniqueItems.length;
+    console.log(`[QuickCrawl] Found ${found} unique items`);
+    
+    if (found === 0) {
+      await sendTextMessage(openId, `😅 没有找到符合条件的内容，请尝试其他关键词`);
+      return;
+    }
+    
+    // 2. 计算所有哈希
+    const itemsWithHash = await Promise.all(
+      uniqueItems.map(async item => ({
+        ...item,
+        contentHash: await computeContentHash(item.content + item.title)
+      }))
+    );
+    
+    // 3. 批量查询已存在的哈希
+    const hashes = itemsWithHash.map(i => i.contentHash);
+    const { data: existingRecords } = await supabase
+      .from('extracted_prompts')
+      .select('content_hash')
+      .eq('user_id', userId)
+      .in('content_hash', hashes);
+    
+    const existingHashes = new Set((existingRecords || []).map(r => r.content_hash));
+    
+    // 4. 过滤出新内容
+    const newItems = itemsWithHash.filter(item => !existingHashes.has(item.contentHash));
+    console.log(`[QuickCrawl] New items to save: ${newItems.length}`);
+    
+    if (newItems.length === 0) {
+      const duration = Math.round((Date.now() - startTime) / 1000);
+      await sendTextMessage(openId, `✅ 采集完成，发现 ${found} 个内容，但都已存在。耗时 ${duration}s`);
+      return;
+    }
+    
+    // 5. 批量插入（每批 50 条）
+    const batchSize = 50;
+    for (let i = 0; i < newItems.length; i += batchSize) {
+      const batch = newItems.slice(i, i + batchSize);
       
-      console.log(`[QuickCrawl] Processing: ${source}`);
+      const records = batch.map(item => ({
+        user_id: userId,
+        prompt_title: item.title,
+        prompt_content: cleanContent(item.content).substring(0, 5000),
+        suggested_category: isGitHub ? 'github' : 'reddit',
+        quality_score: 7.0,
+        language: 'en',
+        source_type: isGitHub ? 'github' : 'reddit',
+        source_url: item.url,
+        source_name: isGitHub ? item.repoName : `r/${item.subreddit}`,
+        source_author: item.author,
+        source_stars: isGitHub ? item.stars : null,
+        source_forks: isGitHub ? item.forks : null,
+        content_hash: item.contentHash
+      }));
       
-      if (isGitHub) {
-        // GitHub 爬取
-        const repos = await crawlSingleGitHubQuery(source, CRAWL_CONFIG.min_github_stars);
-        console.log(`[QuickCrawl] GitHub "${source}" returned ${repos.length} repos`);
-        
-        for (const repo of repos) {
-          if (seenIds.has(repo.id)) continue;
-          seenIds.add(repo.id);
-          found++;
-          
-          const contentHash = await computeContentHash(repo.url + repo.title);
-          
-          const { data: existing, error: selectError } = await supabase
-            .from('extracted_prompts')
-            .select('id')
-            .eq('user_id', userId)
-            .eq('content_hash', contentHash)
-            .maybeSingle();
-          
-          if (selectError) {
-            console.error('[QuickCrawl] Select error:', selectError);
-          }
-          
-          if (!existing) {
-            const { error } = await supabase.from('extracted_prompts').insert({
-              user_id: userId,
-              prompt_title: repo.title,
-              prompt_content: cleanContent(repo.content).substring(0, 5000),
-              suggested_category: 'github',
-              quality_score: 7.0,
-              language: 'en',
-              source_type: 'github',
-              source_url: repo.url,
-              source_name: repo.repoName,
-              source_author: repo.author,
-              source_stars: repo.stars,
-              source_forks: repo.forks,
-              content_hash: contentHash
-            });
-            
-            if (!error) {
-              saved++;
-              console.log(`[QuickCrawl] Saved: ${repo.title}`);
-            } else {
-              console.error('[QuickCrawl] Insert error:', error);
-            }
-          } else {
-            console.log(`[QuickCrawl] Already exists: ${repo.title}`);
-          }
-        }
+      const { error } = await supabase.from('extracted_prompts').insert(records);
+      
+      if (error) {
+        console.error('[QuickCrawl] Batch insert error:', error);
       } else {
-        // Reddit 爬取
-        const posts = await crawlSingleSubreddit(source, CRAWL_CONFIG.min_reddit_score);
-        console.log(`[QuickCrawl] Reddit r/${source} returned ${posts.length} posts`);
-        
-        for (const post of posts) {
-          if (seenIds.has(post.id)) continue;
-          seenIds.add(post.id);
-          found++;
-          
-          const contentHash = await computeContentHash(post.url + post.title);
-          
-          const { data: existing, error: selectError } = await supabase
-            .from('extracted_prompts')
-            .select('id')
-            .eq('user_id', userId)
-            .eq('content_hash', contentHash)
-            .maybeSingle();
-          
-          if (selectError) {
-            console.error('[QuickCrawl] Select error:', selectError);
-          }
-          
-          if (!existing) {
-            const { error } = await supabase.from('extracted_prompts').insert({
-              user_id: userId,
-              prompt_title: post.title,
-              prompt_content: cleanContent(post.content).substring(0, 5000),
-              suggested_category: 'reddit',
-              quality_score: 7.0,
-              language: 'en',
-              source_type: 'reddit',
-              source_url: post.url,
-              source_name: `r/${post.subreddit}`,
-              source_author: post.author,
-              content_hash: contentHash
-            });
-            
-            if (!error) {
-              saved++;
-              console.log(`[QuickCrawl] Saved: ${post.title}`);
-            } else {
-              console.error('[QuickCrawl] Insert error:', error);
-            }
-          } else {
-            console.log(`[QuickCrawl] Already exists: ${post.title}`);
-          }
-        }
+        saved += batch.length;
+        console.log(`[QuickCrawl] Batch saved: ${batch.length}, total: ${saved}`);
       }
-      
-      await new Promise(r => setTimeout(r, 500));
     }
     
     const duration = Math.round((Date.now() - startTime) / 1000);

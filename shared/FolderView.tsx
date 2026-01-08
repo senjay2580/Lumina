@@ -23,7 +23,8 @@ import {
   Archive,
   ArchiveRestore,
   Download,
-  Copy
+  Copy,
+  ArrowUpDown
 } from 'lucide-react';
 // @ts-ignore
 import { Github } from 'lucide-react';
@@ -44,6 +45,7 @@ import {
 import { FolderIcon, FolderOpenIcon } from './FolderIcon';
 import { ConfirmModal } from './Modal';
 import { Tooltip } from './Tooltip';
+import { HoverCard } from './HoverCard';
 import { ResourceItemMenu, ContextMenu, menuItemGenerators, MenuItem } from './ResourceItemMenu';
 
 interface FolderViewProps {
@@ -378,6 +380,7 @@ export function FolderView({
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [sortByName, setSortByName] = useState(false); // 按名称排序
   const menuRef = useRef<HTMLDivElement>(null);
 
   // 窗口状�?- 居中显示
@@ -633,6 +636,14 @@ export function FolderView({
   if (!isOpen) return null;
   const totalItems = subFolders.length + resources.length;
 
+  // 排序后的数据
+  const sortedSubFolders = sortByName 
+    ? [...subFolders].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    : subFolders;
+  const sortedResources = sortByName
+    ? [...resources].sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
+    : resources;
+
   return createPortal(
     <AnimatePresence>
       {isOpen && (
@@ -747,31 +758,48 @@ export function FolderView({
                   </p>
                 </div>
                 {/* 视图切换 */}
-                <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-                  <Tooltip content="网格视图">
+                <div className="flex items-center gap-2">
+                  {/* 排序按钮 */}
+                  <Tooltip content={sortByName ? '按时间排序' : '按名称排序'}>
                     <button
-                      onClick={() => setViewMode('grid')}
-                      className={`p-1.5 rounded transition-all ${
-                        viewMode === 'grid' 
-                          ? 'bg-white text-primary shadow-sm' 
-                          : 'text-gray-500 hover:text-gray-700'
+                      onClick={() => setSortByName(!sortByName)}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        sortByName 
+                          ? 'bg-primary/10 text-primary' 
+                          : 'bg-gray-100 text-gray-500 hover:text-gray-700'
                       }`}
                     >
-                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <ArrowUpDown className="w-3.5 h-3.5" />
                     </button>
                   </Tooltip>
-                  <Tooltip content="列表视图">
-                    <button
-                      onClick={() => setViewMode('list')}
-                      className={`p-1.5 rounded transition-all ${
-                        viewMode === 'list' 
-                          ? 'bg-white text-primary shadow-sm' 
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      <List className="w-3.5 h-3.5" />
-                    </button>
-                  </Tooltip>
+                  
+                  {/* 视图模式 */}
+                  <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                    <Tooltip content="网格视图">
+                      <button
+                        onClick={() => setViewMode('grid')}
+                        className={`p-1.5 rounded transition-all ${
+                          viewMode === 'grid' 
+                            ? 'bg-white text-primary shadow-sm' 
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        <LayoutGrid className="w-3.5 h-3.5" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="列表视图">
+                      <button
+                        onClick={() => setViewMode('list')}
+                        className={`p-1.5 rounded transition-all ${
+                          viewMode === 'list' 
+                            ? 'bg-white text-primary shadow-sm' 
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        <List className="w-3.5 h-3.5" />
+                      </button>
+                    </Tooltip>
+                  </div>
                 </div>
               </div>
             </div>
@@ -798,7 +826,7 @@ export function FolderView({
                     <div className="text-right">操作</div>
                   </div>
                   {/* 子文件夹 */}
-                  {subFolders.map(sub => (
+                  {sortedSubFolders.map(sub => (
                     <SubFolderRow 
                       key={sub.id} 
                       folder={sub} 
@@ -808,7 +836,7 @@ export function FolderView({
                     />
                   ))}
                   {/* 资源 */}
-                  {resources.map(resource => (
+                  {sortedResources.map(resource => (
                     <div
                       key={resource.id}
                       className="group grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center"
@@ -828,9 +856,15 @@ export function FolderView({
                         ) : (
                           <Link2 className="w-4 h-4 text-green-500 flex-shrink-0" />
                         )}
-                        <Tooltip content={resource.title} className="overflow-hidden">
-                          <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
-                        </Tooltip>
+                        {resource.type === 'github' && resource.description ? (
+                          <HoverCard content={resource.description} className="overflow-hidden">
+                            <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
+                          </HoverCard>
+                        ) : (
+                          <Tooltip content={resource.title} className="overflow-hidden">
+                            <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
+                          </Tooltip>
+                        )}
                       </div>
                       <div className="text-xs text-gray-400">
                         {new Date(resource.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
@@ -845,7 +879,7 @@ export function FolderView({
                 /* 网格视图 */
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 p-4">
                   {/* 子文件夹 */}
-                  {subFolders.map(sub => (
+                  {sortedSubFolders.map(sub => (
                     <SubFolderGridItem
                       key={sub.id}
                       folder={sub}
@@ -855,7 +889,7 @@ export function FolderView({
                     />
                   ))}
                   {/* 资源 */}
-                  {resources.map(resource => (
+                  {sortedResources.map(resource => (
                     <div
                       key={resource.id}
                       className="relative group flex flex-col items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer overflow-hidden"
@@ -880,9 +914,15 @@ export function FolderView({
                           )}
                         </div>
                       )}
-                      <Tooltip content={resource.title} className="w-full overflow-hidden">
-                        <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all block">{resource.title}</span>
-                      </Tooltip>
+                      {resource.type === 'github' && resource.description ? (
+                        <HoverCard content={resource.description} className="w-full overflow-hidden">
+                          <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all block">{resource.title}</span>
+                        </HoverCard>
+                      ) : (
+                        <Tooltip content={resource.title} className="w-full overflow-hidden">
+                          <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all block">{resource.title}</span>
+                        </Tooltip>
+                      )}
                       {/* 三个点菜单 */}
                       <div className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100">
                         <ResourceItemMenu 

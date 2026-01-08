@@ -29,27 +29,25 @@ export function Tooltip({
     timeoutRef.current = setTimeout(() => {
       if (triggerRef.current) {
         const rect = triggerRef.current.getBoundingClientRect()
-        const scrollX = window.scrollX
-        const scrollY = window.scrollY
         
         let x = 0, y = 0
         
         switch (position) {
           case 'top':
-            x = rect.left + rect.width / 2 + scrollX
-            y = rect.top + scrollY - 8
+            x = rect.left + rect.width / 2
+            y = rect.top - 8
             break
           case 'bottom':
-            x = rect.left + rect.width / 2 + scrollX
-            y = rect.bottom + scrollY + 8
+            x = rect.left + rect.width / 2
+            y = rect.bottom + 8
             break
           case 'left':
-            x = rect.left + scrollX - 8
-            y = rect.top + rect.height / 2 + scrollY
+            x = rect.left - 8
+            y = rect.top + rect.height / 2
             break
           case 'right':
-            x = rect.right + scrollX + 8
-            y = rect.top + rect.height / 2 + scrollY
+            x = rect.right + 8
+            y = rect.top + rect.height / 2
             break
         }
         
@@ -135,14 +133,14 @@ export function Tooltip({
               exit={{ opacity: 0, scale: 0.9 }}
               transition={{ duration: 0.15 }}
               style={{
-                position: 'absolute',
+                position: 'fixed',
                 ...getPositionStyles(),
                 transformOrigin: getTransformOrigin(),
                 zIndex: 9999,
               }}
               className="pointer-events-none"
             >
-              <div className="px-2.5 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg shadow-lg whitespace-nowrap">
+              <div className="px-2.5 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg shadow-lg max-w-xs">
                 {content}
               </div>
             </motion.div>

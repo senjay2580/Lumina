@@ -2,6 +2,7 @@
 import { supabase } from './supabase';
 import { getUserProviders } from './ai-providers';
 import { decryptApiKey } from './ai-providers';
+import { getGithubToken } from './user-credentials';
 
 // 类型定义
 export interface CrawledPrompt {
@@ -18,7 +19,6 @@ export interface CrawledPrompt {
   source_name: string | null;
   source_stars: number | null;
   source_forks: number | null;
-  source_updated_at: string | null; // GitHub 仓库最新提交时间
   created_at: string;
 }
 
@@ -79,14 +79,30 @@ const DEFAULT_CONFIG: CrawlConfig = {
     'PromptEngineering', 'ChatGPTPromptGenius', 'ChatGPT', 'OpenAI'
   ],
   github_search_queries: [
-    // 视觉流
-    'comfyui-nodes', 'comfyui-workflows', 'text-to-video', 'flux-lora',
-    // 编程与 Vibecoding
-    'cursor-rules', 'awesome-cursorrules', 'awesome-ai-agents',
-    // 多模态与提示词框架
-    'structured-prompt', 'multimodal-learning', 'gemini-cookbook',
-    // 原有经典
-    'prompt-engineering', 'awesome-prompts', 'chatgpt-prompts', 'llm-prompts', 'LangGPT'
+    // AI 工具与软件
+    'awesome-ai-tools', 'ai-tools', 'llm-tools', 'ai-assistant',
+    // ComfyUI 生态
+    'comfyui-nodes', 'comfyui-workflows', 'comfyui-custom-node',
+    // AI 编程
+    'cursor-rules', 'awesome-cursorrules', 'ai-coding', 'copilot-instructions',
+    // Agent 与自动化
+    'ai-agent', 'autonomous-agent', 'langchain-agent', 'autogpt',
+    // 提示词工程
+    'prompt-engineering', 'awesome-prompts', 'chatgpt-prompts', 'LangGPT', 'system-prompts',
+    // RAG 与知识库
+    'rag-tutorial', 'vector-database', 'knowledge-base-ai',
+    // 模型与微调
+    'llm-finetune', 'lora-training', 'model-quantization',
+    // AI 资源合集
+    'awesome-llm', 'awesome-chatgpt', 'awesome-generative-ai', 'ai-collection',
+    // AI 赚钱与商业化
+    'ai-money', 'ai-side-hustle', 'make-money-ai', 'ai-business',
+    'gpt-monetization', 'ai-saas', 'ai-startup',
+    // 自动化脚本与薅羊毛
+    'auto-sign', 'daily-checkin', 'auto-task', 'qiandao',
+    'free-api', 'free-gpt', 'free-chatgpt',
+    // AI 副业与被动收入
+    'passive-income', 'side-project', 'indie-hacker'
   ],
   min_reddit_score: 10,
   min_github_stars: 50,
@@ -159,7 +175,7 @@ export async function clearCrawlJobs(userId: string): Promise<void> {
 
 // ============ 提示词管理 ============
 
-export async function getCrawledPrompts(userId: string, limit = 100): Promise<CrawledPrompt[]> {
+export async function getCrawledPrompts(userId: string, limit = 1000): Promise<CrawledPrompt[]> {
   const { data, error } = await supabase
     .from('extracted_prompts')
     .select('*')
@@ -239,113 +255,129 @@ async function computeContentHash(content: string): Promise<string> {
     .join('');
 }
 
-// 爬取 Reddit（使用 CORS 代理绕过浏览器限制）
-async function crawlReddit(subreddits: string[], minScore: number): Promise<any[]> {
+// 爬取单个 Reddit 子版块
+async function crawlSingleSubreddit(subreddit: string, minScore: number): Promise<any[]> {
   const results: any[] = [];
   
-  // CORS 代理列表（按优先级排序）
   const corsProxies = [
     (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
   
-  for (const subreddit of subreddits) {
-    try {
-      console.log(`[Reddit] Fetching r/${subreddit}...`);
-      
-      const targetUrl = `https://www.reddit.com/r/${subreddit}/hot.json?limit=50&raw_json=1`;
-      let data = null;
-      
-      // 尝试不同的代理
-      for (const proxyFn of corsProxies) {
-        try {
-          const proxyUrl = proxyFn(targetUrl);
-          console.log(`[Reddit] Trying proxy: ${proxyUrl.substring(0, 50)}...`);
-          
-          const response = await fetch(proxyUrl, {
-            headers: { 'Accept': 'application/json' }
-          });
-          
-          if (response.ok) {
-            data = await response.json();
-            break;
-          }
-        } catch (proxyErr) {
-          console.log(`[Reddit] Proxy failed, trying next...`);
-        }
-      }
-      
-      if (!data) {
-        console.log(`[Reddit] r/${subreddit} failed: all proxies failed`);
-        continue;
-      }
-      
-      const children = data?.data?.children || [];
-      const beforeCount = results.length;
-      
-      for (const child of children) {
-        const post = child.data;
-        if (post.stickied || post.score < minScore) continue;
-        if (!post.title) continue;
-        
-        // 只保留有实际内容的帖子（至少50字符）
-        const content = post.selftext || '';
-        if (content.length < 50) {
-          console.log(`[Reddit] Skipping "${post.title.substring(0, 30)}..." - no content`);
-          continue;
-        }
-        
-        results.push({
-          id: post.id,
-          title: post.title,
-          content: content,
-          url: `https://reddit.com${post.permalink}`,
-          author: post.author,
-          subreddit: post.subreddit
+  try {
+    console.log(`[Reddit] Fetching r/${subreddit}...`);
+    
+    const targetUrl = `https://www.reddit.com/r/${subreddit}/hot.json?limit=50&raw_json=1`;
+    let data = null;
+    
+    for (const proxyFn of corsProxies) {
+      try {
+        const response = await fetch(proxyFn(targetUrl), {
+          headers: { 'Accept': 'application/json' }
         });
+        if (response.ok) {
+          data = await response.json();
+          break;
+        }
+      } catch {
+        // 继续尝试下一个代理
       }
-      
-      const newCount = results.length - beforeCount;
-      console.log(`[Reddit] r/${subreddit}: +${newCount} posts (total: ${results.length})`);
-      
-      // 延迟避免速率限制
-      await new Promise(r => setTimeout(r, 1500));
-    } catch (e) {
-      console.error(`[Reddit] Error crawling r/${subreddit}:`, e);
     }
+    
+    if (!data) {
+      console.log(`[Reddit] r/${subreddit} failed: all proxies failed`);
+      return results;
+    }
+    
+    const children = data?.data?.children || [];
+    
+    for (const child of children) {
+      const post = child.data;
+      if (post.stickied || post.score < minScore) continue;
+      if (!post.title) continue;
+      
+      const content = post.selftext || '';
+      if (content.length < 50) continue;
+      
+      results.push({
+        id: post.id,
+        title: post.title,
+        content: content,
+        url: `https://reddit.com${post.permalink}`,
+        author: post.author,
+        subreddit: post.subreddit
+      });
+    }
+    
+    console.log(`[Reddit] r/${subreddit}: ${results.length} posts`);
+  } catch (e) {
+    console.error(`[Reddit] Error crawling r/${subreddit}:`, e);
   }
   
   return results;
 }
 
-// 爬取 GitHub
-async function crawlGitHub(queries: string[], minStars: number, token?: string): Promise<any[]> {
+// 爬取 Reddit（并发版本）
+async function crawlReddit(subreddits: string[], minScore: number): Promise<any[]> {
+  // 分批并发，每批 5 个，避免代理限流
+  const batchSize = 5;
+  const allResults: any[] = [];
+  const seenIds = new Set<string>();
+  
+  for (let i = 0; i < subreddits.length; i += batchSize) {
+    const batch = subreddits.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(sub => crawlSingleSubreddit(sub, minScore))
+    );
+    
+    // 合并并去重
+    for (const results of batchResults) {
+      for (const post of results) {
+        if (!seenIds.has(post.id)) {
+          seenIds.add(post.id);
+          allResults.push(post);
+        }
+      }
+    }
+    
+    // 批次间短暂延迟
+    if (i + batchSize < subreddits.length) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  
+  console.log(`[Reddit] Total: ${allResults.length} unique posts`);
+  return allResults;
+}
+
+// 爬取单个 GitHub 搜索词
+async function crawlSingleGitHubQuery(query: string, minStars: number, token?: string): Promise<any[]> {
   const results: any[] = [];
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github.v3+json'
   };
   if (token) headers['Authorization'] = `token ${token}`;
   
-  for (const query of queries) {
-    try {
-      console.log(`[GitHub] Searching "${query}"...`);
-      
-      const response = await fetch(
-        `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=15`,
-        { headers }
-      );
-      
-      if (!response.ok) {
-        console.log(`[GitHub] Search failed: ${response.status}`);
-        continue;
-      }
-      
-      const data = await response.json();
-      
-      for (const repo of (data?.items || [])) {
-        if (repo.stargazers_count < minStars) continue;
-        
-        // 尝试获取 README
+  try {
+    console.log(`[GitHub] Searching "${query}"...`);
+    
+    const response = await fetch(
+      `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=15`,
+      { headers }
+    );
+    
+    if (!response.ok) {
+      console.log(`[GitHub] Search failed: ${response.status}`);
+      return results;
+    }
+    
+    const data = await response.json();
+    const repos = data?.items || [];
+    
+    // 并发获取所有 README
+    const repoPromises = repos
+      .filter((repo: any) => repo.stargazers_count >= minStars)
+      .map(async (repo: any) => {
         let readme = '';
         try {
           const readmeRes = await fetch(
@@ -356,9 +388,9 @@ async function crawlGitHub(queries: string[], minStars: number, token?: string):
             const readmeData = await readmeRes.json();
             readme = atob(readmeData.content || '').substring(0, 3000);
           }
-        } catch (e) {}
+        } catch {}
         
-        results.push({
+        return {
           id: repo.full_name,
           title: repo.name,
           content: `${repo.description || ''}\n\n${readme}`,
@@ -367,17 +399,52 @@ async function crawlGitHub(queries: string[], minStars: number, token?: string):
           repoName: repo.full_name,
           stars: repo.stargazers_count,
           forks: repo.forks_count,
-          pushedAt: repo.pushed_at // 最新提交时间
-        });
-      }
-      
-      await new Promise(r => setTimeout(r, 1500));
-    } catch (e) {
-      console.error(`[GitHub] Error searching "${query}":`, e);
-    }
+          pushedAt: repo.pushed_at
+        };
+      });
+    
+    const repoResults = await Promise.all(repoPromises);
+    results.push(...repoResults);
+    
+    console.log(`[GitHub] "${query}": ${results.length} repos`);
+  } catch (e) {
+    console.error(`[GitHub] Error searching "${query}":`, e);
   }
   
   return results;
+}
+
+// 爬取 GitHub（并发版本）
+async function crawlGitHub(queries: string[], minStars: number, token?: string): Promise<any[]> {
+  // 分批并发，每批 3 个（GitHub API 限流更严格）
+  const batchSize = 3;
+  const allResults: any[] = [];
+  const seenIds = new Set<string>();
+  
+  for (let i = 0; i < queries.length; i += batchSize) {
+    const batch = queries.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(q => crawlSingleGitHubQuery(q, minStars, token))
+    );
+    
+    // 合并并去重
+    for (const results of batchResults) {
+      for (const repo of results) {
+        if (!seenIds.has(repo.id)) {
+          seenIds.add(repo.id);
+          allResults.push(repo);
+        }
+      }
+    }
+    
+    // 批次间延迟（GitHub API 限流）
+    if (i + batchSize < queries.length) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  
+  console.log(`[GitHub] Total: ${allResults.length} unique repos`);
+  return allResults;
 }
 
 // AI 分析提取提示词
@@ -393,15 +460,38 @@ async function analyzeWithAI(
     return null;
   }
 
-  const systemPrompt = `你是 AI 提示词专家。分析内容，提取高质量 AI 提示词。
+  const systemPrompt = `你是 AI 资源发现专家。分析内容，提取有价值的 AI 相关资源。
+
+提取范围（必须与 AI/LLM/机器学习相关）：
+1. AI 提示词（Prompts）- 可直接使用的提示词模板
+2. AI 工具/软件 - 如 ComfyUI 插件、AI 编程工具、自动化脚本
+3. AI 技术/框架 - 如模型微调方法、RAG 实现、Agent 框架
+4. AI 资源合集 - awesome-xxx 类型的资源列表
+5. AI 教程/指南 - 实用的学习资源和最佳实践
+6. AI 赚钱/商业化 - AI 副业、SaaS 项目、变现方法、自动化脚本
 
 输出 JSON：
 {
-  "prompts": [{ "title": "标题", "content": "完整提示词", "category": "分类", "quality": 8.5 }],
-  "analysis": { "summary": "摘要", "language": "语言" }
+  "prompts": [{ 
+    "title": "资源标题（简洁明了）", 
+    "content": "资源描述或完整内容。如果是工具/软件，说明其功能和用途；如果是提示词，给出完整内容；如果是赚钱方法，说明具体操作", 
+    "category": "分类（prompt/tool/framework/resource/tutorial/money）", 
+    "quality": 8.5 
+  }],
+  "analysis": { "summary": "内容摘要", "language": "语言" }
 }
 
-评分：10分=专业级，7-9=高质量，4-6=一般，1-3=低质量。无提示词返回空数组。`;
+评分标准：
+- 10分：专业级、广泛使用的优质资源
+- 7-9分：高质量、实用性强
+- 4-6分：一般，有一定参考价值
+- 1-3分：低质量或过时
+
+重要：
+- 只提取与 AI/LLM/机器学习直接相关的内容
+- 工具类资源要说明其核心功能和使用场景
+- 赚钱类资源要说明具体方法和可行性
+- 如果内容与 AI 无关，返回空数组`;
 
   try {
     // 使用用户配置的 baseUrl，和 ai-prompt-assistant 保持一致
@@ -637,7 +727,14 @@ export async function triggerCrawl(
       
       updateProgress('github', 'crawling', '正在爬取 GitHub...');
       const queries = config.github_search_queries;
-      const repos = await crawlGitHub(queries, config.min_github_stars);
+      
+      // 获取用户配置的 GitHub Token
+      const githubToken = await getGithubToken(userId);
+      if (githubToken) {
+        console.log('[Crawler] Using user GitHub token for higher rate limits');
+      }
+      
+      const repos = await crawlGitHub(queries, config.min_github_stars, githubToken || undefined);
       if (abortSignal?.aborted) return;
       
       githubStats.found = repos.length;
@@ -681,8 +778,7 @@ export async function triggerCrawl(
                   source_author: repo.author,
                   source_name: repo.repoName,
                   source_stars: repo.stars,
-                  source_forks: repo.forks,
-                  source_updated_at: repo.pushedAt // 最新提交时间
+                  source_forks: repo.forks
                 };
                 
                 const saved = await saveAndNotify(promptData, 'github');
