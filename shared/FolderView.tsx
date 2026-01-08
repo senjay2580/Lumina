@@ -132,7 +132,7 @@ function SubFolderRow({
         onClick={onClick}
         className="grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center"
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 overflow-hidden">
           <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
             <FolderIcon size={20} />
           </div>
@@ -283,12 +283,12 @@ function SubFolderGridItem({
     <>
       <div
         onClick={onClick}
-        className="relative group flex flex-col items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+        className="relative group flex flex-col items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer overflow-hidden"
       >
-        <div className="w-12 h-12 flex items-center justify-center">
+        <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
           <FolderIcon size={48} />
         </div>
-        <span className="text-xs text-gray-700 mt-1 truncate w-full text-center">{folder.name}</span>
+        <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all">{folder.name}</span>
         
         {/* 三个点菜单按�?*/}
         <div 
@@ -814,21 +814,23 @@ export function FolderView({
                       className="group grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center"
                       onClick={() => onResourceClick?.(resource)}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                         {resource.type === 'image' && resource.storage_path ? (
-                          <img src={getFileUrl(resource.storage_path)} alt="" className="w-5 h-5 rounded object-cover" />
+                          <img src={getFileUrl(resource.storage_path)} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0" />
                         ) : resource.type === 'github' ? (
-                          <Github className="w-4 h-4 text-gray-700" />
+                          <Github className="w-4 h-4 text-gray-700 flex-shrink-0" />
                         ) : resource.type === 'document' ? (
-                          <FileText className="w-4 h-4 text-blue-500" />
+                          <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
                         ) : resource.type === 'article' ? (
-                          <Newspaper className="w-4 h-4 text-orange-500" />
+                          <Newspaper className="w-4 h-4 text-orange-500 flex-shrink-0" />
                         ) : resource.type === 'image' ? (
-                          <ImageIcon className="w-4 h-4 text-cyan-500" />
+                          <ImageIcon className="w-4 h-4 text-cyan-500 flex-shrink-0" />
                         ) : (
-                          <Link2 className="w-4 h-4 text-green-500" />
+                          <Link2 className="w-4 h-4 text-green-500 flex-shrink-0" />
                         )}
-                        <span className="text-sm text-gray-900 truncate">{resource.title}</span>
+                        <Tooltip content={resource.title}>
+                          <span className="text-sm text-gray-900 truncate">{resource.title}</span>
+                        </Tooltip>
                       </div>
                       <div className="text-xs text-gray-400">
                         {new Date(resource.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
@@ -856,15 +858,15 @@ export function FolderView({
                   {resources.map(resource => (
                     <div
                       key={resource.id}
-                      className="relative group flex flex-col items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+                      className="relative group flex flex-col items-center p-2 rounded-lg hover:bg-gray-50 cursor-pointer overflow-hidden"
                       onClick={() => onResourceClick?.(resource)}
                     >
                       {resource.type === 'image' && resource.storage_path ? (
-                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
                           <img src={getFileUrl(resource.storage_path)} alt="" className="w-full h-full object-cover" />
                         </div>
                       ) : (
-                        <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                        <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
                           {resource.type === 'github' ? (
                             <Github className="w-6 h-6 text-gray-700" />
                           ) : resource.type === 'document' ? (
@@ -878,7 +880,9 @@ export function FolderView({
                           )}
                         </div>
                       )}
-                      <span className="text-xs text-gray-700 mt-1 truncate w-full text-center">{resource.title}</span>
+                      <Tooltip content={resource.title}>
+                        <span className="text-xs text-gray-700 mt-1 w-full text-center line-clamp-2 break-all">{resource.title}</span>
+                      </Tooltip>
                       {/* 三个点菜单 */}
                       <div className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100">
                         <ResourceItemMenu 
