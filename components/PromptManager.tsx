@@ -18,7 +18,7 @@ import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
-import { BarChart3, Sparkles } from 'lucide-react';
+import { BarChart3, Sparkles, Pin } from 'lucide-react';
 import { PromptStatsPanel } from './PromptStatsPanel';
 import { SearchOverlay, SearchMatch } from '../shared/SearchOverlay';
 import { AIEditorToolbar } from '../shared/AIEditorToolbar';
@@ -266,6 +266,17 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
     setDeleteConfirm({ open: false, type: 'category', id: '' });
   };
 
+  // 置顶/取消置顶提示词
+  const handleTogglePin = async (prompt: Prompt) => {
+    try {
+      const updated = await api.togglePinPrompt(prompt.id, !prompt.is_pinned);
+      setPrompts(prev => prev.map(p => p.id === prompt.id ? updated : p));
+      toast.success(updated.is_pinned ? '已置顶' : '已取消置顶');
+    } catch (err: any) {
+      toast.error(err.message || '操作失败');
+    }
+  };
+
   // 导出单个提示词为 Markdown 文件
   const handleExportPrompt = (prompt: Prompt) => {
     // 从 HTML 中提取纯文本
@@ -440,6 +451,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
   };
 
   const getPromptMenuItems = (prompt: Prompt): ContextMenuItem[] => [
+    { label: prompt.is_pinned ? '取消置顶' : '置顶', icon: <Pin className={`w-4 h-4 ${prompt.is_pinned ? 'fill-amber-400 text-amber-400' : ''}`} />, onClick: () => handleTogglePin(prompt) },
     { label: '复制', icon: <CopyIcon />, onClick: () => handleDuplicatePrompt(prompt) },
     { label: '导出', icon: <ExportIcon />, onClick: () => handleExportPrompt(prompt) },
     { label: '', divider: true, onClick: () => {} },
@@ -637,55 +649,128 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredPrompts.map(prompt => {
-                const colors = getCategoryColors(getCategoryColor(prompt.category_id));
-                const isSelected = selectedPromptIds.has(prompt.id);
-                return (
-                  <div key={prompt.id} className={`group bg-white rounded-2xl p-6 border cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300 relative ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'}`}
-                    onClick={(e) => isSelectMode ? togglePromptSelection(prompt.id, e) : openPromptDetail(prompt)} onContextMenu={(e) => promptMenu.open(e, prompt)}>
-                    {/* 选择模式下的复选框 */}
-                    {isSelectMode && (
-                      <div 
-                        className={`absolute top-3 right-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}
-                        onClick={(e) => togglePromptSelection(prompt.id, e)}
-                      >
-                        {isSelected && (
-                          <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                            <path d="M20 6L9 17l-5-5" />
-                          </svg>
-                        )}
+            {/* 置顶提示词区域 */}
+            {(() => {
+              const pinnedPrompts = filteredPrompts.filter(p => p.is_pinned);
+              const normalPrompts = filteredPrompts.filter(p => !p.is_pinned);
+              
+              return (
+                <>
+                  {pinnedPrompts.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-3 mb-4">
+                        <Pin className="w-4 h-4 text-amber-500 fill-amber-500" />
+                        <span className="text-sm font-medium text-gray-600">置顶</span>
+                        <span className="text-xs text-gray-400">({pinnedPrompts.length})</span>
                       </div>
-                    )}
-                    <div className="flex justify-between items-start mb-4">
-                      <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
-                      {!isSelectMode && (
-                        <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
-                      )}
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-primary transition-colors">{prompt.title}</h3>
-                    <p className="text-sm text-gray-500 line-clamp-3 mb-4">{stripHtml(prompt.content)}</p>
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-wrap gap-2">{prompt.tags?.map(tag => <span key={tag} className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">#{tag}</span>)}</div>
-                      {(prompt.copy_count ?? 0) > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-gray-400" title="复制次数">
-                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                          </svg>
-                          {prompt.copy_count}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+                        {pinnedPrompts.map(prompt => {
+                          const colors = getCategoryColors(getCategoryColor(prompt.category_id));
+                          const isSelected = selectedPromptIds.has(prompt.id);
+                          return (
+                            <div key={prompt.id} 
+                              className={`group relative bg-gradient-to-br from-amber-50 via-white to-orange-50 rounded-2xl p-6 border-2 cursor-pointer hover:-translate-y-2 hover:shadow-2xl transition-all duration-300 ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-amber-200'}`}
+                              onClick={(e) => isSelectMode ? togglePromptSelection(prompt.id, e) : openPromptDetail(prompt)} 
+                              onContextMenu={(e) => promptMenu.open(e, prompt)}
+                            >
+                              {/* 置顶标识 */}
+                              <div className="absolute -top-2 -right-2 w-8 h-8 bg-amber-400 rounded-full flex items-center justify-center shadow-lg">
+                                <Pin className="w-4 h-4 text-white fill-white" />
+                              </div>
+                              {/* 选择模式下的复选框 */}
+                              {isSelectMode && (
+                                <div className={`absolute top-3 left-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}
+                                  onClick={(e) => togglePromptSelection(prompt.id, e)}>
+                                  {isSelected && <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>}
+                                </div>
+                              )}
+                              <div className="flex justify-between items-start mb-4">
+                                <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
+                                {!isSelectMode && (
+                                  <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-amber-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
+                                )}
+                              </div>
+                              <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-amber-600 transition-colors">{prompt.title}</h3>
+                              <p className="text-sm text-gray-500 line-clamp-3 mb-4">{stripHtml(prompt.content)}</p>
+                              <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap gap-2">{prompt.tags?.map(tag => <span key={tag} className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">#{tag}</span>)}</div>
+                                {(prompt.copy_count ?? 0) > 0 && (
+                                  <div className="flex items-center gap-1 text-xs text-amber-500" title="复制次数">
+                                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                                    </svg>
+                                    {prompt.copy_count}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* 分割线 */}
+                      {normalPrompts.length > 0 && (
+                        <div className="flex items-center gap-4 mb-6">
+                          <div className="flex-1 h-px bg-gray-200"></div>
+                          <span className="text-xs text-gray-400">其他提示词</span>
+                          <div className="flex-1 h-px bg-gray-200"></div>
                         </div>
                       )}
-                    </div>
+                    </>
+                  )}
+                  
+                  {/* 普通提示词 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {normalPrompts.map(prompt => {
+                      const colors = getCategoryColors(getCategoryColor(prompt.category_id));
+                      const isSelected = selectedPromptIds.has(prompt.id);
+                      return (
+                        <div key={prompt.id} className={`group bg-white rounded-2xl p-6 border cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300 relative ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'}`}
+                          onClick={(e) => isSelectMode ? togglePromptSelection(prompt.id, e) : openPromptDetail(prompt)} onContextMenu={(e) => promptMenu.open(e, prompt)}>
+                          {/* 选择模式下的复选框 */}
+                          {isSelectMode && (
+                            <div 
+                              className={`absolute top-3 right-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}
+                              onClick={(e) => togglePromptSelection(prompt.id, e)}
+                            >
+                              {isSelected && (
+                                <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex justify-between items-start mb-4">
+                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
+                            {!isSelectMode && (
+                              <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
+                            )}
+                          </div>
+                          <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-primary transition-colors">{prompt.title}</h3>
+                          <p className="text-sm text-gray-500 line-clamp-3 mb-4">{stripHtml(prompt.content)}</p>
+                          <div className="flex items-center justify-between">
+                            <div className="flex flex-wrap gap-2">{prompt.tags?.map(tag => <span key={tag} className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">#{tag}</span>)}</div>
+                            {(prompt.copy_count ?? 0) > 0 && (
+                              <div className="flex items-center gap-1 text-xs text-gray-400" title="复制次数">
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                                </svg>
+                                {prompt.copy_count}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!isSelectMode && (
+                      <div onClick={handleCreatePrompt} className="border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all cursor-pointer min-h-[200px]">
+                        <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><PlusIcon className="w-6 h-6" /></div>
+                        <span className="font-medium">新建提示词</span>
+                      </div>
+                    )}
                   </div>
-                );
-              })}
-              {!isSelectMode && (
-                <div onClick={handleCreatePrompt} className="border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all cursor-pointer min-h-[200px]">
-                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><PlusIcon className="w-6 h-6" /></div>
-                  <span className="font-medium">新建提示词</span>
-                </div>
-              )}
-            </div>
+                </>
+              );
+            })()}
 
             {filteredPrompts.length === 0 && <div className="text-center py-16"><p className="text-gray-500 mb-2">暂无提示词</p><p className="text-gray-400 text-sm">点击上方按钮创建</p></div>}
           </>
@@ -1028,6 +1113,27 @@ const TiptapEditor: React.FC<{
     editorProps: {
       attributes: {
         class: 'outline-none min-h-full',
+      },
+      // 处理 Markdown 粘贴
+      handlePaste: (view, event, slice) => {
+        const text = event.clipboardData?.getData('text/plain');
+        if (!text) return false;
+        
+        // 检测是否包含 Markdown 语法
+        const hasMarkdown = /^#{1,6}\s|^\*\*|^__|\*\*$|__$|^```|^-\s|^\d+\.\s|^\[.*\]\(.*\)|^>\s/m.test(text);
+        
+        if (hasMarkdown) {
+          event.preventDefault();
+          // 同步解析 Markdown
+          const html = marked.parse(text, { async: false }) as string;
+          // 使用 insertContent 命令插入 HTML
+          const editor = (view as any).editor;
+          if (editor) {
+            editor.commands.insertContent(html);
+            return true;
+          }
+        }
+        return false;
       },
       handleKeyDown: (view, event) => {
         // 在空标题行按 Backspace 时转换为段落

@@ -22,6 +22,8 @@ export interface Prompt {
   deleted_at: string | null;
   copy_count?: number;
   last_copied_at?: string | null;
+  is_pinned?: boolean;                   // 是否置顶
+  pinned_at?: string | null;             // 置顶时间
   // AI 功能新增字段
   content_en?: string | null;           // 英文翻译版本
   content_translated_at?: string | null; // 翻译时间
@@ -206,6 +208,27 @@ export async function updatePrompt(
   // 使缓存失效
   invalidateCache(CACHE_KEYS.PROMPTS, data.user_id);
   invalidateCache(CACHE_KEYS.ACTIVITY, data.user_id);
+  
+  return data;
+}
+
+// 置顶/取消置顶提示词
+export async function togglePinPrompt(id: string, isPinned: boolean): Promise<Prompt> {
+  const { data, error } = await supabase
+    .from('prompts')
+    .update({ 
+      is_pinned: isPinned, 
+      pinned_at: isPinned ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString() 
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) throw error;
+  
+  // 使缓存失效
+  invalidateCache(CACHE_KEYS.PROMPTS, data.user_id);
   
   return data;
 }

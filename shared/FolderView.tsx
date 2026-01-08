@@ -196,7 +196,7 @@ function SubFolderRow({
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); setIsEditing(true); }}
               className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
             >
-              <Edit3 className="w-3.5 h-3.5" /> 重命�?
+              <Edit3 className="w-3.5 h-3.5" /> 重命名
             </button>
             <button 
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); handleMoveOut(); }}
@@ -697,7 +697,7 @@ export function FolderView({
                   {showMenu && (
                     <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-10">
                       <button onClick={() => { setShowMenu(false); setIsEditing(true); }} className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-50 flex items-center gap-2">
-                        <Edit3 className="w-3.5 h-3.5" /> 重命�?
+                        <Edit3 className="w-3.5 h-3.5" /> 重命名
                       </button>
                       <button onClick={() => { setShowMenu(false); setShowDeleteConfirm(true); }} className="w-full px-3 py-1.5 text-left text-sm text-red-500 hover:bg-red-50 flex items-center gap-2">
                         <Trash2 className="w-3.5 h-3.5" /> 删除
