@@ -50,6 +50,7 @@ import { Button } from '../shared/Button';
 import { FolderView } from '../shared/FolderView';
 import { FolderCard } from '../shared/FolderCard';
 import { DragFolderPreview } from '../shared/DragFolderPreview';
+import { getGithubToken } from '../lib/user-credentials';
 import {
   ResourceFolder,
   getSubFolders,
@@ -82,7 +83,7 @@ import {
   downloadFile,
   canOpenInViewer
 } from '../lib/resources';
-import { fetchRecommendedResources, fetchDetailsForResources, fetchFeaturedProjects, groupByYear, formatStars, type RecommendedResource, type FeaturedCategory } from '../lib/recommended-resources';
+import { fetchRecommendedResources, fetchDetailsForResources, fetchFeaturedProjects, groupByYear, formatStars, setGithubToken, type RecommendedResource, type FeaturedCategory } from '../lib/recommended-resources';
 import { getDefaultProvider, type AIProvider } from '../lib/ai-providers';
 import { streamAIResponse } from '../lib/ai-prompt-assistant';
 
@@ -2968,11 +2969,25 @@ function RecommendedResourcesModal({
     setLoading(true);
     setError(null);
     
-    // 并行加载资源和精选项目
-    Promise.all([
-      fetchRecommendedResources(),
-      fetchFeaturedProjects()
-    ]).then(([resourcesData, featuredData]) => {
+    // 先获取 GitHub Token 并设置
+    const loadWithToken = async () => {
+      try {
+        if (userId) {
+          const token = await getGithubToken(userId);
+          setGithubToken(token);
+        }
+      } catch (e) {
+        console.warn('获取 GitHub Token 失败:', e);
+      }
+      
+      // 并行加载资源和精选项目
+      return Promise.all([
+        fetchRecommendedResources(),
+        fetchFeaturedProjects()
+      ]);
+    };
+    
+    loadWithToken().then(([resourcesData, featuredData]) => {
       setResources(resourcesData);
       setFeaturedProjects(featuredData.projects);
       setFeaturedCategories(featuredData.categories);
@@ -2989,7 +3004,7 @@ function RecommendedResourcesModal({
       .finally(() => {
         setLoading(false);
       });
-  }, [isOpen]);
+  }, [isOpen, userId]);
   
   // 渐进式加载详情 - 当显示的资源变化时触发
   useEffect(() => {
@@ -3439,8 +3454,13 @@ ${resourceList}
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
+              onClick={async () => {
                 setLoading(true);
+                // 确保 Token 已设置
+                if (userId) {
+                  const token = await getGithubToken(userId);
+                  setGithubToken(token);
+                }
                 fetchRecommendedResources(true)
                   .then(setResources)
                   .finally(() => setLoading(false));
@@ -3896,9 +3916,14 @@ ${resourceList}
               </div>
               <p className="text-gray-500 mb-4">{error}</p>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setLoading(true);
                   setError(null);
+                  // 确保 Token 已设置
+                  if (userId) {
+                    const token = await getGithubToken(userId);
+                    setGithubToken(token);
+                  }
                   fetchRecommendedResources(true)
                     .then(setResources)
                     .catch(() => setError('加载失败'))

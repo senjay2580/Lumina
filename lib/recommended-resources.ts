@@ -1,6 +1,8 @@
 // 推荐资源 - 实时从 GitHubDaily 仓库获取
 // https://github.com/GitHubDaily/GitHubDaily
 
+import { getGithubToken } from './user-credentials'
+
 export interface RecommendedResource {
   title: string;
   url: string;
@@ -25,13 +27,40 @@ const CACHE_DURATION = 30 * 60 * 1000; // 30 分钟缓存
 // 详情缓存（持久化）
 const detailsCache = new Map<string, Partial<RecommendedResource>>();
 
+// 当前用户的 GitHub Token（由调用方设置）
+let currentGithubToken: string | null = null;
+
+// 设置 GitHub Token
+export function setGithubToken(token: string | null) {
+  currentGithubToken = token;
+  console.log('[推荐资源] GitHub Token 已设置:', token ? '有效' : '无');
+}
+
+// 获取 GitHub API 请求头
+function getGithubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github.v3+json'
+  };
+  if (currentGithubToken) {
+    headers['Authorization'] = `Bearer ${currentGithubToken}`;
+    console.log('[推荐资源] 使用 GitHub Token 请求');
+  } else {
+    console.log('[推荐资源] 未配置 Token，使用匿名请求');
+  }
+  return headers;
+}
+
 // 从 GitHub 获取仓库文件列表
 async function getRepoFiles(): Promise<string[]> {
   const response = await fetch(
     'https://api.github.com/repos/GitHubDaily/GitHubDaily/contents',
-    { headers: { 'Accept': 'application/vnd.github.v3+json' } }
+    { headers: getGithubHeaders() }
   );
-  if (!response.ok) throw new Error('Failed to fetch repo contents');
+  if (!response.ok) {
+    const remaining = response.headers.get('X-RateLimit-Remaining');
+    console.error('GitHub API 错误:', response.status, '剩余配额:', remaining);
+    throw new Error('Failed to fetch repo contents');
+  }
   const files = await response.json();
   return files
     .filter((f: any) => /^\d{4}\.md$/.test(f.name))
@@ -91,10 +120,15 @@ async function fetchSingleRepoDetail(resource: RecommendedResource): Promise<Rec
   try {
     const response = await fetch(
       `https://api.github.com/repos/${resource.owner}/${resource.repo}`,
-      { headers: { 'Accept': 'application/vnd.github.v3+json' } }
+      { headers: getGithubHeaders() }
     );
     
     if (!response.ok) {
+      // 如果是速率限制，记录日志
+      if (response.status === 403 || response.status === 429) {
+        const remaining = response.headers.get('X-RateLimit-Remaining');
+        console.warn(`GitHub API 限流: ${resource.owner}/${resource.repo}, 剩余配额: ${remaining}`);
+      }
       return { ...resource, detailsLoaded: true };
     }
     

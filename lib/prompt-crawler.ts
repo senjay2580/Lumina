@@ -474,7 +474,7 @@ async function analyzeWithAI(
 {
   "prompts": [{ 
     "title": "资源标题（简洁明了）", 
-    "content": "资源描述或完整内容。如果是工具/软件，说明其功能和用途；如果是提示词，给出完整内容；如果是赚钱方法，说明具体操作", 
+    "content": "资源描述（100-200字，说明核心功能、用途和价值）", 
     "category": "分类（prompt/tool/framework/resource/tutorial/money）", 
     "quality": 8.5 
   }],
@@ -487,10 +487,10 @@ async function analyzeWithAI(
 - 4-6分：一般，有一定参考价值
 - 1-3分：低质量或过时
 
-重要：
+重要规则：
+- 每个来源只返回 1 个最核心的资源（不要拆分成多个）
+- 对于 GitHub 仓库，用一段话概括整个项目的价值
 - 只提取与 AI/LLM/机器学习直接相关的内容
-- 工具类资源要说明其核心功能和使用场景
-- 赚钱类资源要说明具体方法和可行性
 - 如果内容与 AI 无关，返回空数组`;
 
   try {
@@ -620,6 +620,21 @@ export async function triggerCrawl(
     promptData: any,
     source: 'reddit' | 'github'
   ): Promise<CrawledPrompt | null> => {
+    // 对于 GitHub，用 source_url 去重（同一仓库只保存一条）
+    if (source === 'github' && promptData.source_url) {
+      const { data: existingByUrl } = await supabase
+        .from('extracted_prompts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('source_url', promptData.source_url)
+        .maybeSingle();
+      
+      if (existingByUrl) {
+        console.log(`[Crawler] Skipping duplicate GitHub repo: ${promptData.source_url}`);
+        return null;
+      }
+    }
+    
     // 计算内容哈希
     const contentHash = await computeContentHash(promptData.prompt_content);
     

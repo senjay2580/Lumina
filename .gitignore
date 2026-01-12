@@ -25,3 +25,6 @@ dist-ssr
 
 # Kiro
 .kiro/
+
+# Personal memory files
+docs/career-planning-memory.md

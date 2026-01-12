@@ -3,6 +3,7 @@
 // 支持 WeWe-RSS 微信公众号订阅
 
 import { supabase } from './supabase'
+import { getUserCredential } from './user-credentials'
 
 export interface RSSSubscription {
   id: string
@@ -293,11 +294,80 @@ export async function refreshSubscription(subscriptionId: string): Promise<numbe
   
   if (subError || !subscription) throw new Error('订阅不存在')
   
-  // 解析 feed
-  const feedInfo = await parseFeed(subscription.feed_url)
+  let feedInfo: {
+    title: string
+    description?: string
+    siteUrl?: string
+    iconUrl?: string
+    items: Array<{
+      guid: string
+      title: string
+      link: string
+      description?: string
+      content?: string
+      author?: string
+      pubDate?: string
+    }>
+  }
+  
+  // 对于微信公众号订阅，需要先触发 WeWe-RSS 刷新，再获取 RSS
+  if (subscription.source_type === 'wechat' && subscription.mp_id) {
+    try {
+      // 从 feed_url 提取 base URL
+      const feedUrl = new URL(subscription.feed_url)
+      const baseUrl = `${feedUrl.protocol}//${feedUrl.host}`
+      
+      // 获取用户的 WeWe-RSS 配置
+      const authCode = await getUserCredential(subscription.user_id, 'wewe-rss', 'auth_code')
+      
+      if (authCode) {
+        // 先调用 WeWe-RSS API 刷新文章
+        console.log('触发 WeWe-RSS 刷新文章...')
+        try {
+          const refreshResponse = await fetch(`${baseUrl}/trpc/feed.refreshArticles`, {
+            method: 'POST',
+            headers: {
+              'Authorization': authCode,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ mpId: subscription.mp_id })
+          })
+          if (refreshResponse.ok) {
+            console.log('WeWe-RSS 刷新成功')
+            // 等待一小段时间让服务器处理
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          } else {
+            console.warn('WeWe-RSS 刷新 API 返回:', refreshResponse.status)
+          }
+        } catch (refreshErr) {
+          console.warn('调用 WeWe-RSS 刷新 API 失败:', refreshErr)
+        }
+      }
+      
+      // 获取 RSS XML
+      const response = await fetch(subscription.feed_url)
+      if (!response.ok) {
+        console.error('获取 RSS 失败:', response.status, response.statusText)
+        throw new Error(`获取 RSS 失败: ${response.status}`)
+      }
+      const xmlText = await response.text()
+      console.log('RSS XML 长度:', xmlText.length, '前100字符:', xmlText.slice(0, 100))
+      feedInfo = parseRssXml(xmlText, subscription.title)
+      console.log('解析到文章数:', feedInfo.items.length)
+    } catch (err) {
+      console.error('直接获取 RSS 失败，尝试使用代理:', err)
+      // 如果直接获取失败，回退到代理方式
+      feedInfo = await parseFeed(subscription.feed_url)
+    }
+  } else {
+    // 普通 RSS 使用代理解析
+    feedInfo = await parseFeed(subscription.feed_url)
+  }
   
   // 保存新文章
-  await saveRSSItems(subscriptionId, feedInfo.items)
+  if (feedInfo.items.length > 0) {
+    await saveRSSItems(subscriptionId, feedInfo.items)
+  }
   
   // 更新最后获取时间
   await supabase
@@ -310,6 +380,156 @@ export async function refreshSubscription(subscriptionId: string): Promise<numbe
     .eq('id', subscriptionId)
   
   return feedInfo.items.length
+}
+
+// 解析 RSS/Atom XML 文本
+function parseRssXml(xmlText: string, defaultTitle: string): {
+  title: string
+  description?: string
+  siteUrl?: string
+  iconUrl?: string
+  items: Array<{
+    guid: string
+    title: string
+    link: string
+    description?: string
+    content?: string
+    author?: string
+    pubDate?: string
+  }>
+} {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(xmlText, 'text/xml')
+  
+  // 检查解析错误
+  const parseError = doc.querySelector('parsererror')
+  if (parseError) {
+    console.error('RSS XML 解析错误:', parseError.textContent)
+    throw new Error('RSS XML 解析失败')
+  }
+  
+  // 判断是 RSS 还是 Atom 格式
+  const isAtom = doc.querySelector('feed') !== null
+  
+  if (isAtom) {
+    return parseAtomXml(doc, defaultTitle)
+  }
+  
+  // RSS 格式解析
+  const channel = doc.querySelector('channel')
+  const title = channel?.querySelector('title')?.textContent || defaultTitle
+  const description = channel?.querySelector('description')?.textContent || undefined
+  const siteUrl = channel?.querySelector('link')?.textContent || undefined
+  
+  // 获取文章列表
+  const itemElements = doc.querySelectorAll('item')
+  const items: Array<{
+    guid: string
+    title: string
+    link: string
+    description?: string
+    content?: string
+    author?: string
+    pubDate?: string
+  }> = []
+  
+  itemElements.forEach((item) => {
+    const itemTitle = item.querySelector('title')?.textContent || ''
+    const itemLink = item.querySelector('link')?.textContent || ''
+    const itemGuid = item.querySelector('guid')?.textContent || itemLink
+    const itemDescription = item.querySelector('description')?.textContent || undefined
+    // content:encoded 或 content
+    const itemContent = item.querySelector('content\\:encoded')?.textContent || 
+                        item.querySelector('encoded')?.textContent ||
+                        item.querySelector('content')?.textContent || undefined
+    const itemAuthor = item.querySelector('author')?.textContent || 
+                       item.querySelector('dc\\:creator')?.textContent || undefined
+    const itemPubDate = item.querySelector('pubDate')?.textContent || undefined
+    
+    if (itemTitle && itemLink) {
+      items.push({
+        guid: itemGuid,
+        title: itemTitle,
+        link: itemLink,
+        description: itemDescription,
+        content: itemContent,
+        author: itemAuthor,
+        pubDate: itemPubDate
+      })
+    }
+  })
+  
+  return {
+    title,
+    description,
+    siteUrl,
+    items
+  }
+}
+
+// 解析 Atom 格式
+function parseAtomXml(doc: Document, defaultTitle: string): {
+  title: string
+  description?: string
+  siteUrl?: string
+  iconUrl?: string
+  items: Array<{
+    guid: string
+    title: string
+    link: string
+    description?: string
+    content?: string
+    author?: string
+    pubDate?: string
+  }>
+} {
+  const feed = doc.querySelector('feed')
+  const title = feed?.querySelector('title')?.textContent || defaultTitle
+  const description = feed?.querySelector('subtitle')?.textContent || undefined
+  const siteLink = feed?.querySelector('link[rel="alternate"]') || feed?.querySelector('link')
+  const siteUrl = siteLink?.getAttribute('href') || undefined
+  
+  const entryElements = doc.querySelectorAll('entry')
+  const items: Array<{
+    guid: string
+    title: string
+    link: string
+    description?: string
+    content?: string
+    author?: string
+    pubDate?: string
+  }> = []
+  
+  entryElements.forEach((entry) => {
+    const itemTitle = entry.querySelector('title')?.textContent || ''
+    const linkEl = entry.querySelector('link[rel="alternate"]') || entry.querySelector('link')
+    const itemLink = linkEl?.getAttribute('href') || ''
+    const itemGuid = entry.querySelector('id')?.textContent || itemLink
+    const itemDescription = entry.querySelector('summary')?.textContent || undefined
+    const itemContent = entry.querySelector('content')?.textContent || undefined
+    const itemAuthor = entry.querySelector('author name')?.textContent || undefined
+    const itemPubDate = entry.querySelector('published')?.textContent || 
+                        entry.querySelector('updated')?.textContent || undefined
+    
+    if (itemTitle && itemLink) {
+      items.push({
+        guid: itemGuid,
+        title: itemTitle,
+        link: itemLink,
+        description: itemDescription,
+        content: itemContent,
+        author: itemAuthor,
+        pubDate: itemPubDate
+      })
+    }
+  })
+  
+  return {
+    title,
+    description,
+    siteUrl,
+    items
+  }
 }
 
 // 检测 URL 是否是微信公众号文章
@@ -486,16 +706,20 @@ export async function testWeweConnection(baseUrl: string, authCode: string): Pro
     const feedsResponse = await fetch(`${normalizedUrl}/feeds`)
     if (!feedsResponse.ok) return false
     
-    // 如果有 authCode，测试 tRPC API
+    // 如果有 authCode，测试 tRPC API（使用 GET 请求 query 方式）
     if (authCode) {
-      const trpcResponse = await fetch(`${normalizedUrl}/trpc/feed.list`, {
-        method: 'POST',
+      // tRPC query 使用 GET 请求，input 通过 URL 参数传递
+      const trpcResponse = await fetch(`${normalizedUrl}/trpc/feed.list?input=${encodeURIComponent(JSON.stringify({}))}`, {
+        method: 'GET',
         headers: {
-          'Authorization': authCode,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({})
+          'Authorization': authCode
+        }
       })
+      // 如果返回 404，可能是旧版本 API，尝试直接使用 /feeds 端点的结果
+      if (trpcResponse.status === 404) {
+        // 旧版本不支持 tRPC，但 /feeds 已经成功，认为连接正常
+        return true
+      }
       if (!trpcResponse.ok) return false
       const result = await trpcResponse.json()
       if (result.error) return false
@@ -640,7 +864,10 @@ export async function syncItemToResource(
     return { resourceId: existingByTitle.id, isNew: false }
   }
   
-  // 创建新资源
+  // 创建新资源 - 使用文章发布时间作为 created_at
+  const pubDate = item.pub_date ? new Date(item.pub_date) : null
+  const createdAt = pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString()
+  
   const { data: resource, error } = await supabase
     .from('resources')
     .insert({
@@ -649,6 +876,7 @@ export async function syncItemToResource(
       title: item.title,
       description: item.description?.replace(/<[^>]*>/g, '').slice(0, 500) || undefined,
       url: item.link,
+      created_at: createdAt, // 使用文章发布时间
       metadata: {
         source: 'rss',
         subscription_id: subscription.id,
