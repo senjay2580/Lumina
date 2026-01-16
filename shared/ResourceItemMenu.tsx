@@ -141,25 +141,45 @@ interface ContextMenuProps {
 export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState(position);
+  const [isPositioned, setIsPositioned] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      
-      let x = position.x;
-      let y = position.y;
-      
-      if (x + rect.width > viewportWidth - 8) {
-        x = viewportWidth - rect.width - 8;
+    const adjustPosition = () => {
+      if (menuRef.current) {
+        const rect = menuRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const padding = 8;
+        
+        let x = position.x;
+        let y = position.y;
+        
+        // 水平方向：如果右边超出，向左调整
+        if (x + rect.width > viewportWidth - padding) {
+          x = Math.max(padding, viewportWidth - rect.width - padding);
+        }
+        
+        // 垂直方向：如果下方超出，向上弹出
+        if (y + rect.height > viewportHeight - padding) {
+          y = position.y - rect.height;
+          // 如果向上也超出，则贴近底部
+          if (y < padding) {
+            y = viewportHeight - rect.height - padding;
+          }
+        }
+        
+        // 确保不超出边界
+        x = Math.max(padding, x);
+        y = Math.max(padding, y);
+        
+        setAdjustedPosition({ x, y });
+        setIsPositioned(true);
+        requestAnimationFrame(() => setIsVisible(true));
       }
-      if (y + rect.height > viewportHeight - 8) {
-        y = viewportHeight - rect.height - 8;
-      }
-      
-      setAdjustedPosition({ x, y });
-    }
+    };
+    
+    requestAnimationFrame(adjustPosition);
   }, [position]);
 
   const visibleItems = items.filter(i => !i.hidden);
@@ -174,8 +194,13 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
       <motion.div
         ref={menuRef}
         initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        style={{ position: 'fixed', top: adjustedPosition.y, left: adjustedPosition.x }}
+        animate={{ opacity: isVisible ? 1 : 0, scale: isVisible ? 1 : 0.95 }}
+        style={{ 
+          position: 'fixed', 
+          top: adjustedPosition.y, 
+          left: adjustedPosition.x,
+          visibility: isPositioned ? 'visible' : 'hidden'
+        }}
         className="bg-white rounded-xl shadow-lg border border-gray-100 py-1.5 z-[9999] min-w-[140px]"
       >
         {visibleItems.map((item, index) => (

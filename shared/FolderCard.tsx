@@ -54,8 +54,50 @@ export function FolderCard({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuAdjusted, setContextMenuAdjusted] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+
+  // 智能调整右键菜单位置
+  useEffect(() => {
+    if (contextMenu && contextMenuRef.current) {
+      const adjustPosition = () => {
+        const rect = contextMenuRef.current!.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const padding = 8;
+        
+        let x = contextMenu.x;
+        let y = contextMenu.y;
+        
+        // 水平方向调整
+        if (x + rect.width > viewportWidth - padding) {
+          x = Math.max(padding, viewportWidth - rect.width - padding);
+        }
+        
+        // 垂直方向：如果下方超出，向上弹出
+        if (y + rect.height > viewportHeight - padding) {
+          y = contextMenu.y - rect.height;
+          if (y < padding) {
+            y = viewportHeight - rect.height - padding;
+          }
+        }
+        
+        x = Math.max(padding, x);
+        y = Math.max(padding, y);
+        
+        setContextMenuAdjusted({ x, y });
+        requestAnimationFrame(() => setContextMenuVisible(true));
+      };
+      
+      requestAnimationFrame(adjustPosition);
+    } else {
+      setContextMenuAdjusted(null);
+      setContextMenuVisible(false);
+    }
+  }, [contextMenu]);
 
   useEffect(() => {
     if (showMenu && menuButtonRef.current) {
@@ -264,9 +306,15 @@ export function FolderCard({
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
           />
           <motion.div
+            ref={contextMenuRef}
             initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
+            animate={{ opacity: contextMenuVisible ? 1 : 0, scale: contextMenuVisible ? 1 : 0.95 }}
+            style={{ 
+              position: 'fixed', 
+              top: contextMenuAdjusted?.y ?? contextMenu.y, 
+              left: contextMenuAdjusted?.x ?? contextMenu.x,
+              visibility: contextMenuAdjusted ? 'visible' : 'hidden'
+            }}
             className="bg-white rounded-xl shadow-lg border border-gray-100 py-1.5 z-[9999] min-w-[140px]"
             onClick={(e) => e.stopPropagation()}
           >

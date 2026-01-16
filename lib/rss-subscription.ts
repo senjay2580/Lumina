@@ -731,6 +731,248 @@ export async function testWeweConnection(baseUrl: string, authCode: string): Pro
   }
 }
 
+// WeWe-RSS 账号信息
+export interface WeweAccount {
+  id: string
+  name: string
+  status: number // 1=正常, 0=禁用, -1=失效
+  createdAt: string
+  updatedAt: string
+}
+
+// WeWe-RSS 账号状态检测结果
+export interface WeweAccountStatus {
+  connected: boolean           // 服务是否可连接
+  hasAccounts: boolean         // 是否有账号
+  accounts: WeweAccount[]      // 账号列表
+  invalidAccounts: WeweAccount[] // 失效的账号
+  blockedAccounts: string[]    // 被封禁的账号 ID（今日小黑屋）
+  allAccountsInvalid: boolean  // 是否所有账号都失效
+  needRelogin: boolean         // 是否需要重新登录
+  message: string              // 状态描述
+}
+
+// 检测 WeWe-RSS 账号状态（可靠的检测方式）
+export async function checkWeweAccountStatus(baseUrl: string, authCode: string): Promise<WeweAccountStatus> {
+  const normalizedUrl = normalizeWeweBaseUrl(baseUrl)
+  
+  const result: WeweAccountStatus = {
+    connected: false,
+    hasAccounts: false,
+    accounts: [],
+    invalidAccounts: [],
+    blockedAccounts: [],
+    allAccountsInvalid: false,
+    needRelogin: false,
+    message: ''
+  }
+  
+  try {
+    // 1. 测试基本连接
+    const feedsResponse = await fetch(`${normalizedUrl}/feeds`)
+    if (!feedsResponse.ok) {
+      result.message = 'WeWe-RSS 服务无法连接'
+      return result
+    }
+    result.connected = true
+    
+    // 2. 如果没有 authCode，无法检测账号状态
+    if (!authCode) {
+      result.message = '未配置授权码，无法检测账号状态'
+      return result
+    }
+    
+    // 3. 获取账号列表
+    const accountResponse = await fetch(
+      `${normalizedUrl}/trpc/account.list?input=${encodeURIComponent(JSON.stringify({ limit: 100 }))}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': authCode
+        }
+      }
+    )
+    
+    if (!accountResponse.ok) {
+      // 可能是旧版本不支持 account.list
+      if (accountResponse.status === 404) {
+        result.message = 'WeWe-RSS 版本过旧，无法检测账号状态'
+        return result
+      }
+      result.message = '获取账号列表失败'
+      return result
+    }
+    
+    const accountData = await accountResponse.json()
+    
+    // tRPC 返回格式: { result: { data: { items: [...], blocks: [...] } } }
+    const items = accountData.result?.data?.items || []
+    const blocks = accountData.result?.data?.blocks || []
+    
+    result.accounts = items.map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      status: item.status,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
+    }))
+    result.blockedAccounts = blocks
+    result.hasAccounts = result.accounts.length > 0
+    
+    // 4. 分析账号状态
+    // status: 1=正常, 0=禁用, -1=失效（根据 wewe-rss 源码 statusMap）
+    result.invalidAccounts = result.accounts.filter(acc => acc.status === -1 || acc.status === 0)
+    
+    // 检查是否所有账号都失效或被封禁
+    const validAccounts = result.accounts.filter(acc => 
+      acc.status === 1 && !blocks.includes(acc.id)
+    )
+    
+    if (!result.hasAccounts) {
+      result.needRelogin = true
+      result.allAccountsInvalid = true
+      result.message = '没有微信读书账号，请添加账号'
+    } else if (validAccounts.length === 0) {
+      result.needRelogin = true
+      result.allAccountsInvalid = true
+      if (result.invalidAccounts.length > 0) {
+        result.message = `所有账号已失效（${result.invalidAccounts.length}个），请重新登录`
+      } else if (blocks.length > 0) {
+        result.message = `所有账号被封禁（今日小黑屋），请等待24小时或添加新账号`
+      } else {
+        result.message = '所有账号不可用，请重新登录'
+      }
+    } else if (result.invalidAccounts.length > 0) {
+      result.message = `${result.invalidAccounts.length}个账号已失效，${validAccounts.length}个账号正常`
+    } else if (blocks.length > 0) {
+      result.message = `${blocks.length}个账号被封禁（今日小黑屋），${validAccounts.length}个账号正常`
+    } else {
+      result.message = `${validAccounts.length}个账号正常`
+    }
+    
+    return result
+  } catch (err) {
+    console.error('检测 WeWe-RSS 账号状态失败:', err)
+    result.message = '检测账号状态时发生错误'
+    return result
+  }
+}
+
+// 获取 WeWe-RSS 登录二维码 URL
+export async function getWeweLoginQrCode(baseUrl: string, authCode: string): Promise<{ url: string; id: string } | null> {
+  try {
+    const normalizedUrl = normalizeWeweBaseUrl(baseUrl)
+    const response = await fetch(`${normalizedUrl}/trpc/platform.createLoginUrl`, {
+      method: 'POST',
+      headers: {
+        'Authorization': authCode,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    })
+    
+    if (!response.ok) {
+      console.error('获取二维码失败:', response.status, await response.text())
+      return null
+    }
+    
+    const data = await response.json()
+    console.log('createLoginUrl response:', data)
+    
+    // tRPC 返回格式: { result: { data: { uuid: string, scanUrl: string } } }
+    const result = data.result?.data
+    if (result?.scanUrl && result?.uuid) {
+      return { url: result.scanUrl, id: result.uuid }
+    }
+    return null
+  } catch (err) {
+    console.error('获取二维码异常:', err)
+    return null
+  }
+}
+
+// 检查登录结果
+export async function checkWeweLoginResult(baseUrl: string, authCode: string, loginId: string): Promise<{
+  success: boolean
+  account?: { id: string; name: string; token: string }
+} | null> {
+  try {
+    const normalizedUrl = normalizeWeweBaseUrl(baseUrl)
+    const response = await fetch(
+      `${normalizedUrl}/trpc/platform.getLoginResult?input=${encodeURIComponent(JSON.stringify({ id: loginId }))}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': authCode
+        }
+      }
+    )
+    
+    if (!response.ok) return null
+    
+    const data = await response.json()
+    console.log('getLoginResult response:', data)
+    
+    // tRPC 返回格式: { result: { data: { message, vid?, token?, username? } } }
+    const result = data.result?.data
+    if (result) {
+      // 如果有 vid 和 token，说明登录成功
+      if (result.vid && result.token) {
+        return {
+          success: true,
+          account: { 
+            id: String(result.vid), 
+            name: result.username || String(result.vid),
+            token: result.token
+          }
+        }
+      }
+      // 还在等待扫码
+      return { success: false }
+    }
+    return null
+  } catch (err) {
+    console.error('检查登录结果异常:', err)
+    return null
+  }
+}
+
+// 添加账号到 WeWe-RSS
+export async function addWeweAccount(
+  baseUrl: string, 
+  authCode: string, 
+  account: { id: string; name: string; token: string }
+): Promise<boolean> {
+  try {
+    const normalizedUrl = normalizeWeweBaseUrl(baseUrl)
+    const response = await fetch(`${normalizedUrl}/trpc/account.add`, {
+      method: 'POST',
+      headers: {
+        'Authorization': authCode,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        id: account.id,
+        name: account.name,
+        token: account.token,
+        status: 1 // 启用状态
+      })
+    })
+    
+    if (!response.ok) {
+      console.error('添加账号失败:', response.status, await response.text())
+      return false
+    }
+    
+    const data = await response.json()
+    console.log('addAccount response:', data)
+    return !data.error
+  } catch (err) {
+    console.error('添加账号异常:', err)
+    return false
+  }
+}
+
 // 从 WeWe-RSS 同步公众号到本地订阅
 export async function syncWeweToSubscriptions(
   userId: string,

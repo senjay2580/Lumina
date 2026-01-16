@@ -38,7 +38,11 @@ import {
   FileImage,
   TrendingUp,
   BookOpen,
-  Zap
+  Zap,
+  Users,
+  Eye,
+  Activity,
+  UserPlus
 } from 'lucide-react';
 // @ts-ignore - Github is deprecated but still works
 import { Github } from 'lucide-react';
@@ -86,6 +90,21 @@ import {
 import { fetchRecommendedResources, fetchDetailsForResources, fetchFeaturedProjects, groupByYear, formatStars, setGithubToken, type RecommendedResource, type FeaturedCategory } from '../lib/recommended-resources';
 import { getDefaultProvider, type AIProvider } from '../lib/ai-providers';
 import { streamAIResponse } from '../lib/ai-prompt-assistant';
+import {
+  setGithubToken as setFollowingGithubToken,
+  getFollowingUsers,
+  addFollowingUser,
+  removeFollowingUser,
+  fetchGitHubUser,
+  fetchUserStars,
+  fetchUserEvents,
+  getEventDescription,
+  formatRelativeTime,
+  formatNumber as formatGitHubNumber,
+  type GitHubUser,
+  type GitHubRepo,
+  type GitHubEvent
+} from '../lib/github-following';
 
 import { ResourceViewerHook } from '../lib/useResourceViewer';
 
@@ -176,6 +195,7 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [currentPage, setCurrentPage] = useState(1);
   const [isClassifying, setIsClassifying] = useState(false); // 一键分类文章状态
+  const [showGitHubFollowing, setShowGitHubFollowing] = useState(false); // GitHub 用户关注弹窗
   const pageSize = 10;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -558,6 +578,18 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Tooltip content="GitHub 用户关注">
+              <div>
+                <Button
+                  variant="purple"
+                  size="md"
+                  onClick={() => setShowGitHubFollowing(true)}
+                  icon={<Users className="w-4 h-4" />}
+                >
+                  关注
+                </Button>
+              </div>
+            </Tooltip>
             <Tooltip content="推荐资源 (GitHubDaily)">
               <div>
                 <Button
@@ -1381,6 +1413,27 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
         )}
       </AnimatePresence>
 
+      {/* GitHub 用户关注弹窗 */}
+      <AnimatePresence>
+        {showGitHubFollowing && (
+          <GitHubFollowingModal
+            isOpen={showGitHubFollowing}
+            onClose={() => setShowGitHubFollowing(false)}
+            userId={userId}
+            onAddResource={async (url: string) => {
+              if (!userId) return;
+              try {
+                await createLinkResource(userId, url);
+                await loadData();
+                showToast('已添加到资源库');
+              } catch (err) {
+                console.error('Failed to add resource:', err);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* 下载确认弹窗 - Portal 到 body */}
       {downloadConfirm && createPortal(
         <div 
@@ -2112,27 +2165,45 @@ function ContextMenuContent({
   // 智能定位
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState(position);
+  const [isPositioned, setIsPositioned] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      
-      let x = position.x;
-      let y = position.y;
-      
-      // 如果超出右边界
-      if (x + rect.width > viewportWidth - 8) {
-        x = viewportWidth - rect.width - 8;
+    const adjustPosition = () => {
+      if (menuRef.current) {
+        const rect = menuRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const padding = 8;
+        
+        let x = position.x;
+        let y = position.y;
+        
+        // 水平方向：如果右边超出，向左调整
+        if (x + rect.width > viewportWidth - padding) {
+          x = Math.max(padding, viewportWidth - rect.width - padding);
+        }
+        
+        // 垂直方向：如果下方超出，向上弹出
+        if (y + rect.height > viewportHeight - padding) {
+          y = position.y - rect.height;
+          // 如果向上也超出，则贴近底部
+          if (y < padding) {
+            y = viewportHeight - rect.height - padding;
+          }
+        }
+        
+        // 确保不超出边界
+        x = Math.max(padding, x);
+        y = Math.max(padding, y);
+        
+        setAdjustedPosition({ x, y });
+        setIsPositioned(true);
+        requestAnimationFrame(() => setIsVisible(true));
       }
-      // 如果超出下边界
-      if (y + rect.height > viewportHeight - 8) {
-        y = viewportHeight - rect.height - 8;
-      }
-      
-      setAdjustedPosition({ x, y });
-    }
+    };
+    
+    requestAnimationFrame(adjustPosition);
   }, [position]);
 
   const handleCopy = async () => {
@@ -2150,8 +2221,13 @@ function ContextMenuContent({
     <motion.div
       ref={menuRef}
       initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      style={{ position: 'fixed', top: adjustedPosition.y, left: adjustedPosition.x }}
+      animate={{ opacity: isVisible ? 1 : 0, scale: isVisible ? 1 : 0.95 }}
+      style={{ 
+        position: 'fixed', 
+        top: adjustedPosition.y, 
+        left: adjustedPosition.x,
+        visibility: isPositioned ? 'visible' : 'hidden'
+      }}
       className="bg-white rounded-xl shadow-lg border border-gray-100 py-1.5 z-[9999] min-w-[140px]"
     >
       {showOpenButton && (
@@ -2257,12 +2333,54 @@ function ResourceListRow({
 }) {
   const [showMenu, setShowMenu] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuAdjusted, setContextMenuAdjusted] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(folder?.name || '');
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+
+  // 智能调整右键菜单位置
+  useEffect(() => {
+    if (contextMenu && contextMenuRef.current) {
+      const adjustPosition = () => {
+        const rect = contextMenuRef.current!.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const padding = 8;
+        
+        let x = contextMenu.x;
+        let y = contextMenu.y;
+        
+        // 水平方向调整
+        if (x + rect.width > viewportWidth - padding) {
+          x = Math.max(padding, viewportWidth - rect.width - padding);
+        }
+        
+        // 垂直方向：如果下方超出，向上弹出
+        if (y + rect.height > viewportHeight - padding) {
+          y = contextMenu.y - rect.height;
+          if (y < padding) {
+            y = viewportHeight - rect.height - padding;
+          }
+        }
+        
+        x = Math.max(padding, x);
+        y = Math.max(padding, y);
+        
+        setContextMenuAdjusted({ x, y });
+        requestAnimationFrame(() => setContextMenuVisible(true));
+      };
+      
+      requestAnimationFrame(adjustPosition);
+    } else {
+      setContextMenuAdjusted(null);
+      setContextMenuVisible(false);
+    }
+  }, [contextMenu]);
 
   // 右键菜单
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -2436,9 +2554,15 @@ function ResourceListRow({
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
             />
             <motion.div
+              ref={contextMenuRef}
               initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
+              animate={{ opacity: contextMenuVisible ? 1 : 0, scale: contextMenuVisible ? 1 : 0.95 }}
+              style={{ 
+                position: 'fixed', 
+                top: contextMenuAdjusted?.y ?? contextMenu.y, 
+                left: contextMenuAdjusted?.x ?? contextMenu.x,
+                visibility: contextMenuAdjusted ? 'visible' : 'hidden'
+              }}
               className="bg-white rounded-xl shadow-lg border border-gray-100 py-1.5 z-[9999] min-w-[160px]"
               onClick={(e) => e.stopPropagation()}
             >
@@ -2813,9 +2937,15 @@ function ResourceListRow({
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu(null); }}
             />
             <motion.div
+              ref={contextMenuRef}
               initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
+              animate={{ opacity: contextMenuVisible ? 1 : 0, scale: contextMenuVisible ? 1 : 0.95 }}
+              style={{ 
+                position: 'fixed', 
+                top: contextMenuAdjusted?.y ?? contextMenu.y, 
+                left: contextMenuAdjusted?.x ?? contextMenu.x,
+                visibility: contextMenuAdjusted ? 'visible' : 'hidden'
+              }}
               className="bg-white rounded-xl shadow-lg border border-gray-100 py-1.5 z-[9999] min-w-[140px]"
               onClick={(e) => e.stopPropagation()}
             >
@@ -4210,6 +4340,541 @@ ${resourceList}
             </motion.div>
           )}
         </AnimatePresence>
+      </motion.div>
+    </motion.div>,
+    document.body
+  );
+}
+
+// GitHub 用户关注弹窗组件
+function GitHubFollowingModal({
+  isOpen,
+  onClose,
+  userId,
+  onAddResource
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  userId?: string;
+  onAddResource: (url: string) => Promise<void>;
+}) {
+  const [followingUsers, setFollowingUsers] = useState<string[]>([]);
+  const [usersData, setUsersData] = useState<Map<string, GitHubUser>>(new Map());
+  const [inputUsername, setInputUsername] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'stars' | 'activity'>('stars');
+  
+  // Stars 分页
+  const [stars, setStars] = useState<GitHubRepo[]>([]);
+  const [starsPage, setStarsPage] = useState(1);
+  const [starsHasMore, setStarsHasMore] = useState(true);
+  const [loadingStars, setLoadingStars] = useState(false);
+  
+  // Activity
+  const [events, setEvents] = useState<GitHubEvent[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  
+  // 添加资源状态
+  const [addingUrl, setAddingUrl] = useState<string | null>(null);
+
+  // 初始化
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    const initData = async () => {
+      // 设置 GitHub Token
+      if (userId) {
+        try {
+          const token = await getGithubToken(userId);
+          setFollowingGithubToken(token);
+        } catch (e) {
+          console.warn('获取 GitHub Token 失败:', e);
+        }
+      }
+      
+      // 加载关注列表
+      const users = getFollowingUsers();
+      setFollowingUsers(users);
+      
+      // 加载用户数据
+      const dataMap = new Map<string, GitHubUser>();
+      for (const username of users) {
+        try {
+          const user = await fetchGitHubUser(username);
+          if (user) dataMap.set(username, user);
+        } catch (e) {
+          console.warn(`加载用户 ${username} 失败:`, e);
+        }
+      }
+      setUsersData(dataMap);
+    };
+    
+    initData();
+  }, [isOpen, userId]);
+
+  // 添加关注
+  const handleFollow = async () => {
+    if (!inputUsername.trim()) return;
+    
+    const username = inputUsername.trim();
+    if (followingUsers.includes(username)) {
+      setError('已关注该用户');
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const user = await fetchGitHubUser(username);
+      if (!user) {
+        setError('用户不存在');
+        return;
+      }
+      
+      addFollowingUser(username);
+      setFollowingUsers(prev => [...prev, username]);
+      setUsersData(prev => new Map(prev).set(username, user));
+      setInputUsername('');
+    } catch (e) {
+      setError('获取用户信息失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 取消关注
+  const handleUnfollow = (username: string) => {
+    removeFollowingUser(username);
+    setFollowingUsers(prev => prev.filter(u => u !== username));
+    setUsersData(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(username);
+      return newMap;
+    });
+    if (selectedUser === username) {
+      setSelectedUser(null);
+      setStars([]);
+      setEvents([]);
+    }
+  };
+
+  // 查看用户详情
+  const handleViewUser = async (username: string) => {
+    setSelectedUser(username);
+    setStars([]);
+    setEvents([]);
+    setStarsPage(1);
+    setStarsHasMore(true);
+    setActiveTab('stars');
+    
+    // 加载 Stars
+    await loadStars(username, 1);
+    // 加载 Activity
+    await loadEvents(username);
+  };
+
+  // 加载 Stars
+  const loadStars = async (username: string, page: number) => {
+    setLoadingStars(true);
+    try {
+      const result = await fetchUserStars(username, page, 20);
+      if (page === 1) {
+        setStars(result.repos);
+      } else {
+        setStars(prev => [...prev, ...result.repos]);
+      }
+      setStarsHasMore(result.hasMore);
+      setStarsPage(page);
+    } catch (e) {
+      console.error('加载 Stars 失败:', e);
+    } finally {
+      setLoadingStars(false);
+    }
+  };
+
+  // 加载 Activity
+  const loadEvents = async (username: string) => {
+    setLoadingEvents(true);
+    try {
+      const result = await fetchUserEvents(username, 1, 30);
+      setEvents(result);
+    } catch (e) {
+      console.error('加载 Activity 失败:', e);
+    } finally {
+      setLoadingEvents(false);
+    }
+  };
+
+  // 添加到资源库
+  const handleAddToResources = async (url: string) => {
+    setAddingUrl(url);
+    try {
+      await onAddResource(url);
+    } finally {
+      setAddingUrl(null);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ type: 'spring', duration: 0.5 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-4xl max-h-[85vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+      >
+        {/* 头部 */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+              <Users className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">GitHub 用户关注</h2>
+              <p className="text-xs text-gray-500">追踪开发者动态，发现优质项目</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* 内容区 */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* 左侧：关注列表 */}
+          <div className="w-72 border-r border-gray-100 flex flex-col">
+            {/* 添加用户 */}
+            <div className="p-4 border-b border-gray-100">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="输入 GitHub 用户名..."
+                  value={inputUsername}
+                  onChange={e => setInputUsername(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleFollow()}
+                  className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition-all"
+                />
+                <Button
+                  variant="purple"
+                  size="sm"
+                  onClick={handleFollow}
+                  disabled={loading || !inputUsername.trim()}
+                  loading={loading}
+                  icon={<UserPlus className="w-4 h-4" />}
+                />
+              </div>
+              {error && (
+                <p className="text-xs text-red-500 mt-2">{error}</p>
+              )}
+            </div>
+
+            {/* 用户列表 */}
+            <div className="flex-1 overflow-y-auto p-2">
+              {followingUsers.length === 0 ? (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p>还没有关注任何用户</p>
+                  <p className="text-xs mt-1">输入用户名开始关注</p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {followingUsers.map(username => {
+                    const user = usersData.get(username);
+                    const isSelected = selectedUser === username;
+                    
+                    return (
+                      <div
+                        key={username}
+                        className={`group flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all ${
+                          isSelected 
+                            ? 'bg-purple-50 border border-purple-200' 
+                            : 'hover:bg-gray-50 border border-transparent'
+                        }`}
+                        onClick={() => handleViewUser(username)}
+                      >
+                        {user ? (
+                          <img
+                            src={user.avatar_url}
+                            alt={username}
+                            className="w-10 h-10 rounded-full"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                            <Github className="w-5 h-5 text-gray-400" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 text-sm truncate">
+                            {user?.name || username}
+                          </div>
+                          <div className="text-xs text-gray-500 truncate">@{username}</div>
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Tooltip content="查看详情">
+                            <button
+                              onClick={e => { e.stopPropagation(); handleViewUser(username); }}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-purple-100 text-gray-400 hover:text-purple-600 transition-colors"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="取消关注">
+                            <button
+                              onClick={e => { e.stopPropagation(); handleUnfollow(username); }}
+                              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-600 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 右侧：用户详情 */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {selectedUser ? (
+              <>
+                {/* 用户信息卡片 */}
+                {usersData.get(selectedUser) && (
+                  <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-blue-50">
+                    <div className="flex items-start gap-4">
+                      <img
+                        src={usersData.get(selectedUser)!.avatar_url}
+                        alt={selectedUser}
+                        className="w-16 h-16 rounded-2xl shadow-md"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            {usersData.get(selectedUser)!.name || selectedUser}
+                          </h3>
+                          <a
+                            href={usersData.get(selectedUser)!.html_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-gray-400 hover:text-purple-600 transition-colors"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                        <p className="text-sm text-gray-500">@{selectedUser}</p>
+                        {usersData.get(selectedUser)!.bio && (
+                          <p className="text-sm text-gray-600 mt-1 line-clamp-2">
+                            {usersData.get(selectedUser)!.bio}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                          <span className="flex items-center gap-1">
+                            <Package className="w-3.5 h-3.5" />
+                            {formatGitHubNumber(usersData.get(selectedUser)!.public_repos)} 仓库
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5" />
+                            {formatGitHubNumber(usersData.get(selectedUser)!.followers)} 粉丝
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tab 切换 */}
+                <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-100">
+                  <button
+                    onClick={() => setActiveTab('stars')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      activeTab === 'stars'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Star className="w-4 h-4" />
+                    Stars
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('activity')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      activeTab === 'activity'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Activity className="w-4 h-4" />
+                    动态
+                  </button>
+                </div>
+
+                {/* 内容区 */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  {activeTab === 'stars' && (
+                    <div className="space-y-2">
+                      {loadingStars && stars.length === 0 ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+                        </div>
+                      ) : stars.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400 text-sm">
+                          <Star className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>该用户还没有 Star 任何项目</p>
+                        </div>
+                      ) : (
+                        <>
+                          {stars.map(repo => (
+                            <div
+                              key={repo.id}
+                              className="group p-3 rounded-xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/30 transition-all"
+                            >
+                              <div className="flex items-start gap-3">
+                                <img
+                                  src={repo.owner.avatar_url}
+                                  alt={repo.owner.login}
+                                  className="w-8 h-8 rounded-lg"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <a
+                                      href={repo.html_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-gray-900 hover:text-purple-600 transition-colors truncate"
+                                    >
+                                      {repo.full_name}
+                                    </a>
+                                    <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                                      <Star className="w-3 h-3 fill-current" />
+                                      {formatGitHubNumber(repo.stargazers_count)}
+                                    </span>
+                                  </div>
+                                  {repo.description && (
+                                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                                      {repo.description}
+                                    </p>
+                                  )}
+                                  <div className="flex items-center gap-3 mt-2">
+                                    {repo.language && (
+                                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-purple-400" />
+                                        {repo.language}
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-gray-400 flex items-center gap-1">
+                                      <GitFork className="w-3 h-3" />
+                                      {formatGitHubNumber(repo.forks_count)}
+                                    </span>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => handleAddToResources(repo.html_url)}
+                                  disabled={addingUrl === repo.html_url}
+                                  className="opacity-0 group-hover:opacity-100 px-2.5 py-1.5 rounded-lg bg-purple-100 text-purple-600 text-xs font-medium hover:bg-purple-200 transition-all disabled:opacity-50"
+                                >
+                                  {addingUrl === repo.html_url ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Plus className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          
+                          {/* 加载更多 */}
+                          {starsHasMore && (
+                            <div className="flex justify-center pt-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => loadStars(selectedUser, starsPage + 1)}
+                                loading={loadingStars}
+                              >
+                                加载更多
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {activeTab === 'activity' && (
+                    <div className="space-y-2">
+                      {loadingEvents ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+                        </div>
+                      ) : events.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400 text-sm">
+                          <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>暂无最近动态</p>
+                        </div>
+                      ) : (
+                        events.map(event => {
+                          const { action, icon, color } = getEventDescription(event);
+                          const repoUrl = `https://github.com/${event.repo.name}`;
+                          
+                          return (
+                            <div
+                              key={event.id}
+                              className="group flex items-start gap-3 p-3 rounded-xl hover:bg-gray-50 transition-all"
+                            >
+                              <span className="text-lg">{icon}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm ${color}`}>{action}</p>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {formatRelativeTime(event.created_at)}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleAddToResources(repoUrl)}
+                                disabled={addingUrl === repoUrl}
+                                className="opacity-0 group-hover:opacity-100 px-2.5 py-1.5 rounded-lg bg-purple-100 text-purple-600 text-xs font-medium hover:bg-purple-200 transition-all disabled:opacity-50"
+                              >
+                                {addingUrl === repoUrl ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-gray-400">
+                <div className="text-center">
+                  <Eye className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">选择一个用户查看详情</p>
+                  <p className="text-xs mt-1">或添加新的关注用户</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </motion.div>
     </motion.div>,
     document.body

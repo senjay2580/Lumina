@@ -1,5 +1,5 @@
 // RSS 订阅管理页面
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Rss,
   Plus,
@@ -18,11 +18,13 @@ import {
   FileText,
   Circle
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { Modal, Confirm, Button, Tooltip } from '../shared'
 import {
   RSSSubscription,
   RSSItem,
   WechatMpInfo,
+  WeweAccountStatus,
   getUserSubscriptions,
   addSubscription,
   deleteSubscription,
@@ -32,6 +34,10 @@ import {
   getWeweMpList,
   addWeweMp,
   testWeweConnection,
+  checkWeweAccountStatus,
+  getWeweLoginQrCode,
+  checkWeweLoginResult,
+  addWeweAccount,
   syncWeweToSubscriptions,
   generateWeweRssUrl,
   getSubscriptionItems,
@@ -91,6 +97,18 @@ export default function RSSSubscriptionPage({ userId }: Props) {
   const [syncingSubId, setSyncingSubId] = useState<string | null>(null)
   const [syncingAll, setSyncingAll] = useState(false)
   const [syncResult, setSyncResult] = useState<{ open: boolean; success: boolean; message: string }>({ open: false, success: true, message: '' })
+  
+  // 账号状态检测
+  const [accountStatus, setAccountStatus] = useState<WeweAccountStatus | null>(null)
+  const [showAccountAlert, setShowAccountAlert] = useState(false)
+  const [checkingAccount, setCheckingAccount] = useState(false)
+  
+  // 登录二维码
+  const [loginQrCode, setLoginQrCode] = useState<{ url: string; id: string } | null>(null)
+  const [loadingQrCode, setLoadingQrCode] = useState(false)
+  const [qrCodeError, setQrCodeError] = useState<string | null>(null)
+  const [checkingLoginResult, setCheckingLoginResult] = useState(false)
+  const [loginSuccess, setLoginSuccess] = useState(false)
 
   // 加载订阅列表
   const loadSubscriptions = useCallback(async () => {
@@ -117,10 +135,149 @@ export default function RSSSubscriptionPage({ userId }: Props) {
         setWeweAuthCode(authCode)
         setWeweAuthCodeInput(authCode)
       }
+      
+      // 如果配置了 WeWe-RSS，自动检测账号状态
+      if (url && authCode) {
+        checkAccountStatus(url, authCode)
+      }
     } catch (err) {
       console.error('加载 WeWe-RSS 配置失败:', err)
     }
   }, [userId])
+  
+  // 检测 WeWe-RSS 账号状态
+  const checkAccountStatus = async (url?: string, authCode?: string) => {
+    const baseUrl = url || weweRssUrl
+    const code = authCode || weweAuthCode
+    if (!baseUrl || !code) return
+    
+    setCheckingAccount(true)
+    try {
+      const status = await checkWeweAccountStatus(baseUrl, code)
+      setAccountStatus(status)
+      
+      // 如果需要重新登录，显示提醒弹窗
+      if (status.needRelogin) {
+        setShowAccountAlert(true)
+      }
+    } catch (err) {
+      console.error('检测账号状态失败:', err)
+    } finally {
+      setCheckingAccount(false)
+    }
+  }
+  
+  // 获取登录二维码
+  const fetchLoginQrCode = async () => {
+    if (!weweRssUrl || !weweAuthCode) return
+    
+    setLoadingQrCode(true)
+    setQrCodeError(null)
+    setLoginQrCode(null)
+    setLoginSuccess(false)
+    
+    try {
+      const result = await getWeweLoginQrCode(weweRssUrl, weweAuthCode)
+      if (result) {
+        setLoginQrCode(result)
+        // 开始轮询登录结果
+        startPollingLoginResult(result.id)
+      } else {
+        setQrCodeError('获取二维码失败，请稍后重试')
+      }
+    } catch (err) {
+      console.error('获取二维码失败:', err)
+      setQrCodeError('获取二维码失败，请稍后重试')
+    } finally {
+      setLoadingQrCode(false)
+    }
+  }
+  
+  // 轮询登录结果
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  
+  const startPollingLoginResult = (loginId: string) => {
+    // 清除之前的轮询
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+    }
+    
+    setCheckingLoginResult(true)
+    let attempts = 0
+    const maxAttempts = 60 // 最多轮询 60 次（约 2 分钟）
+    
+    pollingRef.current = setInterval(async () => {
+      attempts++
+      
+      if (attempts > maxAttempts) {
+        // 超时
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current)
+          pollingRef.current = null
+        }
+        setCheckingLoginResult(false)
+        setQrCodeError('二维码已过期，请重新获取')
+        setLoginQrCode(null)
+        return
+      }
+      
+      try {
+        const result = await checkWeweLoginResult(weweRssUrl, weweAuthCode, loginId)
+        if (result?.success && result.account) {
+          // 登录成功，添加账号到 WeWe-RSS
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current)
+            pollingRef.current = null
+          }
+          
+          // 添加账号
+          const added = await addWeweAccount(weweRssUrl, weweAuthCode, result.account)
+          
+          setCheckingLoginResult(false)
+          if (added) {
+            setLoginSuccess(true)
+            setLoginQrCode(null)
+            
+            // 重新检测账号状态
+            setTimeout(async () => {
+              await checkAccountStatus()
+              
+              // 自动同步微信公众号文章
+              try {
+                setSyncingAll(true)
+                const syncResult = await syncAllAutoSyncSubscriptions(userId)
+                loadSubscriptions()
+                if (syncResult.synced > 0) {
+                  setSyncResult({ 
+                    open: true, 
+                    success: true, 
+                    message: `登录成功！已自动同步 ${syncResult.synced} 篇文章到资源中心` 
+                  })
+                }
+              } catch (err) {
+                console.error('自动同步失败:', err)
+              } finally {
+                setSyncingAll(false)
+              }
+            }, 1000)
+          } else {
+            setQrCodeError('添加账号失败，请重试')
+          }
+        }
+      } catch (err) {
+        console.error('检查登录结果失败:', err)
+      }
+    }, 2000) // 每 2 秒检查一次
+  }
+  
+  // 清理轮询
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     loadSubscriptions()
@@ -432,6 +589,40 @@ export default function RSSSubscriptionPage({ userId }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* 账号状态指示器 */}
+            {weweRssUrl && weweAuthCode && accountStatus && (
+              <Tooltip content={accountStatus.message}>
+                <button
+                  onClick={() => {
+                    if (accountStatus.needRelogin) {
+                      setShowAccountAlert(true)
+                    } else {
+                      checkAccountStatus()
+                    }
+                  }}
+                  className={`p-2.5 rounded-xl transition-colors flex items-center gap-1.5 ${
+                    accountStatus.needRelogin
+                      ? 'bg-red-100 hover:bg-red-200 text-red-600'
+                      : accountStatus.invalidAccounts.length > 0 || accountStatus.blockedAccounts.length > 0
+                      ? 'bg-amber-100 hover:bg-amber-200 text-amber-600'
+                      : 'bg-green-100 hover:bg-green-200 text-green-600'
+                  }`}
+                >
+                  {checkingAccount ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : accountStatus.needRelogin ? (
+                    <AlertCircle className="w-4 h-4" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span className="text-xs font-medium">
+                    {accountStatus.needRelogin 
+                      ? '账号失效' 
+                      : `${accountStatus.accounts.length - accountStatus.invalidAccounts.length}个账号`}
+                  </span>
+                </button>
+              </Tooltip>
+            )}
             <Tooltip content="设置">
               <button
                 onClick={() => setShowSettingsModal(true)}
@@ -880,6 +1071,14 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                   测试连接
                 </button>
                 <button
+                  onClick={() => checkAccountStatus(weweRssUrlInput.trim(), weweAuthCodeInput.trim())}
+                  disabled={checkingAccount || !weweRssUrlInput.trim() || !weweAuthCodeInput.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-700 text-xs font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {checkingAccount && <Loader2 className="w-3 h-3 animate-spin" />}
+                  检测账号
+                </button>
+                <button
                   onClick={handleSaveWeweRss}
                   disabled={savingWeweRss || !weweRssUrlInput.trim() || (weweRssUrlInput === weweRssUrl && weweAuthCodeInput === weweAuthCode)}
                   className="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
@@ -887,6 +1086,47 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                   {savingWeweRss ? '保存中...' : '保存'}
                 </button>
               </div>
+              
+              {/* 账号状态显示 */}
+              {accountStatus && accountStatus.connected && (
+                <div className={`p-3 rounded-lg ${
+                  accountStatus.needRelogin 
+                    ? 'bg-red-50 border border-red-200' 
+                    : accountStatus.invalidAccounts.length > 0 || accountStatus.blockedAccounts.length > 0
+                    ? 'bg-amber-50 border border-amber-200'
+                    : 'bg-green-50 border border-green-200'
+                }`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    {accountStatus.needRelogin ? (
+                      <AlertCircle className="w-4 h-4 text-red-500" />
+                    ) : accountStatus.invalidAccounts.length > 0 || accountStatus.blockedAccounts.length > 0 ? (
+                      <AlertCircle className="w-4 h-4 text-amber-500" />
+                    ) : (
+                      <Check className="w-4 h-4 text-green-500" />
+                    )}
+                    <span className={`text-sm font-medium ${
+                      accountStatus.needRelogin 
+                        ? 'text-red-700' 
+                        : accountStatus.invalidAccounts.length > 0 || accountStatus.blockedAccounts.length > 0
+                        ? 'text-amber-700'
+                        : 'text-green-700'
+                    }`}>
+                      {accountStatus.message}
+                    </span>
+                  </div>
+                  {accountStatus.needRelogin && (
+                    <button
+                      onClick={() => {
+                        setShowSettingsModal(false)
+                        setShowAccountAlert(true)
+                      }}
+                      className="text-xs text-red-600 hover:underline mt-1"
+                    >
+                      查看详情并解决 →
+                    </button>
+                  )}
+                </div>
+              )}
               
               <p className="text-xs text-gray-400">
                 没有 WeWe-RSS？
@@ -1075,6 +1315,191 @@ export default function RSSSubscriptionPage({ userId }: Props) {
           >
             确定
           </button>
+        </div>
+      </Modal>
+
+      {/* 账号失效提醒弹窗 */}
+      <Modal
+        isOpen={showAccountAlert}
+        onClose={() => {
+          setShowAccountAlert(false)
+          setLoginQrCode(null)
+          setLoginSuccess(false)
+          setQrCodeError(null)
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current)
+            pollingRef.current = null
+          }
+        }}
+        title="⚠️ 微信读书账号失效"
+        size="md"
+      >
+        <div className="space-y-4">
+          {/* 登录成功提示 */}
+          {loginSuccess ? (
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                {syncingAll ? (
+                  <Loader2 className="w-8 h-8 text-green-500 animate-spin" />
+                ) : (
+                  <Check className="w-8 h-8 text-green-500" />
+                )}
+              </div>
+              <h4 className="text-lg font-medium text-gray-900 mb-2">
+                {syncingAll ? '正在同步文章...' : '登录成功！'}
+              </h4>
+              <p className="text-sm text-gray-500 mb-4">
+                {syncingAll 
+                  ? '正在自动同步微信公众号文章到资源中心' 
+                  : '微信读书账号已添加成功'}
+              </p>
+              {!syncingAll && (
+                <button
+                  onClick={() => {
+                    setShowAccountAlert(false)
+                    setLoginSuccess(false)
+                  }}
+                  className="px-6 py-2.5 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition-colors"
+                >
+                  完成
+                </button>
+              )}
+            </div>
+          ) : loginQrCode ? (
+            /* 二维码显示 */
+            <div className="text-center">
+              <div className="p-4 bg-white border-2 border-green-200 rounded-2xl inline-block mb-4">
+                <QRCodeSVG 
+                  value={loginQrCode.url} 
+                  size={200}
+                  level="M"
+                  includeMargin={true}
+                />
+              </div>
+              <div className="flex items-center justify-center gap-2 text-sm text-gray-600 mb-2">
+                {checkingLoginResult && (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-green-500" />
+                    <span>等待扫码登录...</span>
+                  </>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mb-4">
+                请使用微信扫描二维码登录微信读书
+              </p>
+              {qrCodeError && (
+                <p className="text-sm text-red-500 mb-4">{qrCodeError}</p>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setLoginQrCode(null)
+                    if (pollingRef.current) {
+                      clearInterval(pollingRef.current)
+                      pollingRef.current = null
+                    }
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors"
+                >
+                  返回
+                </button>
+                <button
+                  onClick={fetchLoginQrCode}
+                  disabled={loadingQrCode}
+                  className="flex-1 py-2.5 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loadingQrCode && <Loader2 className="w-4 h-4 animate-spin" />}
+                  刷新二维码
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* 默认状态 */
+            <>
+              <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                    <AlertCircle className="w-5 h-5 text-red-500" />
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-red-800 mb-1">
+                      {accountStatus?.hasAccounts 
+                        ? '微信读书账号已失效' 
+                        : '没有微信读书账号'}
+                    </h4>
+                    <p className="text-sm text-red-700">
+                      {accountStatus?.message}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 账号列表 */}
+              {accountStatus && accountStatus.accounts.length > 0 && (
+                <div>
+                  <h5 className="text-sm font-medium text-gray-700 mb-2">账号状态</h5>
+                  <div className="space-y-2">
+                    {accountStatus.accounts.map((acc) => {
+                      const isBlocked = accountStatus.blockedAccounts.includes(acc.id)
+                      const isInvalid = acc.status === -1 || acc.status === 0
+                      return (
+                        <div
+                          key={acc.id}
+                          className={`flex items-center justify-between p-3 rounded-lg ${
+                            isInvalid || isBlocked ? 'bg-red-50' : 'bg-green-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${
+                              isInvalid ? 'bg-red-500' : isBlocked ? 'bg-amber-500' : 'bg-green-500'
+                            }`} />
+                            <span className="text-sm font-medium text-gray-900">{acc.name}</span>
+                            <span className="text-xs text-gray-500">({acc.id})</span>
+                          </div>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            isInvalid 
+                              ? 'bg-red-100 text-red-600' 
+                              : isBlocked 
+                              ? 'bg-amber-100 text-amber-600'
+                              : 'bg-green-100 text-green-600'
+                          }`}>
+                            {isInvalid ? '已失效' : isBlocked ? '今日小黑屋' : '正常'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {qrCodeError && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <p className="text-sm text-amber-700">{qrCodeError}</p>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowAccountAlert(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition-colors"
+                >
+                  稍后处理
+                </button>
+                <button
+                  onClick={fetchLoginQrCode}
+                  disabled={loadingQrCode}
+                  className="flex-1 py-2.5 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loadingQrCode ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <MessageCircle className="w-4 h-4" />
+                  )}
+                  扫码添加账号
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
     </div>

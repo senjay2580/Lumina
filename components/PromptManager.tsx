@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -53,18 +53,60 @@ const stripHtml = (html: string): string => {
   return tmp.textContent || tmp.innerText || '';
 };
 
-const getCategoryColors = (color: string) => {
-  const colors: Record<string, { bg: string; text: string }> = {
-    orange: { bg: 'bg-orange-100', text: 'text-orange-600' },
-    blue: { bg: 'bg-blue-100', text: 'text-blue-600' },
-    green: { bg: 'bg-green-100', text: 'text-green-600' },
-    purple: { bg: 'bg-purple-100', text: 'text-purple-600' },
-    red: { bg: 'bg-red-100', text: 'text-red-600' },
-    pink: { bg: 'bg-pink-100', text: 'text-pink-600' },
-    yellow: { bg: 'bg-yellow-100', text: 'text-yellow-700' },
-    gray: { bg: 'bg-gray-100', text: 'text-gray-600' },
+const getCategoryColors = (color: string): { bg: string; text: string; hex: string } => {
+  // 支持 hex 颜色
+  if (color.startsWith('#')) {
+    return { 
+      bg: '', 
+      text: '',
+      hex: color
+    };
+  }
+  
+  const colors: Record<string, { bg: string; text: string; hex: string }> = {
+    // 暖色系
+    red: { bg: 'bg-red-100', text: 'text-red-600', hex: '#ef4444' },
+    orange: { bg: 'bg-orange-100', text: 'text-orange-600', hex: '#f97316' },
+    amber: { bg: 'bg-amber-100', text: 'text-amber-600', hex: '#f59e0b' },
+    yellow: { bg: 'bg-yellow-100', text: 'text-yellow-700', hex: '#eab308' },
+    // 绿色系
+    lime: { bg: 'bg-lime-100', text: 'text-lime-600', hex: '#84cc16' },
+    green: { bg: 'bg-green-100', text: 'text-green-600', hex: '#22c55e' },
+    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', hex: '#10b981' },
+    teal: { bg: 'bg-teal-100', text: 'text-teal-600', hex: '#14b8a6' },
+    // 蓝色系
+    cyan: { bg: 'bg-cyan-100', text: 'text-cyan-600', hex: '#06b6d4' },
+    sky: { bg: 'bg-sky-100', text: 'text-sky-600', hex: '#0ea5e9' },
+    blue: { bg: 'bg-blue-100', text: 'text-blue-600', hex: '#3b82f6' },
+    indigo: { bg: 'bg-indigo-100', text: 'text-indigo-600', hex: '#6366f1' },
+    // 紫粉系
+    violet: { bg: 'bg-violet-100', text: 'text-violet-600', hex: '#8b5cf6' },
+    purple: { bg: 'bg-purple-100', text: 'text-purple-600', hex: '#a855f7' },
+    fuchsia: { bg: 'bg-fuchsia-100', text: 'text-fuchsia-600', hex: '#d946ef' },
+    pink: { bg: 'bg-pink-100', text: 'text-pink-600', hex: '#ec4899' },
+    // 中性色
+    rose: { bg: 'bg-rose-100', text: 'text-rose-600', hex: '#f43f5e' },
+    slate: { bg: 'bg-slate-100', text: 'text-slate-600', hex: '#64748b' },
+    gray: { bg: 'bg-gray-100', text: 'text-gray-600', hex: '#6b7280' },
+    zinc: { bg: 'bg-zinc-100', text: 'text-zinc-600', hex: '#71717a' },
   };
   return colors[color] || colors.gray;
+};
+
+// 获取分类标签的样式（支持自定义颜色）
+const getCategoryTagStyle = (color: string): { className: string; style?: React.CSSProperties } => {
+  const colors = getCategoryColors(color);
+  if (color.startsWith('#')) {
+    // 自定义颜色使用 inline style
+    return {
+      className: 'px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase',
+      style: { backgroundColor: color + '20', color: color }
+    };
+  }
+  // 预设颜色使用 Tailwind class
+  return {
+    className: `px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`
+  };
 };
 
 interface PromptManagerProps {
@@ -192,11 +234,15 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
   // 创建新提示词（本地临时创建，不插入数据库）
   const handleCreatePrompt = () => {
     const tempId = `temp_${Date.now()}`;
+    // 如果当前选中了具体分类，则使用该分类；否则使用第一个分类或 null
+    const defaultCategoryId = selectedCategoryId !== 'ALL' 
+      ? selectedCategoryId 
+      : (categories[0]?.id || null);
     const newPrompt: Prompt = {
       id: tempId,
       title: '新提示词',
       content: '',
-      category_id: categories[0]?.id || null,
+      category_id: defaultCategoryId,
       tags: [],
       user_id: userId,
       created_at: new Date().toISOString(),
@@ -722,6 +768,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {normalPrompts.map(prompt => {
                       const colors = getCategoryColors(getCategoryColor(prompt.category_id));
+                      const tagStyle = getCategoryTagStyle(getCategoryColor(prompt.category_id));
                       const isSelected = selectedPromptIds.has(prompt.id);
                       return (
                         <div key={prompt.id} className={`group bg-white rounded-2xl p-6 border cursor-pointer hover:-translate-y-2 hover:shadow-xl transition-all duration-300 relative ${isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'}`}
@@ -740,7 +787,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
                             </div>
                           )}
                           <div className="flex justify-between items-start mb-4">
-                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase ${colors.bg} ${colors.text}`}>{getCategoryName(prompt.category_id)}</span>
+                            <span className={tagStyle.className} style={tagStyle.style}>{getCategoryName(prompt.category_id)}</span>
                             {!isSelectMode && (
                               <button onClick={(e) => { e.stopPropagation(); promptMenu.open(e, prompt); }} className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-opacity"><MoreIcon className="w-4 h-4 text-gray-400" /></button>
                             )}
@@ -879,15 +926,197 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
 const CategoryEditModal: React.FC<{ open: boolean; category?: PromptCategory; onClose: () => void; onSave: (data: any) => void }> = ({ open, category, onClose, onSave }) => {
   const [name, setName] = useState('');
   const [color, setColor] = useState('gray');
-  const colors = ['orange', 'blue', 'green', 'purple', 'red', 'pink', 'yellow', 'gray'];
-  useEffect(() => { if (open) { setName(category?.name || ''); setColor(category?.color || 'gray'); } }, [open, category]);
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (!name.trim()) return; onSave({ name: name.trim(), color }); };
+  const [showColorWheel, setShowColorWheel] = useState(false);
+  const [customColor, setCustomColor] = useState('#6b7280');
+  const colorInputRef = useRef<HTMLInputElement>(null);
+  
+  // 预设颜色 - 更丰富的调色板
+  const presetColors = [
+    // 暖色系
+    { name: 'red', hex: '#ef4444', label: '红色' },
+    { name: 'orange', hex: '#f97316', label: '橙色' },
+    { name: 'amber', hex: '#f59e0b', label: '琥珀' },
+    { name: 'yellow', hex: '#eab308', label: '黄色' },
+    // 绿色系
+    { name: 'lime', hex: '#84cc16', label: '青柠' },
+    { name: 'green', hex: '#22c55e', label: '绿色' },
+    { name: 'emerald', hex: '#10b981', label: '翡翠' },
+    { name: 'teal', hex: '#14b8a6', label: '青色' },
+    // 蓝色系
+    { name: 'cyan', hex: '#06b6d4', label: '青蓝' },
+    { name: 'sky', hex: '#0ea5e9', label: '天蓝' },
+    { name: 'blue', hex: '#3b82f6', label: '蓝色' },
+    { name: 'indigo', hex: '#6366f1', label: '靛蓝' },
+    // 紫粉系
+    { name: 'violet', hex: '#8b5cf6', label: '紫罗兰' },
+    { name: 'purple', hex: '#a855f7', label: '紫色' },
+    { name: 'fuchsia', hex: '#d946ef', label: '品红' },
+    { name: 'pink', hex: '#ec4899', label: '粉色' },
+    // 中性色
+    { name: 'rose', hex: '#f43f5e', label: '玫瑰' },
+    { name: 'slate', hex: '#64748b', label: '石板' },
+    { name: 'gray', hex: '#6b7280', label: '灰色' },
+    { name: 'zinc', hex: '#71717a', label: '锌灰' },
+  ];
+  
+  useEffect(() => { 
+    if (open) { 
+      setName(category?.name || ''); 
+      const existingColor = category?.color || 'gray';
+      setColor(existingColor);
+      // 如果是自定义颜色（hex格式），设置到customColor
+      if (existingColor.startsWith('#')) {
+        setCustomColor(existingColor);
+      } else {
+        const preset = presetColors.find(p => p.name === existingColor);
+        setCustomColor(preset?.hex || '#6b7280');
+      }
+    } 
+  }, [open, category]);
+  
+  const handleSubmit = (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    if (!name.trim()) return; 
+    // 如果选择了自定义颜色，使用hex值
+    const finalColor = color === 'custom' ? customColor : color;
+    onSave({ name: name.trim(), color: finalColor }); 
+  };
+  
+  const getColorDisplay = (colorName: string) => {
+    if (colorName === 'custom') return customColor;
+    const preset = presetColors.find(p => p.name === colorName);
+    return preset?.hex || '#6b7280';
+  };
+  
   return (
     <Modal isOpen={open} onClose={onClose} title={category ? '编辑分类' : '新建分类'}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div><label className="block text-sm font-medium text-gray-700 mb-1">名称</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 outline-none" placeholder="分类名称..." required /></div>
-        <div><label className="block text-sm font-medium text-gray-700 mb-2">颜色</label><div className="flex gap-2">{colors.map(c => <button key={c} type="button" onClick={() => setColor(c)} className={`w-8 h-8 rounded-lg ${getCategoryColors(c).bg} ${color === c ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`} />)}</div></div>
-        <div className="flex justify-end gap-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100">取消</button><button type="submit" className="px-6 py-2 rounded-lg bg-primary text-white">{category ? '保存' : '创建'}</button></div>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* 名称输入 */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">名称</label>
+          <input 
+            type="text" 
+            value={name} 
+            onChange={(e) => setName(e.target.value)} 
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" 
+            placeholder="分类名称..." 
+            required 
+          />
+        </div>
+        
+        {/* 颜色选择 */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-3">颜色</label>
+          
+          {/* 预设颜色网格 */}
+          <div className="grid grid-cols-10 gap-2 mb-4">
+            {presetColors.map(c => (
+              <button
+                key={c.name}
+                type="button"
+                onClick={() => {
+                  setColor(c.name);
+                  setCustomColor(c.hex);
+                }}
+                title={c.label}
+                style={{ backgroundColor: c.hex }}
+                className={`w-8 h-8 rounded-lg transition-all hover:scale-110 ${
+                  color === c.name 
+                    ? 'ring-2 ring-offset-2 ring-gray-900 scale-110' 
+                    : 'hover:ring-2 hover:ring-offset-1 hover:ring-gray-300'
+                }`}
+              />
+            ))}
+          </div>
+          
+          {/* 自定义颜色区域 */}
+          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+            <div className="relative">
+              <input
+                ref={colorInputRef}
+                type="color"
+                value={customColor}
+                onChange={(e) => {
+                  setCustomColor(e.target.value);
+                  setColor('custom');
+                }}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div 
+                className={`w-10 h-10 rounded-xl border-2 cursor-pointer transition-all ${
+                  color === 'custom' ? 'ring-2 ring-offset-2 ring-gray-900' : ''
+                }`}
+                style={{ backgroundColor: customColor, borderColor: customColor }}
+                onClick={() => colorInputRef.current?.click()}
+              />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-700">自定义颜色</p>
+              <p className="text-xs text-gray-500">点击色块打开色轮选择器</p>
+            </div>
+            <input
+              type="text"
+              value={customColor.toUpperCase()}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                  setCustomColor(val);
+                  if (val.length === 7) setColor('custom');
+                }
+              }}
+              className="w-24 px-3 py-2 text-sm font-mono bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-primary/20"
+              placeholder="#000000"
+            />
+          </div>
+          
+          {/* 预览 */}
+          <div className="mt-4 p-4 bg-white border border-gray-200 rounded-xl">
+            <p className="text-xs text-gray-500 mb-2">预览效果</p>
+            <div className="flex items-center gap-3">
+              <div 
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ backgroundColor: getColorDisplay(color) + '20' }}
+              >
+                <svg 
+                  className="w-5 h-5" 
+                  viewBox="0 0 24 24" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  strokeWidth="2"
+                  style={{ color: getColorDisplay(color) }}
+                >
+                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                </svg>
+              </div>
+              <span 
+                className="px-3 py-1 rounded-full text-sm font-medium"
+                style={{ 
+                  backgroundColor: getColorDisplay(color) + '20',
+                  color: getColorDisplay(color)
+                }}
+              >
+                {name || '分类名称'}
+              </span>
+            </div>
+          </div>
+        </div>
+        
+        {/* 按钮 */}
+        <div className="flex justify-end gap-3 pt-2">
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="px-5 py-2.5 rounded-xl text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            取消
+          </button>
+          <button 
+            type="submit" 
+            className="px-6 py-2.5 rounded-xl bg-primary text-white font-medium hover:bg-orange-600 transition-colors"
+          >
+            {category ? '保存' : '创建'}
+          </button>
+        </div>
       </form>
     </Modal>
   );
@@ -958,18 +1187,22 @@ const TocButton: React.FC<{
 
   // 点击目录项跳转
   const scrollToHeading = useCallback((index: number) => {
-    const container = containerRef.current?.closest('.overflow-y-auto');
-    if (!container) return;
+    // 直接查找编辑器内容区域的滚动容器
+    const scrollContainer = document.querySelector('.flex-1.overflow-y-auto') as HTMLElement;
+    if (!scrollContainer) {
+      console.warn('未找到滚动容器');
+      return;
+    }
     
-    const headings = container.querySelectorAll(editorContainerSelector + ' h1, ' + editorContainerSelector + ' h2, ' + editorContainerSelector + ' h3, ' + editorContainerSelector + ' h4, ' + editorContainerSelector + ' h5, ' + editorContainerSelector + ' h6');
+    const headings = scrollContainer.querySelectorAll('h1, h2, h3, h4, h5, h6');
     const targetHeading = headings[index] as HTMLElement;
     
     if (targetHeading) {
-      const containerRect = container.getBoundingClientRect();
+      const containerRect = scrollContainer.getBoundingClientRect();
       const headingRect = targetHeading.getBoundingClientRect();
-      const scrollTop = container.scrollTop + (headingRect.top - containerRect.top) - 20;
+      const scrollTop = scrollContainer.scrollTop + (headingRect.top - containerRect.top) - 20;
       
-      container.scrollTo({
+      scrollContainer.scrollTo({
         top: scrollTop,
         behavior: 'smooth'
       });
@@ -987,7 +1220,7 @@ const TocButton: React.FC<{
       }, 1500);
     }
     setActiveTocIndex(index);
-  }, [editorContainerSelector]);
+  }, []);
 
   if (tocItems.length === 0) return null;
 
@@ -1946,7 +2179,7 @@ export const PromptBrowserWindow: React.FC<{
                     onToggle={() => setShowAISidebar(!showAISidebar)}
                   />
                   
-                  <div className="flex-1 overflow-y-auto scrollbar-hide">
+                  <div className="flex-1 overflow-y-auto">
                     <TiptapEditor
                       content={editContent}
                       onChange={(content) => handleUserEdit('content', content)}
@@ -1955,11 +2188,6 @@ export const PromptBrowserWindow: React.FC<{
                     />
                   </div>
                 </div>
-                {/* 隐藏滚动条样式 */}
-                <style>{`
-                  .scrollbar-hide::-webkit-scrollbar { display: none; }
-                  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-                `}</style>
               </div>
             </div>
           </div>

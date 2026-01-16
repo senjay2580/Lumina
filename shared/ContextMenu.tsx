@@ -19,16 +19,47 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x, y });
   const [isVisible, setIsVisible] = useState(false);
+  const [isPositioned, setIsPositioned] = useState(false);
 
   useEffect(() => {
-    // 调整位置避免超出屏幕
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect();
-      const newX = x + rect.width > window.innerWidth ? x - rect.width : x;
-      const newY = y + rect.height > window.innerHeight ? y - rect.height : y;
-      setPosition({ x: Math.max(0, newX), y: Math.max(0, newY) });
-    }
-    requestAnimationFrame(() => setIsVisible(true));
+    // 先渲染但不可见，等计算完位置后再显示
+    const adjustPosition = () => {
+      if (menuRef.current) {
+        const rect = menuRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const padding = 8; // 距离视口边缘的最小距离
+        
+        let newX = x;
+        let newY = y;
+        
+        // 水平方向：如果右边超出，向左调整
+        if (x + rect.width > viewportWidth - padding) {
+          newX = Math.max(padding, x - rect.width);
+        }
+        
+        // 垂直方向：如果下方超出，向上弹出
+        if (y + rect.height > viewportHeight - padding) {
+          // 计算向上弹出的位置
+          newY = y - rect.height;
+          // 如果向上也超出，则贴近底部
+          if (newY < padding) {
+            newY = viewportHeight - rect.height - padding;
+          }
+        }
+        
+        // 确保不超出左边界和上边界
+        newX = Math.max(padding, newX);
+        newY = Math.max(padding, newY);
+        
+        setPosition({ x: newX, y: newY });
+        setIsPositioned(true);
+        requestAnimationFrame(() => setIsVisible(true));
+      }
+    };
+    
+    // 使用 requestAnimationFrame 确保 DOM 已渲染
+    requestAnimationFrame(adjustPosition);
   }, [x, y]);
 
   useEffect(() => {
@@ -52,7 +83,11 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
   return (
     <div
       ref={menuRef}
-      style={{ left: position.x, top: position.y }}
+      style={{ 
+        left: position.x, 
+        top: position.y,
+        visibility: isPositioned ? 'visible' : 'hidden'
+      }}
       className={`
         fixed z-50 min-w-[160px] py-1.5 bg-white rounded-xl shadow-xl border border-gray-100
         transition-all duration-150 origin-top-left

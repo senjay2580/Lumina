@@ -33,6 +33,7 @@
     "lucide-react": "^0.562.0",
     "marked": "^17.0.1",
     "motion": "^12.23.26",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.3",
     "react-activity-calendar": "^3.0.5",
     "react-dom": "^19.2.3",
