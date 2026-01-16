@@ -42,11 +42,16 @@ export interface CrawlStats {
 }
 
 export interface CrawlConfig {
+  id?: string;
+  user_id?: string;
   reddit_subreddits: string[];
   github_search_queries: string[];
   min_reddit_score: number;
   min_github_stars: number;
   ai_quality_threshold: number;
+  ai_analysis_prompt: string; // AI 分析提示词
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CrawlProgress {
@@ -64,76 +69,312 @@ export interface CrawlProgress {
   newPrompt?: CrawledPrompt;
 }
 
-// 默认配置
+// 默认 AI 分析提示词
+export const DEFAULT_AI_ANALYSIS_PROMPT = `你是 AI 项目发现专家。分析内容，提取有价值的 AI 相关项目和资源。
+
+提取范围（必须与 AI/LLM/机器学习相关）：
+1. AI 工具/软件 - 如 AI 助手、ChatGPT 插件、ComfyUI 节点、自动化工具
+2. AI 开源项目 - GitHub 上的热门 AI 项目、框架、库
+3. AI 技术/框架 - 如 LangChain、RAG 实现、Agent 框架、模型微调
+4. AI 资源合集 - awesome-xxx 类型的资源列表
+5. AI 教程/指南 - 实用的学习资源和最佳实践
+6. AI 应用案例 - 创新的 AI 应用和解决方案
+
+输出 JSON：
+{
+  "prompts": [{ 
+    "title": "项目名称（简洁明了）", 
+    "content": "项目描述（100-300字，说明核心功能、技术栈、应用场景和价值）", 
+    "category": "分类（tool/framework/resource/tutorial/application/agent）", 
+    "quality": 8.5 
+  }],
+  "analysis": { "summary": "内容摘要", "language": "语言" }
+}
+
+评分标准：
+- 10分：知名项目、Star 数高、活跃维护、广泛使用
+- 7-9分：高质量项目、实用性强、有创新点
+- 4-6分：一般项目，有一定参考价值
+- 1-3分：低质量或过时项目
+
+重要规则：
+- 每个来源只返回 1 个最核心的项目（不要拆分成多个）
+- 对于 GitHub 仓库，重点描述项目功能、技术特点和使用场景
+- 只提取与 AI/LLM/机器学习直接相关的内容
+- 如果内容与 AI 无关，返回空数组
+- 优先提取有实际应用价值的项目`;
+
+// 默认配置（空数组，用户自定义）
 const DEFAULT_CONFIG: CrawlConfig = {
-  reddit_subreddits: [
-    // 视觉与视频生成
-    'comfyui', 'AIVideo', 'StableDiffusion', 'GenerativeAI',
-    // AI 编程与 Vibecoding
-    'vibecoding', 'cursor', 'v0', 'AIProgramming',
-    // AI 商业化与搞钱
-    'HustleGPT', 'AIBuild', 'n8n_ai_agents',
-    // 专项模型区
-    'GeminiAI', 'LocalLLM',
-    // 原有经典
-    'PromptEngineering', 'ChatGPTPromptGenius', 'ChatGPT', 'OpenAI'
-  ],
-  github_search_queries: [
-    // AI 工具与软件
-    'awesome-ai-tools', 'ai-tools', 'llm-tools', 'ai-assistant',
-    // ComfyUI 生态
-    'comfyui-nodes', 'comfyui-workflows', 'comfyui-custom-node',
-    // AI 编程
-    'cursor-rules', 'awesome-cursorrules', 'ai-coding', 'copilot-instructions',
-    // Agent 与自动化
-    'ai-agent', 'autonomous-agent', 'langchain-agent', 'autogpt',
-    // 提示词工程
-    'prompt-engineering', 'awesome-prompts', 'chatgpt-prompts', 'LangGPT', 'system-prompts',
-    // RAG 与知识库
-    'rag-tutorial', 'vector-database', 'knowledge-base-ai',
-    // 模型与微调
-    'llm-finetune', 'lora-training', 'model-quantization',
-    // AI 资源合集
-    'awesome-llm', 'awesome-chatgpt', 'awesome-generative-ai', 'ai-collection',
-    // AI 赚钱与商业化
-    'ai-money', 'ai-side-hustle', 'make-money-ai', 'ai-business',
-    'gpt-monetization', 'ai-saas', 'ai-startup',
-    // 自动化脚本与薅羊毛
-    'auto-sign', 'daily-checkin', 'auto-task', 'qiandao',
-    'free-api', 'free-gpt', 'free-chatgpt',
-    // AI 副业与被动收入
-    'passive-income', 'side-project', 'indie-hacker'
-  ],
+  reddit_subreddits: [],
+  github_search_queries: [],
   min_reddit_score: 10,
   min_github_stars: 50,
-  ai_quality_threshold: 6.0
+  ai_quality_threshold: 6.0,
+  ai_analysis_prompt: DEFAULT_AI_ANALYSIS_PROMPT
 };
 
-const CONFIG_STORAGE_KEY = 'crawl_config';
+// 预设模板（系统默认）
+export const SYSTEM_TEMPLATES: { id: string; name: string; description: string; config: Partial<CrawlConfig> }[] = [
+  {
+    id: 'ai-tools',
+    name: 'AI 工具项目',
+    description: 'AI 工具、助手、插件等实用项目',
+    config: {
+      reddit_subreddits: ['ChatGPT', 'ClaudeAI', 'OpenAI', 'LocalLLM', 'artificial'],
+      github_search_queries: ['awesome-ai-tools', 'ai-tools', 'llm-tools', 'ai-assistant', 'chatgpt-plugins']
+    }
+  },
+  {
+    id: 'ai-coding',
+    name: 'AI 编程项目',
+    description: 'Cursor、Copilot 等 AI 编程相关项目',
+    config: {
+      reddit_subreddits: ['cursor', 'vibecoding', 'AIProgramming', 'CodingWithAI', 'github'],
+      github_search_queries: ['cursor-rules', 'awesome-cursorrules', 'ai-coding', 'copilot-instructions', 'code-assistant']
+    }
+  },
+  {
+    id: 'ai-image',
+    name: 'AI 图像项目',
+    description: 'Stable Diffusion、ComfyUI、Midjourney 相关项目',
+    config: {
+      reddit_subreddits: ['StableDiffusion', 'comfyui', 'midjourney', 'AIArt', 'GenerativeAI'],
+      github_search_queries: ['comfyui-nodes', 'comfyui-workflows', 'stable-diffusion', 'sd-webui', 'image-generation']
+    }
+  },
+  {
+    id: 'ai-agents',
+    name: 'AI Agent 项目',
+    description: 'AI Agent、自动化、工作流项目',
+    config: {
+      reddit_subreddits: ['n8n_ai_agents', 'AutoGPT', 'LangChain', 'AIAgents', 'automation'],
+      github_search_queries: ['ai-agent', 'autonomous-agent', 'langchain', 'autogpt', 'crew-ai', 'agent-framework']
+    }
+  },
+  {
+    id: 'ai-opensource',
+    name: 'AI 开源项目',
+    description: '热门 AI 开源项目和框架',
+    config: {
+      reddit_subreddits: ['MachineLearning', 'deeplearning', 'LocalLLM', 'ollama', 'selfhosted'],
+      github_search_queries: ['awesome-llm', 'awesome-chatgpt', 'open-source-llm', 'llm-framework', 'machine-learning']
+    }
+  },
+  {
+    id: 'full',
+    name: '全量采集',
+    description: '包含所有推荐的关键词（数量较多）',
+    config: {
+      reddit_subreddits: [
+        'ChatGPT', 'ClaudeAI', 'OpenAI', 'LocalLLM', 'artificial',
+        'cursor', 'vibecoding', 'AIProgramming', 'github',
+        'StableDiffusion', 'comfyui', 'midjourney', 'AIArt', 'GenerativeAI',
+        'n8n_ai_agents', 'AutoGPT', 'LangChain', 'MachineLearning', 'deeplearning'
+      ],
+      github_search_queries: [
+        'awesome-ai-tools', 'ai-tools', 'llm-tools', 'ai-assistant',
+        'cursor-rules', 'awesome-cursorrules', 'ai-coding', 'copilot-instructions',
+        'comfyui-nodes', 'comfyui-workflows', 'stable-diffusion',
+        'ai-agent', 'autonomous-agent', 'langchain', 'autogpt',
+        'awesome-llm', 'awesome-chatgpt', 'open-source-llm'
+      ]
+    }
+  }
+];
+
+// 用户自定义模板类型
+export interface UserTemplate {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string;
+  reddit_subreddits: string[];
+  github_search_queries: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+// 获取用户自定义模板
+export async function getUserTemplates(userId: string): Promise<UserTemplate[]> {
+  const { data, error } = await supabase
+    .from('crawl_templates')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  
+  if (error) throw error;
+  return data || [];
+}
+
+// 创建用户模板
+export async function createUserTemplate(
+  userId: string, 
+  template: { name: string; description?: string; reddit_subreddits: string[]; github_search_queries: string[] }
+): Promise<UserTemplate> {
+  const { data, error } = await supabase
+    .from('crawl_templates')
+    .insert({
+      user_id: userId,
+      name: template.name,
+      description: template.description || '',
+      reddit_subreddits: template.reddit_subreddits,
+      github_search_queries: template.github_search_queries
+    })
+    .select()
+    .single();
+  
+  if (error) throw error;
+  return data;
+}
+
+// 更新用户模板
+export async function updateUserTemplate(
+  templateId: string,
+  template: { name?: string; description?: string; reddit_subreddits?: string[]; github_search_queries?: string[] }
+): Promise<void> {
+  const { error } = await supabase
+    .from('crawl_templates')
+    .update({
+      ...template,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', templateId);
+  
+  if (error) throw error;
+}
+
+// 删除用户模板
+export async function deleteUserTemplate(templateId: string): Promise<void> {
+  const { error } = await supabase
+    .from('crawl_templates')
+    .delete()
+    .eq('id', templateId);
+  
+  if (error) throw error;
+}
+
+// 兼容旧的 CONFIG_TEMPLATES 导出
+export const CONFIG_TEMPLATES = SYSTEM_TEMPLATES;
+
 const SELECTED_MODEL_KEY = 'crawl_selected_model'; // 格式: providerId:modelId
 
-// ============ 配置管理 (localStorage) ============
+// ============ 配置管理 (Supabase 数据库) ============
 
-export function getCrawlConfig(): CrawlConfig {
+export async function getCrawlConfig(userId: string): Promise<CrawlConfig> {
   try {
-    const stored = localStorage.getItem(CONFIG_STORAGE_KEY);
-    if (stored) {
-      return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
+    const { data, error } = await supabase
+      .from('crawl_configs')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+    
+    if (error) throw error;
+    
+    if (data) {
+      return {
+        id: data.id,
+        user_id: data.user_id,
+        reddit_subreddits: data.reddit_subreddits || [],
+        github_search_queries: data.github_search_queries || [],
+        min_reddit_score: data.min_reddit_score ?? 10,
+        min_github_stars: data.min_github_stars ?? 50,
+        ai_quality_threshold: data.ai_quality_threshold ?? 6.0,
+        ai_analysis_prompt: data.ai_analysis_prompt || DEFAULT_AI_ANALYSIS_PROMPT,
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      };
     }
+    
+    // 如果没有配置，创建默认配置
+    const newConfig = { ...DEFAULT_CONFIG, user_id: userId };
+    const { data: created, error: createError } = await supabase
+      .from('crawl_configs')
+      .insert(newConfig)
+      .select()
+      .single();
+    
+    if (createError) throw createError;
+    return created as CrawlConfig;
   } catch (e) {
     console.error('Failed to load crawl config:', e);
+    return { ...DEFAULT_CONFIG };
   }
-  return DEFAULT_CONFIG;
 }
 
-export function updateCrawlConfig(key: keyof CrawlConfig, value: any): void {
-  const config = getCrawlConfig();
-  (config as any)[key] = value;
-  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+export async function updateCrawlConfig(userId: string, key: keyof CrawlConfig, value: any): Promise<void> {
+  const { error } = await supabase
+    .from('crawl_configs')
+    .update({ [key]: value, updated_at: new Date().toISOString() })
+    .eq('user_id', userId);
+  
+  if (error) throw error;
 }
 
-export function resetCrawlConfig(): void {
-  localStorage.removeItem(CONFIG_STORAGE_KEY);
+export async function saveCrawlConfig(userId: string, config: Partial<CrawlConfig>): Promise<void> {
+  const { error } = await supabase
+    .from('crawl_configs')
+    .upsert({
+      user_id: userId,
+      reddit_subreddits: config.reddit_subreddits,
+      github_search_queries: config.github_search_queries,
+      min_reddit_score: config.min_reddit_score,
+      min_github_stars: config.min_github_stars,
+      ai_quality_threshold: config.ai_quality_threshold,
+      ai_analysis_prompt: config.ai_analysis_prompt,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+  
+  if (error) throw error;
+}
+
+export async function resetCrawlConfig(userId: string): Promise<void> {
+  await saveCrawlConfig(userId, DEFAULT_CONFIG);
+}
+
+// 导出配置为 JSON
+export function exportConfigToJson(config: CrawlConfig): string {
+  const exportData = {
+    reddit_subreddits: config.reddit_subreddits,
+    github_search_queries: config.github_search_queries,
+    min_reddit_score: config.min_reddit_score,
+    min_github_stars: config.min_github_stars,
+    ai_quality_threshold: config.ai_quality_threshold,
+    ai_analysis_prompt: config.ai_analysis_prompt
+  };
+  return JSON.stringify(exportData, null, 2);
+}
+
+// 从 JSON 导入配置
+export function parseConfigFromJson(jsonStr: string): Partial<CrawlConfig> | null {
+  try {
+    const data = JSON.parse(jsonStr);
+    const config: Partial<CrawlConfig> = {};
+    
+    if (Array.isArray(data.reddit_subreddits)) {
+      config.reddit_subreddits = data.reddit_subreddits.filter((s: any) => typeof s === 'string');
+    }
+    if (Array.isArray(data.github_search_queries)) {
+      config.github_search_queries = data.github_search_queries.filter((s: any) => typeof s === 'string');
+    }
+    if (typeof data.min_reddit_score === 'number') {
+      config.min_reddit_score = data.min_reddit_score;
+    }
+    if (typeof data.min_github_stars === 'number') {
+      config.min_github_stars = data.min_github_stars;
+    }
+    if (typeof data.ai_quality_threshold === 'number') {
+      config.ai_quality_threshold = data.ai_quality_threshold;
+    }
+    if (typeof data.ai_analysis_prompt === 'string') {
+      config.ai_analysis_prompt = data.ai_analysis_prompt;
+    }
+    
+    return config;
+  } catch (e) {
+    console.error('Failed to parse config JSON:', e);
+    return null;
+  }
 }
 
 // 获取用户选择的模型 (providerId:modelId)
@@ -447,12 +688,13 @@ async function crawlGitHub(queries: string[], minStars: number, token?: string):
   return allResults;
 }
 
-// AI 分析提取提示词
+// AI 分析提取项目
 async function analyzeWithAI(
   content: string,
   sourceType: string,
   title: string,
-  aiProvider: any
+  aiProvider: any,
+  customPrompt?: string
 ): Promise<{ prompts: Array<{ title: string; content: string; category: string; quality: number }>; analysis: any } | null> {
   // 内容太短，跳过分析
   if (content.trim().length < 50) {
@@ -460,38 +702,7 @@ async function analyzeWithAI(
     return null;
   }
 
-  const systemPrompt = `你是 AI 资源发现专家。分析内容，提取有价值的 AI 相关资源。
-
-提取范围（必须与 AI/LLM/机器学习相关）：
-1. AI 提示词（Prompts）- 可直接使用的提示词模板
-2. AI 工具/软件 - 如 ComfyUI 插件、AI 编程工具、自动化脚本
-3. AI 技术/框架 - 如模型微调方法、RAG 实现、Agent 框架
-4. AI 资源合集 - awesome-xxx 类型的资源列表
-5. AI 教程/指南 - 实用的学习资源和最佳实践
-6. AI 赚钱/商业化 - AI 副业、SaaS 项目、变现方法、自动化脚本
-
-输出 JSON：
-{
-  "prompts": [{ 
-    "title": "资源标题（简洁明了）", 
-    "content": "资源描述（100-200字，说明核心功能、用途和价值）", 
-    "category": "分类（prompt/tool/framework/resource/tutorial/money）", 
-    "quality": 8.5 
-  }],
-  "analysis": { "summary": "内容摘要", "language": "语言" }
-}
-
-评分标准：
-- 10分：专业级、广泛使用的优质资源
-- 7-9分：高质量、实用性强
-- 4-6分：一般，有一定参考价值
-- 1-3分：低质量或过时
-
-重要规则：
-- 每个来源只返回 1 个最核心的资源（不要拆分成多个）
-- 对于 GitHub 仓库，用一段话概括整个项目的价值
-- 只提取与 AI/LLM/机器学习直接相关的内容
-- 如果内容与 AI 无关，返回空数组`;
+  const systemPrompt = customPrompt || DEFAULT_AI_ANALYSIS_PROMPT;
 
   try {
     // 使用用户配置的 baseUrl，和 ai-prompt-assistant 保持一致
@@ -548,7 +759,7 @@ export async function triggerCrawl(
   abortSignal?: AbortSignal,
   selectedModel?: { providerId: string; modelId: string } // 指定使用的模型
 ): Promise<{ jobId: string; stats: any }> {
-  const config = getCrawlConfig();
+  const config = await getCrawlConfig(userId);
   
   // 获取 AI 提供商
   const providers = await getUserProviders(userId);
@@ -698,7 +909,8 @@ export async function triggerCrawl(
             `${post.title}\n\n${post.content}`,
             'reddit',
             post.title,
-            aiProvider
+            aiProvider,
+            config.ai_analysis_prompt
           );
           
           if (analysis?.prompts?.length) {
@@ -774,7 +986,8 @@ export async function triggerCrawl(
             repo.content,
             'github',
             repo.title,
-            aiProvider
+            aiProvider,
+            config.ai_analysis_prompt
           );
           
           if (analysis?.prompts?.length) {

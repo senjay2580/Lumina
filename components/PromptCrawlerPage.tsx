@@ -5,7 +5,7 @@ import {
   Sparkles, Github, FileText, Star, Loader2, FolderOpen,
   TrendingUp, Eye, CheckSquare, Square, Clock, Zap, Search,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Tag,
-  GitFork, Flame
+  GitFork, Flame, Copy, Play, GitMerge, Download, Wrench
 } from 'lucide-react';
 
 // 爬虫图标
@@ -19,6 +19,15 @@ const CrawlerIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+// 项目图标
+const ProjectIcon = ({ className }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    <line x1="12" y1="11" x2="12" y2="17"/>
+    <line x1="9" y1="14" x2="15" y2="14"/>
+  </svg>
+);
+
 // Reddit 官方图标 (Snoo)
 const RedditIcon = ({ className }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -27,9 +36,11 @@ const RedditIcon = ({ className }: { className?: string }) => (
 );
 import {
   triggerCrawl, getCrawlJobs, getCrawledPrompts, deletePrompt, deletePrompts,
-  getCrawlStats, getCrawlConfig, updateCrawlConfig, clearCrawlJobs, clearAllPrompts,
-  getSelectedModel, setSelectedModel,
-  type CrawledPrompt, type CrawlJob, type CrawlStats, type CrawlProgress
+  getCrawlStats, getCrawlConfig, updateCrawlConfig, saveCrawlConfig, clearCrawlJobs, clearAllPrompts,
+  getSelectedModel, setSelectedModel, exportConfigToJson, parseConfigFromJson, 
+  SYSTEM_TEMPLATES, getUserTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate,
+  DEFAULT_AI_ANALYSIS_PROMPT,
+  type CrawledPrompt, type CrawlJob, type CrawlStats, type CrawlProgress, type CrawlConfig, type UserTemplate
 } from '../lib/prompt-crawler';
 import { getEnabledProviders, type AIProvider } from '../lib/ai-providers';
 import { AIProviderIcon } from '../shared/AIProviderIcons';
@@ -83,7 +94,7 @@ export default function PromptCrawlerPage({ userId }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const cfg = getCrawlConfig();
+      const cfg = await getCrawlConfig(userId);
       setConfig(cfg);
       
       // 加载 AI 提供商并构建模型选项
@@ -331,8 +342,8 @@ export default function PromptCrawlerPage({ userId }: Props) {
   };
 
   const tabs = [
-    { key: 'prompts', label: '提示词', icon: FileText, count: prompts.length },
-    { key: 'history', label: '历史', icon: Clock },
+    { key: 'prompts', label: '项目列表', icon: FileText, count: prompts.length },
+    { key: 'history', label: '采集历史', icon: Clock },
     { key: 'config', label: '配置', icon: Settings }
   ];
 
@@ -346,8 +357,8 @@ export default function PromptCrawlerPage({ userId }: Props) {
           <div className="flex items-center gap-3">
             <CrawlerIcon className="w-12 h-12" />
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">提示词采集</h2>
-              <p className="text-gray-500 text-sm">从 Reddit、GitHub 自动采集优质提示词</p>
+              <h2 className="text-2xl font-bold text-gray-900">项目采集</h2>
+              <p className="text-gray-500 text-sm">从 Reddit、GitHub 自动发现优质 AI 项目和资源</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -377,7 +388,7 @@ export default function PromptCrawlerPage({ userId }: Props) {
                 <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center">
                   <Database className="w-5 h-5 text-purple-600" />
                 </div>
-                <span className="text-sm text-gray-500">总提示词</span>
+                <span className="text-sm text-gray-500">总项目</span>
               </div>
               <div className="text-3xl font-bold text-gray-900">{stats.totalPrompts}</div>
             </div>
@@ -555,7 +566,9 @@ export default function PromptCrawlerPage({ userId }: Props) {
               return (
                 <button key={tab.key} onClick={() => setActiveTab(tab.key as any)}
                   className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
-                    isActive ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                    isActive 
+                      ? 'bg-primary text-white shadow-lg shadow-primary/30' 
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
                   }`}>
                   <Icon className="w-4 h-4" />
                   {tab.label}
@@ -571,7 +584,9 @@ export default function PromptCrawlerPage({ userId }: Props) {
           <button 
             onClick={() => setActiveTab('config')}
             className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
-              activeTab === 'config' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+              activeTab === 'config' 
+                ? 'bg-primary text-white shadow-lg shadow-primary/30' 
+                : 'bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20'
             }`}
           >
             <Settings className="w-4 h-4" />
@@ -593,12 +608,12 @@ export default function PromptCrawlerPage({ userId }: Props) {
                 onDelete={handleDelete}
                 onBatchDelete={handleBatchDelete}
                 onClearAll={async () => {
-                  if (!confirm('确定要清空所有提示词吗？此操作不可恢复！')) return;
+                  if (!confirm('确定要清空所有项目吗？此操作不可恢复！')) return;
                   try {
                     await clearAllPrompts(userId);
                     setPrompts([]);
                     setStats(prev => prev ? { ...prev, totalPrompts: 0, redditPrompts: 0, githubPrompts: 0 } : prev);
-                    toast.success('所有提示词已清空');
+                    toast.success('所有项目已清空');
                   } catch (e: any) {
                     toast.error(e.message || '清空失败');
                   }
@@ -627,11 +642,31 @@ export default function PromptCrawlerPage({ userId }: Props) {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">爬取参数</h3>
-                  <ConfigPanel config={config} onUpdate={(key, value) => {
-                    updateCrawlConfig(key as any, value);
-                    setConfig(prev => ({ ...prev, [key]: value }));
-                    toast.success('已保存');
-                  }} />
+                  <ConfigPanel 
+                    config={config} 
+                    userId={userId}
+                    onUpdate={async (key, value) => {
+                      await updateCrawlConfig(userId, key as any, value);
+                      setConfig(prev => ({ ...prev, [key]: value }));
+                      toast.success('已保存');
+                    }}
+                    onImport={async (importedConfig) => {
+                      await saveCrawlConfig(userId, importedConfig);
+                      setConfig(prev => ({ ...prev, ...importedConfig }));
+                      toast.success('配置已导入');
+                    }}
+                    onExport={() => {
+                      const json = exportConfigToJson(config as CrawlConfig);
+                      const blob = new Blob([json], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `crawl-config-${new Date().toISOString().slice(0, 10)}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      toast.success('配置已导出');
+                    }}
+                  />
                 </div>
               </div>
             )}
@@ -1023,10 +1058,10 @@ function PromptList({
                       </span>
                     )}
                     {/* GitHub 显示最新提交时间 */}
-                    {isGitHub && prompt.source_updated_at && (
+                    {isGitHub && (prompt as any).source_updated_at && (
                       <span className="inline-flex items-center gap-1 text-xs text-gray-400" title="最新提交">
                         <Clock className="w-3 h-3" />
-                        {formatTime(prompt.source_updated_at)}
+                        {formatTime((prompt as any).source_updated_at)}
                       </span>
                     )}
                   </div>
@@ -1253,12 +1288,257 @@ function JobHistory({ jobs, onRefresh, onClear }: { jobs: CrawlJob[]; onRefresh:
 }
 
 // 配置面板
-function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpdate: (key: string, value: any) => void }) {
+function ConfigPanel({ 
+  config, 
+  userId,
+  onUpdate, 
+  onImport, 
+  onExport 
+}: { 
+  config: Record<string, any>; 
+  userId: string;
+  onUpdate: (key: string, value: any) => void
+  onImport: (config: Partial<CrawlConfig>) => void;
+  onExport: () => void;
+}) {
   const [newTag, setNewTag] = useState<{ key: string; value: string } | null>(null);
+  const [editingTag, setEditingTag] = useState<{ key: string; oldValue: string; newValue: string } | null>(null);
+  const [selectMode, setSelectMode] = useState<string | null>(null);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [userTemplates, setUserTemplates] = useState<UserTemplate[]>([]);
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [newTemplateDesc, setNewTemplateDesc] = useState('');
+  const [bulkKeywordsInput, setBulkKeywordsInput] = useState(''); // 批量关键词输入
+  const [localAiPrompt, setLocalAiPrompt] = useState<string | null>(null); // 本地编辑状态
+  const [copiedKey, setCopiedKey] = useState<string | null>(null); // 复制成功反馈
+  const [hoveredTemplate, setHoveredTemplate] = useState<string | null>(null); // 当前悬浮的模板
+  const [tooltipPosition, setTooltipPosition] = useState<'top' | 'bottom'>('top'); // tooltip 位置
+  const [editingTemplate, setEditingTemplate] = useState<UserTemplate | null>(null); // 正在编辑的模板
+  const [editRedditTags, setEditRedditTags] = useState<string[]>([]); // 编辑中的 Reddit 标签
+  const [editGithubTags, setEditGithubTags] = useState<string[]>([]); // 编辑中的 GitHub 标签
+  const [editNewTag, setEditNewTag] = useState<{ key: string; value: string } | null>(null); // 编辑模式的新标签
+  const [editSelectMode, setEditSelectMode] = useState<string | null>(null); // 编辑模式的选择模式
+  const [editSelectedTags, setEditSelectedTags] = useState<Set<string>>(new Set()); // 编辑模式的选中标签
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const templateFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // 处理模板卡片悬浮，智能判断 tooltip 位置
+  const handleTemplateHover = (templateId: string, event: React.MouseEvent) => {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const spaceAbove = rect.top;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    // 如果上方空间不足 200px，显示在下方
+    setTooltipPosition(spaceAbove < 200 ? 'bottom' : 'top');
+    setHoveredTemplate(templateId);
+  };
+
+  // 加载用户模板
+  useEffect(() => {
+    loadUserTemplates();
+  }, [userId]);
+
+  const loadUserTemplates = async () => {
+    try {
+      const templates = await getUserTemplates(userId);
+      setUserTemplates(templates);
+    } catch (e) {
+      console.error('Failed to load user templates:', e);
+    }
+  };
+
+  // 智能解析关键词（支持空格、逗号、换行分隔）
+  const parseKeywords = (input: string): string[] => {
+    if (!input.trim()) return [];
+    // 按空格、逗号、换行分隔，过滤空值和去重
+    const keywords = input
+      .split(/[\s,，\n]+/)
+      .map(k => k.trim())
+      .filter(k => k.length > 0);
+    return [...new Set(keywords)];
+  };
+
+  const handleSaveAsTemplate = async () => {
+    if (!newTemplateName.trim()) return;
+    try {
+      // 解析批量输入的关键词
+      const parsedKeywords = parseKeywords(bulkKeywordsInput);
+      
+      // 合并当前配置和批量输入的关键词
+      const redditSubs = config.reddit_subreddits || [];
+      const githubQueries = [...new Set([...(config.github_search_queries || []), ...parsedKeywords])];
+      
+      await createUserTemplate(userId, {
+        name: newTemplateName.trim(),
+        description: newTemplateDesc.trim(),
+        reddit_subreddits: redditSubs,
+        github_search_queries: githubQueries
+      });
+      await loadUserTemplates();
+      setShowCreateTemplate(false);
+      setNewTemplateName('');
+      setNewTemplateDesc('');
+      setBulkKeywordsInput('');
+    } catch (e) {
+      console.error('Failed to create template:', e);
+    }
+  };
+
+  // 导入模板
+  const handleImportTemplate = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const content = event.target?.result as string;
+        const data = JSON.parse(content);
+        
+        // 验证模板格式
+        if (!data.name || typeof data.name !== 'string') {
+          alert('无效的模板格式：缺少模板名称');
+          return;
+        }
+        
+        await createUserTemplate(userId, {
+          name: data.name,
+          description: data.description || '',
+          reddit_subreddits: Array.isArray(data.reddit_subreddits) ? data.reddit_subreddits : [],
+          github_search_queries: Array.isArray(data.github_search_queries) ? data.github_search_queries : []
+        });
+        await loadUserTemplates();
+      } catch (err) {
+        console.error('Failed to import template:', err);
+        alert('导入失败：无效的 JSON 格式');
+      }
+    };
+    reader.readAsText(file);
+    
+    // 重置 input
+    if (templateFileInputRef.current) {
+      templateFileInputRef.current.value = '';
+    }
+  };
+
+  // 导出模板
+  const handleExportTemplate = (template: UserTemplate) => {
+    const exportData = {
+      name: template.name,
+      description: template.description,
+      reddit_subreddits: template.reddit_subreddits,
+      github_search_queries: template.github_search_queries
+    };
+    const json = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `template-${template.name}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDeleteUserTemplate = async (templateId: string) => {
+    if (!confirm('确定要删除这个模板吗？')) return;
+    try {
+      await deleteUserTemplate(templateId);
+      await loadUserTemplates();
+    } catch (e) {
+      console.error('Failed to delete template:', e);
+    }
+  };
+
+  // 打开编辑模板弹窗
+  const handleOpenEditTemplate = (template: UserTemplate) => {
+    setEditingTemplate(template);
+    setEditRedditTags(template.reddit_subreddits || []);
+    setEditGithubTags(template.github_search_queries || []);
+    setEditNewTag(null);
+    setEditSelectMode(null);
+    setEditSelectedTags(new Set());
+  };
+
+  // 关闭编辑模板弹窗
+  const handleCloseEditTemplate = () => {
+    setEditingTemplate(null);
+    setEditRedditTags([]);
+    setEditGithubTags([]);
+    setEditNewTag(null);
+    setEditSelectMode(null);
+    setEditSelectedTags(new Set());
+  };
+
+  // 保存编辑的模板
+  const handleSaveEditTemplate = async () => {
+    if (!editingTemplate) return;
+    try {
+      await updateUserTemplate(editingTemplate.id, {
+        reddit_subreddits: editRedditTags,
+        github_search_queries: editGithubTags
+      });
+      await loadUserTemplates();
+      handleCloseEditTemplate();
+    } catch (e) {
+      console.error('Failed to update template:', e);
+    }
+  };
+
+  // 编辑模式：添加标签
+  const handleEditAddTag = (key: 'reddit' | 'github') => {
+    if (!editNewTag || editNewTag.key !== key || !editNewTag.value.trim()) return;
+    const newTags = parseKeywords(editNewTag.value);
+    if (newTags.length === 0) {
+      setEditNewTag(null);
+      return;
+    }
+    
+    if (key === 'reddit') {
+      const merged = [...new Set([...editRedditTags, ...newTags])];
+      setEditRedditTags(merged);
+    } else {
+      const merged = [...new Set([...editGithubTags, ...newTags])];
+      setEditGithubTags(merged);
+    }
+    setEditNewTag(null);
+  };
+
+  // 编辑模式：删除标签
+  const handleEditRemoveTag = (key: 'reddit' | 'github', tag: string) => {
+    if (key === 'reddit') {
+      setEditRedditTags(prev => prev.filter(t => t !== tag));
+    } else {
+      setEditGithubTags(prev => prev.filter(t => t !== tag));
+    }
+  };
+
+  // 编辑模式：批量删除
+  const handleEditDeleteSelected = (key: 'reddit' | 'github') => {
+    if (editSelectedTags.size === 0) return;
+    if (key === 'reddit') {
+      setEditRedditTags(prev => prev.filter(t => !editSelectedTags.has(t)));
+    } else {
+      setEditGithubTags(prev => prev.filter(t => !editSelectedTags.has(t)));
+    }
+    setEditSelectMode(null);
+    setEditSelectedTags(new Set());
+  };
+
+  // 编辑模式：清空全部
+  const handleEditClearAll = (key: 'reddit' | 'github') => {
+    if (!confirm(`确定要清空所有${key === 'reddit' ? 'Reddit 子版块' : 'GitHub 关键词'}吗？`)) return;
+    if (key === 'reddit') {
+      setEditRedditTags([]);
+    } else {
+      setEditGithubTags([]);
+    }
+    setEditSelectMode(null);
+    setEditSelectedTags(new Set());
+  };
 
   const arrayItems = [
-    { key: 'reddit_subreddits', label: 'Reddit 子版块', icon: RedditIcon, color: 'orange' },
-    { key: 'github_search_queries', label: 'GitHub 关键词', icon: Github, color: 'gray' }
+    { key: 'reddit_subreddits', label: 'Reddit 子版块', icon: RedditIcon, color: 'orange', placeholder: '支持批量输入，空格/逗号分隔，如: ChatGPT cursor LocalLLM' },
+    { key: 'github_search_queries', label: 'GitHub 关键词', icon: Github, color: 'gray', placeholder: '支持批量输入，空格/逗号分隔，如: ai-tools cursor-rules nextjs' }
   ];
 
   const numberItems = [
@@ -1275,10 +1555,148 @@ function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpda
   const handleAddTag = (key: string) => {
     if (!newTag || newTag.key !== key || !newTag.value.trim()) return;
     const current = config[key] || [];
-    if (!current.includes(newTag.value.trim())) {
-      onUpdate(key, [...current, newTag.value.trim()]);
+    
+    // 智能解析：支持空格、逗号、换行分隔的批量输入
+    const newTags = parseKeywords(newTag.value);
+    
+    if (newTags.length === 0) {
+      setNewTag(null);
+      return;
     }
+    
+    // 合并并去重
+    const merged = [...new Set([...current, ...newTags])];
+    onUpdate(key, merged);
     setNewTag(null);
+  };
+
+  // 复制所有关键词（空格分隔）
+  const handleCopyTags = async (key: string) => {
+    const tags = config[key] || [];
+    if (tags.length === 0) return;
+    
+    const text = tags.join(' ');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch (e) {
+      console.error('Failed to copy:', e);
+    }
+  };
+
+  const handleEditTag = (key: string, oldValue: string) => {
+    if (selectMode) return; // 选择模式下不允许编辑
+    setEditingTag({ key, oldValue, newValue: oldValue });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingTag || !editingTag.newValue.trim()) {
+      setEditingTag(null);
+      return;
+    }
+    const current = config[editingTag.key] || [];
+    const newValue = editingTag.newValue.trim();
+    
+    if (editingTag.oldValue === newValue || (current.includes(newValue) && editingTag.oldValue !== newValue)) {
+      setEditingTag(null);
+      return;
+    }
+    
+    const updated = current.map((t: string) => t === editingTag.oldValue ? newValue : t);
+    onUpdate(editingTag.key, updated);
+    setEditingTag(null);
+  };
+
+  const handleApplyTemplate = (template: typeof SYSTEM_TEMPLATES[0]) => {
+    if (template.config.reddit_subreddits) {
+      onUpdate('reddit_subreddits', template.config.reddit_subreddits);
+    }
+    if (template.config.github_search_queries) {
+      onUpdate('github_search_queries', template.config.github_search_queries);
+    }
+  };
+
+  const handleMergeTemplate = (template: typeof SYSTEM_TEMPLATES[0]) => {
+    const currentReddit = config.reddit_subreddits || [];
+    const currentGithub = config.github_search_queries || [];
+    
+    if (template.config.reddit_subreddits) {
+      const merged = [...new Set([...currentReddit, ...template.config.reddit_subreddits])];
+      onUpdate('reddit_subreddits', merged);
+    }
+    if (template.config.github_search_queries) {
+      const merged = [...new Set([...currentGithub, ...template.config.github_search_queries])];
+      onUpdate('github_search_queries', merged);
+    }
+  };
+
+  // 批量操作
+  const handleEnterSelectMode = (key: string) => {
+    setSelectMode(key);
+    setSelectedTags(new Set());
+  };
+
+  const handleExitSelectMode = () => {
+    setSelectMode(null);
+    setSelectedTags(new Set());
+  };
+
+  const handleToggleTag = (tag: string) => {
+    setSelectedTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) {
+        next.delete(tag);
+      } else {
+        next.add(tag);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = (key: string) => {
+    const tags = config[key] || [];
+    if (selectedTags.size === tags.length) {
+      setSelectedTags(new Set());
+    } else {
+      setSelectedTags(new Set(tags));
+    }
+  };
+
+  const handleDeleteSelected = (key: string) => {
+    if (selectedTags.size === 0) return;
+    const current = config[key] || [];
+    const remaining = current.filter((t: string) => !selectedTags.has(t));
+    onUpdate(key, remaining);
+    handleExitSelectMode();
+  };
+
+  const handleClearAll = (key: string) => {
+    if (!confirm(`确定要清空所有${key === 'reddit_subreddits' ? 'Reddit 子版块' : 'GitHub 关键词'}吗？`)) return;
+    onUpdate(key, []);
+    handleExitSelectMode();
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      const parsed = parseConfigFromJson(content);
+      if (parsed) {
+        onImport(parsed);
+      } else {
+        alert('无效的配置文件格式');
+      }
+    };
+    reader.readAsText(file);
+    
+    // 重置 input 以便可以再次选择同一文件
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const getTagColor = (color: string) => {
@@ -1286,13 +1704,304 @@ function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpda
     return 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100';
   };
 
+  const hasNoKeywords = (!config.reddit_subreddits || config.reddit_subreddits.length === 0) && 
+                        (!config.github_search_queries || config.github_search_queries.length === 0);
+
   return (
     <div className="grid gap-5">
+      {/* 模板选择提示 - 当没有关键词时显示 */}
+      {hasNoKeywords && (
+        <div className="bg-gradient-to-r from-primary/5 to-purple-50 rounded-2xl border border-primary/20 p-6">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-6 h-6 text-primary" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-semibold text-gray-900 mb-1">开始配置采集关键词</h4>
+              <p className="text-sm text-gray-600">
+                选择下方预设模板快速开始，或手动添加自定义关键词来发现 AI 项目
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 导入导出按钮 */}
+      <div className="flex items-center justify-end">
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleImportFile}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="px-4 py-2 text-sm font-medium rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+          >
+            <FolderOpen className="w-4 h-4" />
+            导入
+          </button>
+          <button
+            onClick={onExport}
+            className="px-4 py-2 text-sm font-medium rounded-xl bg-primary text-white hover:bg-primary/90 flex items-center gap-2 transition-colors"
+          >
+            <FileText className="w-4 h-4" />
+            导出
+          </button>
+        </div>
+      </div>
+
+      {/* 模板管理区域 */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+              <Tag className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <span className="font-medium text-gray-900">采集模板</span>
+              <p className="text-xs text-gray-400">快速应用预设或自定义模板</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              ref={templateFileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleImportTemplate}
+              className="hidden"
+            />
+            <button
+              onClick={() => templateFileInputRef.current?.click()}
+              className="px-4 py-2 text-sm font-medium rounded-xl text-gray-600 hover:bg-gray-100 flex items-center gap-2 transition-colors border border-gray-200"
+            >
+              <FolderOpen className="w-4 h-4" />
+              导入模板
+            </button>
+            <button
+              onClick={() => setShowCreateTemplate(!showCreateTemplate)}
+              className="px-4 py-2 text-sm font-medium rounded-xl bg-primary text-white hover:bg-primary/90 flex items-center gap-2 transition-colors shadow-md hover:shadow-lg"
+            >
+              <Plus className="w-4 h-4" />
+              新建模板
+            </button>
+          </div>
+        </div>
+
+        {/* 新建模板表单 */}
+        {showCreateTemplate && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="grid gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  value={newTemplateName}
+                  onChange={e => setNewTemplateName(e.target.value)}
+                  placeholder="模板名称"
+                  className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 ring-primary/20"
+                />
+                <input
+                  type="text"
+                  value={newTemplateDesc}
+                  onChange={e => setNewTemplateDesc(e.target.value)}
+                  placeholder="描述（可选）"
+                  className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 ring-primary/20"
+                />
+              </div>
+              <div>
+                <textarea
+                  value={bulkKeywordsInput}
+                  onChange={e => setBulkKeywordsInput(e.target.value)}
+                  placeholder="批量输入关键词（空格、逗号或换行分隔）&#10;例如: react nextjs typescript tailwindcss"
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 ring-primary/20 resize-none font-mono"
+                />
+                <p className="text-xs text-gray-400 mt-1">支持空格、逗号、换行分隔，会自动解析为多个关键词</p>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-gray-500">
+                  当前配置: Reddit {(config.reddit_subreddits || []).length} 个 | GitHub {(config.github_search_queries || []).length} 个
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setShowCreateTemplate(false); setNewTemplateName(''); setNewTemplateDesc(''); setBulkKeywordsInput(''); }}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-200 rounded-lg"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleSaveAsTemplate}
+                    disabled={!newTemplateName.trim()}
+                    className="px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    保存模板
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 用户自定义模板 */}
+        {userTemplates.length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">我的模板</h4>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {userTemplates.map(template => {
+                const allKeywords = [...(template.reddit_subreddits || []), ...(template.github_search_queries || [])];
+                const isHovered = hoveredTemplate === `user-${template.id}`;
+                return (
+                  <div 
+                    key={template.id} 
+                    className="relative p-5 bg-white rounded-2xl border-2 border-gray-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:z-[100] transition-all duration-200 cursor-pointer group"
+                    onMouseEnter={(e) => handleTemplateHover(`user-${template.id}`, e)}
+                    onMouseLeave={() => setHoveredTemplate(null)}
+                    onClick={() => handleOpenEditTemplate(template)}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-4">
+                      <div className="flex-1 min-w-0">
+                        <h5 className="font-bold text-gray-900 text-base mb-1.5">{template.name}</h5>
+                        <p className="text-xs text-gray-500 line-clamp-1">
+                          {template.description || '自定义模板'}
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1 text-xs font-bold bg-gray-900 text-white rounded-full">
+                        {allKeywords.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleApplyTemplate({ id: template.id, name: template.name, description: template.description, config: { reddit_subreddits: template.reddit_subreddits, github_search_queries: template.github_search_queries } })}
+                          className="p-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                          title="应用"
+                        >
+                          <Wrench className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleMergeTemplate({ id: template.id, name: template.name, description: template.description, config: { reddit_subreddits: template.reddit_subreddits, github_search_queries: template.github_search_queries } })}
+                          className="p-2 bg-white border-2 border-gray-900 text-gray-900 rounded-lg hover:bg-gray-50 transition-colors"
+                          title="合并"
+                        >
+                          <GitMerge className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleExportTemplate(template)}
+                          className="p-2 bg-white border-2 border-gray-900 text-gray-900 rounded-lg hover:bg-gray-50 transition-colors"
+                          title="导出"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteUserTemplate(template.id)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {/* Tooltip */}
+                    {allKeywords.length > 0 && isHovered && (
+                      <div className={`absolute left-1/2 -translate-x-1/2 p-3 bg-gray-900 text-white text-xs rounded-2xl shadow-2xl z-[200] w-[280px] ${
+                        tooltipPosition === 'top' ? 'bottom-full mb-3' : 'top-full mt-3'
+                      }`}>
+                        <div className="max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                          <div className="flex flex-wrap gap-1.5">
+                            {allKeywords.map((kw, i) => (
+                              <span key={i} className="px-2 py-0.5 bg-white/15 rounded-full whitespace-nowrap">{kw}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className={`absolute left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-transparent ${
+                          tooltipPosition === 'top' 
+                            ? 'top-full border-t-8 border-t-gray-900' 
+                            : 'bottom-full border-b-8 border-b-gray-900'
+                        }`} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 系统预设模板 */}
+        <div>
+          <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">系统预设</h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {SYSTEM_TEMPLATES.map(template => {
+              const allKeywords = [...(template.config.reddit_subreddits || []), ...(template.config.github_search_queries || [])];
+              const isHovered = hoveredTemplate === `system-${template.id}`;
+              return (
+                <div 
+                  key={template.id} 
+                  className="relative p-5 bg-white rounded-2xl border-2 border-gray-300 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.1)] hover:border-gray-900 hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,0.15)] hover:-translate-y-0.5 hover:z-[100] transition-all duration-200 group"
+                  onMouseEnter={(e) => handleTemplateHover(`system-${template.id}`, e)}
+                  onMouseLeave={() => setHoveredTemplate(null)}
+                >
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="flex-1 min-w-0">
+                      <h5 className="font-bold text-gray-900 text-base mb-1.5">{template.name}</h5>
+                      <p className="text-xs text-gray-500 line-clamp-1">{template.description}</p>
+                    </div>
+                    <span className="px-2.5 py-1 text-xs font-bold bg-gray-100 text-gray-600 rounded-full">
+                      {allKeywords.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleApplyTemplate(template)}
+                      className="p-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                      title="应用"
+                    >
+                      <Wrench className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleMergeTemplate(template)}
+                      className="p-2 bg-white border-2 border-gray-900 text-gray-900 rounded-lg hover:bg-gray-50 transition-colors"
+                      title="合并"
+                    >
+                      <GitMerge className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {/* Tooltip */}
+                  {allKeywords.length > 0 && isHovered && (
+                    <div className={`absolute left-1/2 -translate-x-1/2 p-3 bg-gray-900 text-white text-xs rounded-2xl shadow-2xl z-[200] w-[280px] ${
+                      tooltipPosition === 'top' ? 'bottom-full mb-3' : 'top-full mt-3'
+                    }`}>
+                      <div className="max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                        <div className="flex flex-wrap gap-1.5">
+                          {allKeywords.map((kw, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-white/15 rounded-full whitespace-nowrap">{kw}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className={`absolute left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-transparent ${
+                        tooltipPosition === 'top' 
+                          ? 'top-full border-t-8 border-t-gray-900' 
+                          : 'bottom-full border-b-8 border-b-gray-900'
+                      }`} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       {/* 标签云配置 */}
       {arrayItems.map(item => {
         const Icon = item.icon;
         const tags = config[item.key] || [];
         const isAdding = newTag?.key === item.key;
+        const isSelectMode = selectMode === item.key;
+        const allSelected = tags.length > 0 && selectedTags.size === tags.length;
+        
         return (
           <div key={item.key} className="bg-white rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between mb-4">
@@ -1305,37 +2014,153 @@ function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpda
                   <span className="ml-2 text-xs text-gray-400">{tags.length} 个</span>
                 </div>
               </div>
-              {!isAdding && (
-                <button 
-                  onClick={() => setNewTag({ key: item.key, value: '' })}
-                  className="px-3 py-1.5 text-sm font-medium rounded-lg text-primary hover:bg-primary/10 flex items-center gap-1"
-                >
-                  <Plus className="w-4 h-4" />
-                  添加
-                </button>
-              )}
+              
+              {/* 操作按钮 */}
+              <div className="flex items-center gap-2">
+                {isSelectMode ? (
+                  <>
+                    <button
+                      onClick={() => handleSelectAll(item.key)}
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100 flex items-center gap-1"
+                    >
+                      {allSelected ? <Square className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
+                      {allSelected ? '取消全选' : '全选'}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSelected(item.key)}
+                      disabled={selectedTags.size === 0}
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-red-600 hover:bg-red-50 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      删除 ({selectedTags.size})
+                    </button>
+                    <button
+                      onClick={handleExitSelectMode}
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100"
+                    >
+                      取消
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {tags.length > 0 && (
+                      <div className="flex items-center gap-1 mr-2">
+                        <button
+                          onClick={() => handleCopyTags(item.key)}
+                          className={`p-2 rounded-lg transition-all ${
+                            copiedKey === item.key 
+                              ? 'bg-green-100 text-green-600' 
+                              : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+                          }`}
+                          title="复制所有关键词"
+                        >
+                          {copiedKey === item.key ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={() => handleEnterSelectMode(item.key)}
+                          className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+                          title="批量选择"
+                        >
+                          <CheckSquare className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleClearAll(item.key)}
+                          className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                          title="清空全部"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    {!isAdding && (
+                      <button 
+                        onClick={() => setNewTag({ key: item.key, value: '' })}
+                        className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all"
+                        title="添加关键词"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
             
             {/* 标签云 */}
             <div className="flex flex-wrap gap-2">
-              {tags.map((tag: string) => (
-                <span 
-                  key={tag} 
-                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors ${getTagColor(item.color)}`}
-                >
-                  {tag}
-                  <button 
-                    onClick={() => handleRemoveTag(item.key, tag)}
-                    className="w-4 h-4 rounded-full flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all"
+              {tags.map((tag: string) => {
+                const isEditing = editingTag?.key === item.key && editingTag?.oldValue === tag;
+                const isSelected = selectedTags.has(tag);
+                
+                if (isEditing) {
+                  return (
+                    <div key={tag} className="inline-flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={editingTag.newValue}
+                        onChange={e => setEditingTag({ ...editingTag, newValue: e.target.value })}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleSaveEdit();
+                          if (e.key === 'Escape') setEditingTag(null);
+                        }}
+                        autoFocus
+                        className="px-3 py-1.5 text-sm border border-primary/30 rounded-full outline-none focus:ring-2 ring-primary/20 w-32"
+                      />
+                      <button 
+                        onClick={handleSaveEdit}
+                        className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center hover:bg-primary/90"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => setEditingTag(null)}
+                        className="w-7 h-7 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center hover:bg-gray-200"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                }
+                
+                // 选择模式下的标签
+                if (isSelectMode) {
+                  return (
+                    <span 
+                      key={tag}
+                      onClick={() => handleToggleTag(tag)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border-2 transition-all cursor-pointer ${
+                        isSelected 
+                          ? 'bg-primary text-white border-primary shadow-md shadow-primary/30 scale-105' 
+                          : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-100'
+                      }`}
+                    >
+                      {isSelected ? <Check className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5 opacity-50" />}
+                      {tag}
+                    </span>
+                  );
+                }
+                
+                return (
+                  <span 
+                    key={tag} 
+                    className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors cursor-pointer ${getTagColor(item.color)}`}
+                    onDoubleClick={() => handleEditTag(item.key, tag)}
+                    title="双击编辑"
                   >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
+                    {tag}
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleRemoveTag(item.key, tag); }}
+                      className="w-4 h-4 rounded-full flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })}
               
               {/* 添加输入框 */}
               {isAdding && (
-                <div className="inline-flex items-center gap-1">
+                <div className="w-full flex items-center gap-2 mt-2">
                   <input
                     type="text"
                     value={newTag.value}
@@ -1344,27 +2169,31 @@ function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpda
                       if (e.key === 'Enter') handleAddTag(item.key);
                       if (e.key === 'Escape') setNewTag(null);
                     }}
-                    placeholder="输入后回车"
+                    placeholder={item.placeholder}
                     autoFocus
-                    className="px-3 py-1.5 text-sm border border-primary/30 rounded-full outline-none focus:ring-2 ring-primary/20 w-32"
+                    className="flex-1 px-4 py-2 text-sm border border-primary/30 rounded-xl outline-none focus:ring-2 ring-primary/20"
                   />
                   <button 
                     onClick={() => handleAddTag(item.key)}
-                    className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center hover:bg-primary/90"
+                    className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 flex items-center gap-1"
                   >
                     <Check className="w-4 h-4" />
+                    添加
                   </button>
                   <button 
                     onClick={() => setNewTag(null)}
-                    className="w-7 h-7 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center hover:bg-gray-200"
+                    className="px-4 py-2 rounded-xl bg-gray-100 text-gray-500 text-sm font-medium hover:bg-gray-200"
                   >
-                    <X className="w-4 h-4" />
+                    取消
                   </button>
                 </div>
               )}
               
               {tags.length === 0 && !isAdding && (
-                <span className="text-sm text-gray-400">暂无配置，点击添加</span>
+                <div className="w-full text-center py-4">
+                  <p className="text-sm text-gray-400 mb-2">暂无关键词</p>
+                  <p className="text-xs text-gray-300">{item.placeholder}</p>
+                </div>
               )}
             </div>
           </div>
@@ -1399,6 +2228,250 @@ function ConfigPanel({ config, onUpdate }: { config: Record<string, any>; onUpda
           })}
         </div>
       </div>
+
+      {/* AI 分析提示词 */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <span className="font-medium text-gray-900">AI 分析提示词</span>
+              <p className="text-xs text-gray-400">自定义 AI 如何分析和提取项目信息</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (confirm('确定要恢复默认提示词吗？')) {
+                setLocalAiPrompt(DEFAULT_AI_ANALYSIS_PROMPT);
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100 flex items-center gap-1"
+          >
+            <RefreshCw className="w-4 h-4" />
+            恢复默认
+          </button>
+        </div>
+        <textarea
+          value={localAiPrompt !== null ? localAiPrompt : (config.ai_analysis_prompt || DEFAULT_AI_ANALYSIS_PROMPT)}
+          onChange={e => setLocalAiPrompt(e.target.value)}
+          onFocus={() => {
+            if (localAiPrompt === null) {
+              setLocalAiPrompt(config.ai_analysis_prompt || DEFAULT_AI_ANALYSIS_PROMPT);
+            }
+          }}
+          rows={12}
+          className="w-full px-4 py-3 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 ring-primary/20 resize-none font-mono"
+          placeholder="输入 AI 分析提示词..."
+        />
+        <div className="mt-3 flex items-center justify-between">
+          <p className="text-xs text-gray-400">
+            提示：AI 会根据此提示词分析采集到的内容，提取项目信息并评分。
+          </p>
+          <button
+            onClick={() => {
+              if (localAiPrompt !== null) {
+                onUpdate('ai_analysis_prompt', localAiPrompt);
+                setLocalAiPrompt(null);
+              }
+            }}
+            disabled={localAiPrompt === null || localAiPrompt === (config.ai_analysis_prompt || DEFAULT_AI_ANALYSIS_PROMPT)}
+            className="px-4 py-2 text-sm font-medium rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
+          >
+            <Check className="w-4 h-4" />
+            保存提示词
+          </button>
+        </div>
+      </div>
+
+      {/* 编辑模板弹窗 */}
+      {editingTemplate && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" onClick={handleCloseEditTemplate}>
+          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* 头部 */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">编辑模板</h3>
+                <p className="text-sm text-gray-500 mt-1">{editingTemplate.name}</p>
+              </div>
+              <button onClick={handleCloseEditTemplate} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+
+            {/* 内容 */}
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+              <div className="space-y-6">
+                {/* Reddit 子版块 */}
+                <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center">
+                        <RedditIcon className="w-5 h-5 text-orange-600" />
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-900">Reddit 子版块</span>
+                        <span className="ml-2 text-xs text-gray-400">{editRedditTags.length} 个</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 mr-2">
+                      {editRedditTags.length > 0 && editSelectMode !== 'reddit' && (
+                        <>
+                          <button onClick={() => setEditSelectMode('reddit')} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all" title="批量选择">
+                            <CheckSquare className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleEditClearAll('reddit')} className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all" title="清空全部">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                      {editSelectMode === 'reddit' && (
+                        <>
+                          <button onClick={() => { const all = editRedditTags.every(t => editSelectedTags.has(t)); setEditSelectedTags(all ? new Set() : new Set(editRedditTags)); }} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+                            {editRedditTags.every(t => editSelectedTags.has(t)) ? '取消全选' : '全选'}
+                          </button>
+                          <button onClick={() => handleEditDeleteSelected('reddit')} disabled={editSelectedTags.size === 0} className="px-3 py-1.5 text-sm font-medium rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50">
+                            删除 ({editSelectedTags.size})
+                          </button>
+                          <button onClick={() => { setEditSelectMode(null); setEditSelectedTags(new Set()); }} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100">
+                            取消
+                          </button>
+                        </>
+                      )}
+                      {!editNewTag || editNewTag.key !== 'reddit' ? (
+                        <button onClick={() => setEditNewTag({ key: 'reddit', value: '' })} className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all" title="添加">
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {editRedditTags.map(tag => {
+                      const isSelected = editSelectedTags.has(tag);
+                      if (editSelectMode === 'reddit') {
+                        return (
+                          <span key={tag} onClick={() => setEditSelectedTags(prev => { const next = new Set(prev); next.has(tag) ? next.delete(tag) : next.add(tag); return next; })}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border-2 transition-all cursor-pointer ${isSelected ? 'bg-primary text-white border-primary shadow-md shadow-primary/30 scale-105' : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-100'}`}>
+                            {isSelected ? <Check className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5 opacity-50" />}
+                            {tag}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span key={tag} className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100 transition-colors">
+                          {tag}
+                          <button onClick={() => handleEditRemoveTag('reddit', tag)} className="w-4 h-4 rounded-full flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                    {editNewTag?.key === 'reddit' && (
+                      <div className="w-full flex items-center gap-2 mt-2">
+                        <input type="text" value={editNewTag.value} onChange={e => setEditNewTag({ ...editNewTag, value: e.target.value })}
+                          onKeyDown={e => { if (e.key === 'Enter') handleEditAddTag('reddit'); if (e.key === 'Escape') setEditNewTag(null); }}
+                          placeholder="支持批量输入，空格/逗号分隔" autoFocus
+                          className="flex-1 px-4 py-2 text-sm border border-primary/30 rounded-xl outline-none focus:ring-2 ring-primary/20" />
+                        <button onClick={() => handleEditAddTag('reddit')} className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90">添加</button>
+                        <button onClick={() => setEditNewTag(null)} className="px-4 py-2 rounded-xl bg-gray-100 text-gray-500 text-sm font-medium hover:bg-gray-200">取消</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* GitHub 关键词 */}
+                <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+                        <Github className="w-5 h-5 text-gray-600" />
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-900">GitHub 关键词</span>
+                        <span className="ml-2 text-xs text-gray-400">{editGithubTags.length} 个</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 mr-2">
+                      {editGithubTags.length > 0 && editSelectMode !== 'github' && (
+                        <>
+                          <button onClick={() => setEditSelectMode('github')} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all" title="批量选择">
+                            <CheckSquare className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleEditClearAll('github')} className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all" title="清空全部">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                      {editSelectMode === 'github' && (
+                        <>
+                          <button onClick={() => { const all = editGithubTags.every(t => editSelectedTags.has(t)); setEditSelectedTags(all ? new Set() : new Set(editGithubTags)); }} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+                            {editGithubTags.every(t => editSelectedTags.has(t)) ? '取消全选' : '全选'}
+                          </button>
+                          <button onClick={() => handleEditDeleteSelected('github')} disabled={editSelectedTags.size === 0} className="px-3 py-1.5 text-sm font-medium rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50">
+                            删除 ({editSelectedTags.size})
+                          </button>
+                          <button onClick={() => { setEditSelectMode(null); setEditSelectedTags(new Set()); }} className="px-3 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100">
+                            取消
+                          </button>
+                        </>
+                      )}
+                      {!editNewTag || editNewTag.key !== 'github' ? (
+                        <button onClick={() => setEditNewTag({ key: 'github', value: '' })} className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all" title="添加">
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {editGithubTags.map(tag => {
+                      const isSelected = editSelectedTags.has(tag);
+                      if (editSelectMode === 'github') {
+                        return (
+                          <span key={tag} onClick={() => setEditSelectedTags(prev => { const next = new Set(prev); next.has(tag) ? next.delete(tag) : next.add(tag); return next; })}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border-2 transition-all cursor-pointer ${isSelected ? 'bg-primary text-white border-primary shadow-md shadow-primary/30 scale-105' : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-100'}`}>
+                            {isSelected ? <Check className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5 opacity-50" />}
+                            {tag}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span key={tag} className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100 transition-colors">
+                          {tag}
+                          <button onClick={() => handleEditRemoveTag('github', tag)} className="w-4 h-4 rounded-full flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                    {editNewTag?.key === 'github' && (
+                      <div className="w-full flex items-center gap-2 mt-2">
+                        <input type="text" value={editNewTag.value} onChange={e => setEditNewTag({ ...editNewTag, value: e.target.value })}
+                          onKeyDown={e => { if (e.key === 'Enter') handleEditAddTag('github'); if (e.key === 'Escape') setEditNewTag(null); }}
+                          placeholder="支持批量输入，空格/逗号分隔" autoFocus
+                          className="flex-1 px-4 py-2 text-sm border border-primary/30 rounded-xl outline-none focus:ring-2 ring-primary/20" />
+                        <button onClick={() => handleEditAddTag('github')} className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90">添加</button>
+                        <button onClick={() => setEditNewTag(null)} className="px-4 py-2 rounded-xl bg-gray-100 text-gray-500 text-sm font-medium hover:bg-gray-200">取消</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 底部按钮 */}
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-100">
+              <button onClick={handleCloseEditTemplate} className="px-6 py-2.5 text-sm font-medium rounded-xl text-gray-600 hover:bg-gray-100 transition-colors">
+                取消
+              </button>
+              <button onClick={handleSaveEditTemplate} className="px-6 py-2.5 text-sm font-medium rounded-xl bg-primary text-white hover:bg-primary/90 transition-colors flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                保存更改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
