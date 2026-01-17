@@ -8,6 +8,7 @@ import { TrashPage } from './components/TrashPage';
 import PromptCrawlerPage from './components/PromptCrawlerPage';
 import ResourceCenterPage from './components/ResourceCenterPage';
 import RSSSubscriptionPage from './components/RSSSubscriptionPage';
+import CreationsPage from './components/CreationsPage';
 import { FeishuBotGuidePage } from './components/FeishuBotGuidePage';
 import { Sidebar, ViewType } from './components/Sidebar';
 import { AuthPage } from './components/AuthPage';
@@ -28,6 +29,7 @@ const VIEW_ROUTES: Record<ViewType, string> = {
   CRAWLER: 'crawler',
   RESOURCES: 'resources',
   RSS_SUBSCRIPTIONS: 'rss',
+  CREATIONS: 'creations',
   SETTINGS: 'settings',
   TRASH: 'trash',
   FEISHU_GUIDE: 'feishu-guide',
@@ -39,6 +41,8 @@ const ROUTE_VIEWS: Record<string, ViewType> = {
   'prompts': 'PROMPTS',
   'crawler': 'CRAWLER',
   'resources': 'RESOURCES',
+  'rss': 'RSS_SUBSCRIPTIONS',
+  'creations': 'CREATIONS',
   'settings': 'SETTINGS',
   'trash': 'TRASH',
   'feishu-guide': 'FEISHU_GUIDE',
@@ -233,6 +237,7 @@ const App: React.FC = () => {
           {currentView === 'CRAWLER' && <PromptCrawlerPage userId={user.id} />}
           {currentView === 'RESOURCES' && <ResourceCenterPage userId={user.id} resourceViewer={resourceViewer} />}
           {currentView === 'RSS_SUBSCRIPTIONS' && <RSSSubscriptionPage userId={user.id} />}
+          {currentView === 'CREATIONS' && <CreationsPage userId={user.id} />}
           {currentView === 'SETTINGS' && <SettingsPage user={user} onUserUpdate={setUser} />}
           {currentView === 'TRASH' && <TrashPage />}
         </div>

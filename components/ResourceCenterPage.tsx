@@ -120,10 +120,9 @@ const typeConfig: Record<FilterType, { label: string; icon: React.ElementType; c
   image: { label: '图片', icon: Image, color: 'text-cyan-600', bgColor: 'bg-cyan-50' }
 };
 
-// 格式化数字
+// 格式化数字 - 超过 999 显示 999+
 const formatNumber = (num: number) => {
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-  if (num >= 1000) return (num / 1000).toFixed(0) + 'k';
+  if (num > 999) return '999+';
   return num.toString();
 };
 
@@ -337,12 +336,14 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
     // 乐观更新
     const originalFolders = [...folders];
     const originalAllFolders = [...allFolders];
+    const originalStats = { ...stats };
+    
     setFolders(prev => prev.filter(f => f.id !== folderId));
     setAllFolders(prev => prev.filter(f => f.id !== folderId));
     
     try {
       await deleteFolder(folderId);
-      // 更新统计
+      // 从数据库重新获取准确的统计数据（删除文件夹可能会删除其中的资源）
       if (userId) {
         const statsData = await getResourceStats(userId, showArchived);
         setStats(statsData);
@@ -351,9 +352,10 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
       // 回滚
       setFolders(originalFolders);
       setAllFolders(originalAllFolders);
+      setStats(originalStats);
       console.error('Failed to delete folder:', err);
     }
-  }, [folders, allFolders, userId, showArchived]);
+  }, [folders, allFolders, stats, userId, showArchived]);
 
   // 创建新文件夹 - 已移除，改为通过拖拽两个同类型资源创建
   // const handleCreateFolder = async () => { ... }
@@ -411,23 +413,37 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
 
   // 删除资源 - 乐观更新
   const handleDelete = async (resourceId: string) => {
+    // 找到要删除的资源
+    const resourceToDelete = allResources.find(r => r.id === resourceId);
+    if (!resourceToDelete) return;
+    
     // 乐观更新
     const originalResources = [...resources];
     const originalAllResources = [...allResources];
+    const originalStats = { ...stats };
+    
     setResources(prev => prev.filter(r => r.id !== resourceId));
     setAllResources(prev => prev.filter(r => r.id !== resourceId));
     
+    // 乐观更新统计
+    setStats(prev => ({
+      ...prev,
+      all: Math.max(0, prev.all - 1),
+      [resourceToDelete.type]: Math.max(0, prev[resourceToDelete.type] - 1)
+    }));
+    
     try {
       await deleteResource(resourceId);
-      // 只更新统计，不重新加载全部数据
+      // 从数据库重新获取准确的统计数据
       if (userId) {
         const statsData = await getResourceStats(userId, showArchived);
         setStats(statsData);
       }
     } catch (err) {
-      // 回滚
+      // 回滚所有状态
       setResources(originalResources);
       setAllResources(originalAllResources);
+      setStats(originalStats);
       console.error('Failed to delete resource:', err);
     }
   };
@@ -471,17 +487,37 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
       }
     });
     
+    // 计算要删除的资源类型统计（用于乐观更新）
+    const resourcesToDelete = allResources.filter(r => selectedResourceIds.has(r.id));
+    const typeCount: Record<string, number> = {};
+    resourcesToDelete.forEach(r => {
+      typeCount[r.type] = (typeCount[r.type] || 0) + 1;
+    });
+    
     // 乐观更新
     const originalResources = [...resources];
     const originalAllResources = [...allResources];
     const originalFolders = [...folders];
     const originalAllFolders = [...allFolders];
+    const originalStats = { ...stats };
     const deleteCount = selectedIds.size;
     
     // 更新所有相关状态
     if (selectedResourceIds.size > 0) {
       setResources(prev => prev.filter(r => !selectedResourceIds.has(r.id)));
       setAllResources(prev => prev.filter(r => !selectedResourceIds.has(r.id)));
+      
+      // 乐观更新统计
+      setStats(prev => {
+        const newStats = { ...prev };
+        newStats.all = Math.max(0, newStats.all - selectedResourceIds.size);
+        Object.keys(typeCount).forEach(type => {
+          if (type in newStats) {
+            newStats[type as ResourceType] = Math.max(0, newStats[type as ResourceType] - typeCount[type]);
+          }
+        });
+        return newStats;
+      });
     }
     if (selectedFolderIds.size > 0) {
       setFolders(prev => prev.filter(f => !selectedFolderIds.has(f.id)));
@@ -499,17 +535,18 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
         ...Array.from(selectedResourceIds).map(id => deleteResource(id)),
         ...Array.from(selectedFolderIds).map(id => deleteFolder(id))
       ]);
-      // 更新统计
+      // 从数据库重新获取准确的统计数据
       if (userId) {
         const statsData = await getResourceStats(userId, showArchived);
         setStats(statsData);
       }
     } catch (err) {
-      // 回滚
+      // 回滚所有状态
       setResources(originalResources);
       setAllResources(originalAllResources);
       setFolders(originalFolders);
       setAllFolders(originalAllFolders);
+      setStats(originalStats);
       console.error('批量删除失败:', err);
       showToast('删除失败，请重试');
     } finally {
@@ -729,6 +766,7 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
             const Icon = config.icon;
             // 统计数 = 只显示资源数量（最小单元），不包括文件夹
             const count = stats[type] || 0;
+            const displayCount = count > 999 ? '999+' : count.toString();
             const isActive = activeType === type;
             
             return (
@@ -747,7 +785,7 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
                   <Icon className={`w-5 h-5 ${isActive ? 'text-primary' : config.color}`} />
                 </div>
                 <div className="text-center">
-                  <div className={`text-xl font-bold ${isActive ? 'text-primary' : 'text-gray-900'}`}>{count}</div>
+                  <div className={`text-xl font-bold ${isActive ? 'text-primary' : 'text-gray-900'}`}>{displayCount}</div>
                   <div className="text-xs text-gray-500">{config.label}</div>
                 </div>
               </button>

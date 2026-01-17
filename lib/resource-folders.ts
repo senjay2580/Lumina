@@ -56,9 +56,11 @@ export async function getFolders(userId: string): Promise<ResourceFolder[]> {
 }
 
 // 获取文件夹内的资源
+// 获取文件夹资源（支持分页）
 export async function getFolderResources(
   folderId: string | null,
-  userId: string
+  userId: string,
+  options?: { limit?: number; offset?: number }
 ): Promise<Resource[]> {
   let query = supabase
     .from('resources')
@@ -74,9 +76,43 @@ export async function getFolderResources(
     query = query.is('folder_id', null);
   }
 
+  // 添加分页支持
+  if (options?.limit) {
+    query = query.limit(options.limit);
+  }
+  if (options?.offset) {
+    query = query.range(options.offset, options.offset + (options.limit || 100) - 1);
+  }
+
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
+}
+
+// 获取文件夹资源数量（准确统计，不受 1000 条限制）
+export async function getFolderResourceCount(
+  folderId: string | null,
+  userId: string
+): Promise<number> {
+  let query = supabase
+    .from('resources')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .is('archived_at', null);
+
+  if (folderId) {
+    query = query.eq('folder_id', folderId);
+  } else {
+    query = query.is('folder_id', null);
+  }
+
+  const { count, error } = await query;
+  if (error) {
+    console.error('Failed to get folder resource count:', error);
+    return 0;
+  }
+  return count || 0;
 }
 
 // 获取子文件夹 - 简化版本

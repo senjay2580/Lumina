@@ -154,35 +154,60 @@ export async function getResources(
 
 // 获取资源统计（统计所有资源，包括文件夹内的）
 export async function getResourceStats(userId: string, archived: boolean = false): Promise<ResourceStats> {
-  // 直接查询数据库统计所有资源（包括文件夹内的）
-  let query = supabase
-    .from('resources')
-    .select('type')
-    .eq('user_id', userId)
-    .is('deleted_at', null);
-  
-  if (archived) {
-    query = query.not('archived_at', 'is', null);
-  } else {
-    query = query.is('archived_at', null);
-  }
-  
-  const { data, error } = await query;
-  
-  if (error) {
-    console.error('Failed to get resource stats:', error);
-    return { all: 0, link: 0, github: 0, document: 0, image: 0, article: 0 };
-  }
-  
-  const resources = data || [];
-  return {
-    all: resources.length,
-    link: resources.filter(r => r.type === 'link').length,
-    github: resources.filter(r => r.type === 'github').length,
-    document: resources.filter(r => r.type === 'document').length,
-    image: resources.filter(r => r.type === 'image').length,
-    article: resources.filter(r => r.type === 'article').length,
+  // 使用 count 查询来获取准确的统计数字，避免 1000 条限制
+  const stats: ResourceStats = {
+    all: 0,
+    link: 0,
+    github: 0,
+    document: 0,
+    image: 0,
+    article: 0,
   };
+
+  // 构建基础查询条件
+  const baseQuery = (type?: string) => {
+    let query = supabase
+      .from('resources')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .is('deleted_at', null);
+    
+    if (archived) {
+      query = query.not('archived_at', 'is', null);
+    } else {
+      query = query.is('archived_at', null);
+    }
+    
+    if (type) {
+      query = query.eq('type', type);
+    }
+    
+    return query;
+  };
+
+  try {
+    // 并行查询所有统计
+    const [allResult, linkResult, githubResult, documentResult, imageResult, articleResult] = await Promise.all([
+      baseQuery(),
+      baseQuery('link'),
+      baseQuery('github'),
+      baseQuery('document'),
+      baseQuery('image'),
+      baseQuery('article'),
+    ]);
+
+    stats.all = allResult.count || 0;
+    stats.link = linkResult.count || 0;
+    stats.github = githubResult.count || 0;
+    stats.document = documentResult.count || 0;
+    stats.image = imageResult.count || 0;
+    stats.article = articleResult.count || 0;
+
+    return stats;
+  } catch (error) {
+    console.error('Failed to get resource stats:', error);
+    return stats;
+  }
 }
 
 // 创建链接资源

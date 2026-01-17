@@ -26,6 +26,8 @@
     "@tiptap/react": "^3.14.0",
     "@tiptap/starter-kit": "^3.14.0",
     "@types/marked": "^5.0.2",
+    "@types/react-datepicker": "^6.2.0",
+    "@types/react-window": "^1.8.8",
     "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "jspdf": "^3.0.4",
@@ -36,7 +38,12 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.2.3",
     "react-activity-calendar": "^3.0.5",
+    "react-datepicker": "^9.1.0",
     "react-dom": "^19.2.3",
+    "react-to-print": "^3.2.0",
+    "react-window": "^2.2.5",
+    "react-window-infinite-loader": "^2.0.1",
+    "react-zoom-pan-pinch": "^3.7.0",
     "reactflow": "^11.11.4"
   },
   "devDependencies": {

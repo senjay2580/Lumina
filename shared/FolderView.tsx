@@ -1,5 +1,5 @@
 // 文件夹视图组�?- 可拖拽窗口样�?
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -13,7 +13,7 @@ import {
   Maximize2,
   Minimize2,
   LayoutGrid,
-  List,
+  List as ListIcon,
   ExternalLink,
   Link2,
   FileText,
@@ -34,6 +34,7 @@ import {
   getFolderPath, 
   getSubFolders, 
   getFolderResources,
+  getFolderResourceCount,
   updateFolder,
   deleteFolder,
   moveResourceToFolder,
@@ -47,6 +48,7 @@ import { ConfirmModal } from './Modal';
 import { Tooltip } from './Tooltip';
 import { HoverCard } from './HoverCard';
 import { ResourceItemMenu, ContextMenu, menuItemGenerators, MenuItem } from './ResourceItemMenu';
+
 
 interface FolderViewProps {
   isOpen: boolean;
@@ -373,6 +375,9 @@ export function FolderView({
   const [folderPath, setFolderPath] = useState<ResourceFolder[]>([]);
   const [subFolders, setSubFolders] = useState<ResourceFolder[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
+  const [totalResourceCount, setTotalResourceCount] = useState(0);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(initialFolder.name);
@@ -382,13 +387,15 @@ export function FolderView({
   const [isDeleting, setIsDeleting] = useState(false);
   const [sortByName, setSortByName] = useState(false); // 按名称排序
   const menuRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const PAGE_SIZE = 100; // 每页加载 100 条
 
-  // 窗口状�?- 居中显示
+  // 窗口状态 - 居中显示
   const [position, setPosition] = useState(() => ({
-    x: Math.max(0, (window.innerWidth - 600) / 2),
-    y: Math.max(0, (window.innerHeight - 500) / 2)
+    x: Math.max(0, (window.innerWidth - 900) / 2),
+    y: Math.max(0, (window.innerHeight - 700) / 2)
   }));
-  const [size, setSize] = useState({ width: 600, height: 500 });
+  const [size, setSize] = useState({ width: 900, height: 700 });
   const [isMaximized, setIsMaximized] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState<string | null>(null);
@@ -396,24 +403,29 @@ export function FolderView({
   const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0, posX: 0, posY: 0 });
   const savedStateRef = useRef({ 
     position: { 
-      x: Math.max(0, (window.innerWidth - 600) / 2), 
-      y: Math.max(0, (window.innerHeight - 500) / 2) 
+      x: Math.max(0, (window.innerWidth - 900) / 2), 
+      y: Math.max(0, (window.innerHeight - 700) / 2) 
     }, 
-    size: { width: 600, height: 500 } 
+    size: { width: 900, height: 700 } 
   });
 
-  // 加载文件夹内�?
+  // 加载文件夹内容 - 初始加载
   const loadFolderContent = async (folderId: string) => {
     setLoading(true);
     try {
-      const [path, folders, items] = await Promise.all([
+      const [path, folders, items, count] = await Promise.all([
         getFolderPath(folderId),
         getSubFolders(folderId, userId),
-        getFolderResources(folderId, userId)
+        getFolderResources(folderId, userId, { limit: PAGE_SIZE, offset: 0 }),
+        getFolderResourceCount(folderId, userId)
       ]);
+      
       setFolderPath(path);
       setSubFolders(folders);
       setResources(items);
+      setTotalResourceCount(count);
+      setHasNextPage(items.length < count);
+      
       if (path.length > 0) {
         setCurrentFolder(path[path.length - 1]);
         setEditName(path[path.length - 1].name);
@@ -424,6 +436,44 @@ export function FolderView({
       setLoading(false);
     }
   };
+
+  // 加载更多资源
+  const loadMoreResources = useCallback(async () => {
+    if (isLoadingMore || !hasNextPage) return;
+    
+    setIsLoadingMore(true);
+    try {
+      const offset = resources.length;
+      const items = await getFolderResources(currentFolder.id, userId, { 
+        limit: PAGE_SIZE, 
+        offset 
+      });
+      
+      setResources(prev => [...prev, ...items]);
+      setHasNextPage(resources.length + items.length < totalResourceCount);
+    } catch (err) {
+      console.error('Failed to load more resources:', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [currentFolder.id, userId, resources.length, totalResourceCount, hasNextPage, isLoadingMore]);
+
+  // 监听滚动，实现无限加载
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container || viewMode !== 'list') return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // 当滚动到底部 200px 时加载更多
+      if (scrollHeight - scrollTop - clientHeight < 200 && hasNextPage && !isLoadingMore) {
+        loadMoreResources();
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [hasNextPage, isLoadingMore, loadMoreResources, viewMode]);
 
   useEffect(() => {
     if (isOpen) {
@@ -436,54 +486,110 @@ export function FolderView({
     }
   }, [isOpen, initialFolder.id]);
 
-  // 拖拽处理
+  // 拖拽处理 - 优化性能
   useEffect(() => {
-    if (!isDragging) return;
+    if (!isDragging) {
+      // 恢复默认样式
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      return;
+    }
+    
+    let animationFrameId: number;
+    
     const handleMouseMove = (e: MouseEvent) => {
-      const dx = e.clientX - dragStartRef.current.x;
-      const dy = e.clientY - dragStartRef.current.y;
-      setPosition({
-        x: Math.max(0, dragStartRef.current.posX + dx),
-        y: Math.max(0, dragStartRef.current.posY + dy),
+      // 使用 requestAnimationFrame 节流，避免过度渲染
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      
+      animationFrameId = requestAnimationFrame(() => {
+        const dx = e.clientX - dragStartRef.current.x;
+        const dy = e.clientY - dragStartRef.current.y;
+        setPosition({
+          x: Math.max(0, dragStartRef.current.posX + dx),
+          y: Math.max(0, dragStartRef.current.posY + dy),
+        });
       });
     };
-    const handleMouseUp = () => setIsDragging(false);
+    
+    const handleMouseUp = () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      setIsDragging(false);
+      // 恢复默认样式
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+    
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+    
     return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDragging]);
 
-  // 缩放处理
+  // 缩放处理 - 优化性能
   useEffect(() => {
-    if (!isResizing) return;
+    if (!isResizing) {
+      // 恢复默认样式
+      document.body.style.userSelect = '';
+      return;
+    }
+    
+    let animationFrameId: number;
+    
     const handleMouseMove = (e: MouseEvent) => {
-      const dx = e.clientX - resizeStartRef.current.x;
-      const dy = e.clientY - resizeStartRef.current.y;
-      let newWidth = resizeStartRef.current.width;
-      let newHeight = resizeStartRef.current.height;
-      let newX = resizeStartRef.current.posX;
-      let newY = resizeStartRef.current.posY;
+      // 使用 requestAnimationFrame 节流
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      
+      animationFrameId = requestAnimationFrame(() => {
+        const dx = e.clientX - resizeStartRef.current.x;
+        const dy = e.clientY - resizeStartRef.current.y;
+        let newWidth = resizeStartRef.current.width;
+        let newHeight = resizeStartRef.current.height;
+        let newX = resizeStartRef.current.posX;
+        let newY = resizeStartRef.current.posY;
 
-      if (isResizing.includes('e')) newWidth = Math.max(400, resizeStartRef.current.width + dx);
-      if (isResizing.includes('w')) {
-        newWidth = Math.max(400, resizeStartRef.current.width - dx);
-        newX = resizeStartRef.current.posX + (resizeStartRef.current.width - newWidth);
-      }
-      if (isResizing.includes('s')) newHeight = Math.max(300, resizeStartRef.current.height + dy);
-      if (isResizing.includes('n')) {
-        newHeight = Math.max(300, resizeStartRef.current.height - dy);
-        newY = resizeStartRef.current.posY + (resizeStartRef.current.height - newHeight);
-      }
-      setSize({ width: newWidth, height: newHeight });
-      setPosition({ x: newX, y: newY });
+        if (isResizing.includes('e')) newWidth = Math.max(400, resizeStartRef.current.width + dx);
+        if (isResizing.includes('w')) {
+          newWidth = Math.max(400, resizeStartRef.current.width - dx);
+          newX = resizeStartRef.current.posX + (resizeStartRef.current.width - newWidth);
+        }
+        if (isResizing.includes('s')) newHeight = Math.max(300, resizeStartRef.current.height + dy);
+        if (isResizing.includes('n')) {
+          newHeight = Math.max(300, resizeStartRef.current.height - dy);
+          newY = resizeStartRef.current.posY + (resizeStartRef.current.height - newHeight);
+        }
+        setSize({ width: newWidth, height: newHeight });
+        setPosition({ x: newX, y: newY });
+      });
     };
-    const handleMouseUp = () => setIsResizing(null);
+    
+    const handleMouseUp = () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      setIsResizing(null);
+      // 恢复默认样式
+      document.body.style.userSelect = '';
+    };
+    
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+    
     return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -492,8 +598,12 @@ export function FolderView({
   const handleDragStart = (e: React.MouseEvent) => {
     if (isMaximized) return;
     e.preventDefault();
+    e.stopPropagation();
     dragStartRef.current = { x: e.clientX, y: e.clientY, posX: position.x, posY: position.y };
     setIsDragging(true);
+    // 防止拖拽时选中文本
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'move';
   };
 
   const handleResizeStart = (direction: string) => (e: React.MouseEvent) => {
@@ -506,6 +616,8 @@ export function FolderView({
       posX: position.x, posY: position.y,
     };
     setIsResizing(direction);
+    // 防止缩放时选中文本
+    document.body.style.userSelect = 'none';
   };
 
   const toggleMaximize = () => {
@@ -670,8 +782,12 @@ export function FolderView({
               width: size.width,
               height: size.height,
               zIndex: 1000,
+              willChange: isDragging || isResizing ? 'transform' : 'auto',
+              transform: 'translate3d(0, 0, 0)', // 启用硬件加速
             }}
-            className="flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200"
+            className={`flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200 ${
+              isDragging ? 'cursor-move' : ''
+            }`}
           >
             {/* 标题�?*/}
             <div
@@ -749,7 +865,7 @@ export function FolderView({
                     </h2>
                   )}
                   <p className="text-xs text-gray-500 flex items-center gap-2">
-                    <span>{totalItems} 个项目</span>
+                    <span>{totalResourceCount > 999 ? '999+' : subFolders.length + totalResourceCount} 个项目</span>
                     {currentFolder.resource_type && (
                       <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
                         仅限 {RESOURCE_TYPE_LABELS[currentFolder.resource_type]}
@@ -796,7 +912,7 @@ export function FolderView({
                             : 'text-gray-500 hover:text-gray-700'
                         }`}
                       >
-                        <List className="w-3.5 h-3.5" />
+                        <ListIcon className="w-3.5 h-3.5" />
                       </button>
                     </Tooltip>
                   </div>
@@ -805,12 +921,12 @@ export function FolderView({
             </div>
 
             {/* 内容区域 */}
-            <div className="flex-1 overflow-y-auto bg-white">
+            <div ref={contentRef} className="flex-1 overflow-y-auto bg-white">
               {loading ? (
                 <div className="flex items-center justify-center py-12">
                   <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                 </div>
-              ) : totalItems === 0 ? (
+              ) : (subFolders.length + totalResourceCount) === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <FolderOpenIcon size={64} />
                   <p className="text-gray-500 mt-3 text-sm">文件夹为空</p>
@@ -820,60 +936,76 @@ export function FolderView({
                 /* 列表视图 */
                 <div className="border-t border-gray-100">
                   {/* 列表头部 */}
-                  <div className="grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
+                  <div className="grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 sticky top-0 z-10">
                     <div>名称</div>
                     <div>日期</div>
                     <div className="text-right">操作</div>
                   </div>
-                  {/* 子文件夹 */}
-                  {sortedSubFolders.map(sub => (
-                    <SubFolderRow 
-                      key={sub.id} 
-                      folder={sub} 
-                      onClick={() => loadFolderContent(sub.id)}
-                      onUpdate={() => loadFolderContent(currentFolder.id)}
-                      onMoveOut={onFolderUpdate}
-                    />
-                  ))}
-                  {/* 资源 */}
-                  {sortedResources.map(resource => (
-                    <div
-                      key={resource.id}
-                      className="group grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center"
-                      onClick={() => onResourceClick?.(resource)}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-                        {resource.type === 'image' && resource.storage_path ? (
-                          <img src={getFileUrl(resource.storage_path)} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0" />
-                        ) : resource.type === 'github' ? (
-                          <Github className="w-4 h-4 text-gray-700 flex-shrink-0" />
-                        ) : resource.type === 'document' ? (
-                          <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                        ) : resource.type === 'article' ? (
-                          <Newspaper className="w-4 h-4 text-orange-500 flex-shrink-0" />
-                        ) : resource.type === 'image' ? (
-                          <ImageIcon className="w-4 h-4 text-cyan-500 flex-shrink-0" />
-                        ) : (
-                          <Link2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-                        )}
-                        {resource.type === 'github' && resource.description ? (
-                          <HoverCard content={resource.description} className="overflow-hidden">
-                            <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
-                          </HoverCard>
-                        ) : (
-                          <Tooltip content={resource.title} className="overflow-hidden">
-                            <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
-                          </Tooltip>
-                        )}
+                  {/* 列表内容 */}
+                  <div>
+                    {/* 子文件夹 */}
+                    {sortedSubFolders.map(folder => (
+                      <SubFolderRow 
+                        key={folder.id} 
+                        folder={folder} 
+                        onClick={() => loadFolderContent(folder.id)}
+                        onUpdate={() => loadFolderContent(currentFolder.id)}
+                        onMoveOut={onFolderUpdate}
+                      />
+                    ))}
+                    {/* 资源 */}
+                    {sortedResources.map(resource => (
+                      <div
+                        key={resource.id}
+                        className="group grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center"
+                        onClick={() => onResourceClick?.(resource)}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+                          {resource.type === 'image' && resource.storage_path ? (
+                            <img src={getFileUrl(resource.storage_path)} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0" />
+                          ) : resource.type === 'github' ? (
+                            <Github className="w-4 h-4 text-gray-700 flex-shrink-0" />
+                          ) : resource.type === 'document' ? (
+                            <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                          ) : resource.type === 'article' ? (
+                            <Newspaper className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                          ) : resource.type === 'image' ? (
+                            <ImageIcon className="w-4 h-4 text-cyan-500 flex-shrink-0" />
+                          ) : (
+                            <Link2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                          )}
+                          {resource.type === 'github' && resource.description ? (
+                            <HoverCard content={resource.description} className="overflow-hidden">
+                              <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
+                            </HoverCard>
+                          ) : (
+                            <Tooltip content={resource.title} className="overflow-hidden">
+                              <span className="text-sm text-gray-900 truncate block">{resource.title}</span>
+                            </Tooltip>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {new Date(resource.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                        </div>
+                        <div className="flex items-center justify-end">
+                          <ResourceItemMenu items={getResourceMenuItems(resource)} />
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-400">
-                        {new Date(resource.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                    ))}
+                    {/* 加载更多指示器 */}
+                    {isLoadingMore && (
+                      <div className="flex items-center justify-center py-4">
+                        <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        <span className="ml-2 text-sm text-gray-500">加载中...</span>
                       </div>
-                      <div className="flex items-center justify-end">
-                        <ResourceItemMenu items={getResourceMenuItems(resource)} />
+                    )}
+                    {/* 已加载全部提示 */}
+                    {!hasNextPage && resources.length > 0 && (
+                      <div className="text-center py-4 text-xs text-gray-400">
+                        已加载全部 {resources.length} 条资源
                       </div>
-                    </div>
-                  ))}
+                    )}
+                  </div>
                 </div>
               ) : (
                 /* 网格视图 */
