@@ -228,7 +228,7 @@ function parseCommand(text: string): { command: string; args: string } | null {
     const parts = trimmed.slice(1).split(/\s+/);
     const cmd = parts[0].toLowerCase();
     // 只识别这些指令，其他的不算指令
-    if (['help', 'list', 'search', 'stats', 'unbind', 'bind', 'debug', 'github', 'reddit', 'crawl'].includes(cmd)) {
+    if (['help', 'list', 'search', 'stats', 'unbind', 'bind', 'debug', 'github', 'reddit', 'crawl', 'idea'].includes(cmd)) {
       return { command: cmd, args: parts.slice(1).join(' ') };
     }
   }
@@ -605,6 +605,8 @@ function generateHelpCard(): object {
     header: { title: { tag: 'plain_text', content: '📚 Lumina 资源助手' }, template: 'orange' },
     elements: [
       { tag: 'div', text: { tag: 'lark_md', content: '**添加资源：**\n• 发送链接 → 自动识别保存\n• 发送图片 → 自动上传\n• 发送文件 → 自动上传' } },
+      { tag: 'hr' },
+      { tag: 'div', text: { tag: 'lark_md', content: '**💡 记录想法：**\n• `/idea 内容` - 保存文章/想法\n\n示例：\n`/idea 今天学到了 React Hooks 的使用技巧，useEffect 的依赖数组很重要...`' } },
       { tag: 'hr' },
       { tag: 'div', text: { tag: 'lark_md', content: '**🔮 AI 智能搜索：**\n直接输入你想找的内容！\n• "AI 工具"\n• "React 文档"\n• "GitHub 项目"' } },
       { tag: 'hr' },
@@ -1569,6 +1571,61 @@ async function handleMessage(event: any): Promise<void> {
         }
         case 'crawl': {
           await sendTextMessage(openId, '❓ 请使用具体的采集指令：\n\n• `/github 关键词1 关键词2` - 采集 GitHub\n• `/reddit 版块1 版块2` - 采集 Reddit\n\n示例：\n• `/github prompt-engineering cursor-rules`\n• `/reddit ChatGPT PromptEngineering`');
+          return;
+        }
+        case 'idea': {
+          // 保存文章/想法
+          const ideaContent = cmd.args.trim();
+          console.log('[MSG] /idea command - content length:', ideaContent.length);
+          
+          if (!ideaContent || ideaContent.length < 10) {
+            await sendTextMessage(openId, '❓ 请输入想法内容（至少 10 个字符）\n\n示例：\n`/idea 今天学到了 React Hooks 的使用技巧...`');
+            return;
+          }
+          
+          // 提取标题（第一行或前 50 个字符）
+          const lines = ideaContent.split('\n').filter(l => l.trim());
+          const firstLine = lines[0] || ideaContent;
+          const title = firstLine.substring(0, 50);
+          const content = ideaContent;
+          
+          console.log('[MSG] Saving idea - title:', title, 'content length:', content.length);
+          
+          try {
+            const { data, error } = await supabase
+              .from('ideas')
+              .insert({
+                user_id: userId,
+                title: title,
+                content: content,
+                source: 'feishu',
+                tags: []
+              })
+              .select()
+              .single();
+            
+            if (error) {
+              console.error('[MSG] Save idea error:', error);
+              throw error;
+            }
+            
+            console.log('[MSG] Idea saved successfully:', data?.id);
+            
+            const card = {
+              config: { wide_screen_mode: true },
+              header: { title: { tag: 'plain_text', content: '✅ 想法已保存' }, template: 'green' },
+              elements: [
+                { tag: 'div', text: { tag: 'lark_md', content: `**${title}**` } },
+                { tag: 'hr' },
+                { tag: 'note', elements: [{ tag: 'plain_text', content: `已保存到「文章/想法」页面 | ${content.length} 字` }] },
+              ],
+            };
+            
+            await sendCardMessage(openId, card);
+          } catch (e: any) {
+            console.error('[MSG] Save idea failed:', e);
+            await sendTextMessage(openId, `❌ 保存失败: ${e.message || '请稍后重试'}`);
+          }
           return;
         }
       }

@@ -921,7 +921,9 @@ export function FolderView({
             </div>
 
             {/* 内容区域 */}
-            <div ref={contentRef} className="flex-1 overflow-y-auto bg-white">
+            <div ref={contentRef} className="flex-1 overflow-y-auto bg-white" style={{ 
+              visibility: isDragging || isResizing ? 'hidden' : 'visible' 
+            }}>
               {loading ? (
                 <div className="flex items-center justify-center py-12">
                   <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />

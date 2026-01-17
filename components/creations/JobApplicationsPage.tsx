@@ -13,7 +13,8 @@ import {
   Briefcase,
   Loader2,
   X,
-  ChevronDown
+  ChevronDown,
+  Trophy
 } from 'lucide-react';
 import {
   getApplications,
@@ -21,12 +22,15 @@ import {
   updateApplication,
   deleteApplication,
   getApplicationStats,
+  getCompanyList,
+  getCompanyStats,
   STATUS_CONFIG,
   type JobApplication,
   type ApplicationStatus
 } from '../../lib/job-applications';
 import { getCreations, type Creation } from '../../lib/creations';
 import { getVersions, type Version } from '../../lib/version-manager';
+import { Confirm } from '../../shared/Confirm';
 
 interface Props {
   userId: string;
@@ -46,10 +50,18 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
   // 表单数据
   const [creations, setCreations] = useState<Creation[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
+  const [companyList, setCompanyList] = useState<Array<{ name: string; url?: string; count: number }>>([]);
+  const [companyStats, setCompanyStats] = useState<Array<{ company: string; url?: string; count: number }>>([]);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showErrorAlert, setShowErrorAlert] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
+  const [pendingVersionSwitch, setPendingVersionSwitch] = useState<Version | null>(null);
   const [formData, setFormData] = useState({
     creation_id: '',
     version_id: '',
     company_name: '',
+    company_url: '',
     position: '',
     application_date: new Date().toISOString().split('T')[0],
     status: 'pending' as ApplicationStatus,
@@ -69,14 +81,18 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [appsData, statsData, creationsData] = await Promise.all([
+      const [appsData, statsData, creationsData, companiesData, companyStatsData] = await Promise.all([
         getApplications(userId),
         getApplicationStats(userId),
-        getCreations(userId, 'resume')
+        getCreations(userId, 'resume'),
+        getCompanyList(userId),
+        getCompanyStats(userId)
       ]);
       setApplications(appsData);
       setStats(statsData);
       setCreations(creationsData);
+      setCompanyList(companiesData);
+      setCompanyStats(companyStatsData);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -117,7 +133,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
 
   const handleSubmit = async () => {
     if (!formData.creation_id || !formData.version_id || !formData.company_name || !formData.position) {
-      alert('请填写必填项');
+      setShowErrorAlert({ show: true, message: '请填写必填项（简历、版本、公司名称、职位名称）' });
       return;
     }
 
@@ -134,7 +150,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
       handleCloseDialog();
     } catch (error) {
       console.error('Failed to save application:', error);
-      alert('保存失败，请重试');
+      setShowErrorAlert({ show: true, message: '保存失败，请重试' });
     }
   };
 
@@ -144,6 +160,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
       creation_id: app.creation_id,
       version_id: app.version_id,
       company_name: app.company_name,
+      company_url: app.company_url || '',
       position: app.position,
       application_date: app.application_date.split('T')[0],
       status: app.status,
@@ -158,13 +175,17 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这条投递记录吗？')) return;
+    setDeletingId(id);
+    setShowDeleteConfirm(false);
     
     try {
       await deleteApplication(id);
       await loadData();
     } catch (error) {
       console.error('Failed to delete application:', error);
+      setShowErrorAlert({ show: true, message: '删除失败，请重试' });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -175,6 +196,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
       creation_id: '',
       version_id: '',
       company_name: '',
+      company_url: '',
       position: '',
       application_date: new Date().toISOString().split('T')[0],
       status: 'pending',
@@ -192,7 +214,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
   return (
     <div className="w-full h-full flex flex-col bg-gray-50">
       {/* 头部 */}
-      <div className="flex-shrink-0 bg-white border-b-2 border-gray-900 px-6 py-4">
+      <div className="flex-shrink-0 bg-white px-6 py-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-4">
             <button
@@ -218,33 +240,112 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
 
         {/* 统计卡片 */}
         {stats && (
-          <div className="grid grid-cols-5 gap-4">
-            <div className="bg-gray-50 border-2 border-gray-200 p-4">
-              <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-              <div className="text-sm text-gray-600">总投递</div>
+          <>
+            <div className="grid grid-cols-5 gap-4 mb-4">
+              {/* 总投递 - 深色背景 */}
+              <div className="bg-gray-900 border-2 border-gray-900 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <Briefcase className="w-5 h-5 text-white" />
+                </div>
+                <div className="text-2xl font-bold text-white">{stats.total}</div>
+                <div className="text-sm text-gray-300">总投递</div>
+              </div>
+              
+              {/* 待回复 */}
+              <div className="bg-gray-50 border-2 border-gray-200 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <Calendar className="w-5 h-5 text-gray-600" />
+                </div>
+                <div className="text-2xl font-bold text-gray-600">{stats.pending}</div>
+                <div className="text-sm text-gray-600">待回复</div>
+              </div>
+              
+              {/* 面试中 */}
+              <div className="bg-blue-50 border-2 border-blue-200 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <Building2 className="w-5 h-5 text-blue-600" />
+                </div>
+                <div className="text-2xl font-bold text-blue-700">{stats.interview}</div>
+                <div className="text-sm text-blue-600">面试中</div>
+              </div>
+              
+              {/* 已Offer */}
+              <div className="bg-green-50 border-2 border-green-200 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <Trophy className="w-5 h-5 text-green-600" />
+                </div>
+                <div className="text-2xl font-bold text-green-700">{stats.offer}</div>
+                <div className="text-sm text-green-600">已Offer</div>
+              </div>
+              
+              {/* 已拒绝 */}
+              <div className="bg-red-50 border-2 border-red-200 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <X className="w-5 h-5 text-red-600" />
+                </div>
+                <div className="text-2xl font-bold text-red-700">{stats.rejected}</div>
+                <div className="text-sm text-red-600">已拒绝</div>
+              </div>
             </div>
-            <div className="bg-gray-50 border-2 border-gray-200 p-4">
-              <div className="text-2xl font-bold text-gray-600">{stats.pending}</div>
-              <div className="text-sm text-gray-600">待回复</div>
-            </div>
-            <div className="bg-blue-50 border-2 border-blue-200 p-4">
-              <div className="text-2xl font-bold text-blue-700">{stats.interview}</div>
-              <div className="text-sm text-blue-600">面试中</div>
-            </div>
-            <div className="bg-green-50 border-2 border-green-200 p-4">
-              <div className="text-2xl font-bold text-green-700">{stats.offer}</div>
-              <div className="text-sm text-green-600">已Offer</div>
-            </div>
-            <div className="bg-red-50 border-2 border-red-200 p-4">
-              <div className="text-2xl font-bold text-red-700">{stats.rejected}</div>
-              <div className="text-sm text-red-600">已拒绝</div>
-            </div>
-          </div>
+
+            {/* 可视化图表 - 公司投递分布 */}
+            {companyStats.length > 0 && (
+              <div className="bg-white border-2 border-gray-200 p-4">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">公司投递分布（Top 10）</h3>
+                <div className="space-y-2">
+                  {companyStats.map((item, index) => {
+                    const maxCount = companyStats[0].count;
+                    const percentage = (item.count / maxCount) * 100;
+                    
+                    return (
+                      <div key={index} className="flex items-center gap-3">
+                        <div className="w-32 flex items-center gap-2">
+                          <span className="text-sm text-gray-700 truncate flex-1" title={item.company}>
+                            {item.company}
+                          </span>
+                          {item.url && (
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-1 text-xs bg-blue-600 text-white hover:bg-blue-700 transition-colors rounded flex-shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              投递
+                            </a>
+                          )}
+                        </div>
+                        <div className="flex-1 flex items-center gap-2">
+                          <div className="flex-1 bg-gray-100 h-8 relative overflow-hidden rounded">
+                            <div
+                              className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500 flex items-center justify-end px-2"
+                              style={{ width: `${percentage}%` }}
+                            >
+                              {percentage > 20 && (
+                                <span className="text-xs font-semibold text-white">
+                                  {item.count}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {percentage <= 20 && (
+                            <span className="text-xs font-semibold text-gray-700 w-6">
+                              {item.count}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* 工具栏 */}
-      <div className="flex-shrink-0 bg-white border-b-2 border-gray-200 px-6 py-3">
+      <div className="flex-shrink-0 bg-white px-6 py-4">
         <div className="flex items-center gap-4">
           {/* 搜索 */}
           <div className="flex-1 relative">
@@ -254,7 +355,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
               placeholder="搜索公司、职位、简历..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
+              className="w-full pl-10 pr-4 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none rounded"
             />
           </div>
 
@@ -262,7 +363,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="px-4 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
+            className="px-4 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none rounded"
           >
             <option value="all">全部状态</option>
             <option value="pending">待回复</option>
@@ -275,7 +376,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
       </div>
 
       {/* 表格 */}
-      <div className="flex-1 overflow-auto px-6 py-4">
+      <div className="flex-1 overflow-auto px-6 pb-6">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
@@ -291,9 +392,9 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
             </p>
           </div>
         ) : (
-          <div className="bg-white border-2 border-gray-900">
+          <div className="bg-white border-2 border-gray-900 rounded-lg overflow-hidden shadow-sm">
             {/* 表头 */}
-            <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-gray-50 border-b-2 border-gray-900 font-semibold text-sm">
+            <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-900 font-semibold text-sm text-gray-700">
               <div className="col-span-2">投递日期</div>
               <div className="col-span-2">公司</div>
               <div className="col-span-2">职位</div>
@@ -304,10 +405,12 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
             </div>
 
             {/* 表格内容 */}
-            {filteredApps.map((app) => (
+            {filteredApps.map((app, index) => (
               <div
                 key={app.id}
-                className="grid grid-cols-12 gap-4 px-4 py-4 border-b border-gray-200 hover:bg-gray-50 transition-colors items-center"
+                className={`grid grid-cols-12 gap-4 px-6 py-4 hover:bg-blue-50 transition-colors items-center ${
+                  index !== filteredApps.length - 1 ? 'border-b border-gray-200' : ''
+                }`}
               >
                 <div className="col-span-2 text-sm text-gray-600">
                   {formatDate(app.application_date)}
@@ -325,7 +428,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
                   </span>
                 </div>
                 <div className="col-span-1">
-                  <span className={`inline-block px-2 py-1 text-xs border ${STATUS_CONFIG[app.status].color}`}>
+                  <span className={`inline-block px-2 py-1 text-xs border rounded ${STATUS_CONFIG[app.status].color}`}>
                     {STATUS_CONFIG[app.status].label}
                   </span>
                 </div>
@@ -341,7 +444,10 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
                     <Edit2 className="w-4 h-4 text-gray-600" />
                   </button>
                   <button
-                    onClick={() => handleDelete(app.id)}
+                    onClick={() => {
+                      setDeletingId(app.id);
+                      setShowDeleteConfirm(true);
+                    }}
                     className="p-1 hover:bg-red-50 transition-colors"
                     title="删除"
                   >
@@ -424,10 +530,24 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
                   </label>
                   <input
                     type="text"
+                    list="company-list"
                     value={formData.company_name}
-                    onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                    onChange={(e) => {
+                      const selectedCompany = companyList.find(c => c.name === e.target.value);
+                      setFormData({ 
+                        ...formData, 
+                        company_name: e.target.value,
+                        company_url: selectedCompany?.url || formData.company_url
+                      });
+                    }}
+                    placeholder="输入或选择公司"
                     className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
                   />
+                  <datalist id="company-list">
+                    {companyList.map((company, idx) => (
+                      <option key={idx} value={company.name} />
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -440,6 +560,23 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
                     className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
                   />
                 </div>
+              </div>
+
+              {/* 公司招聘链接 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  公司招聘链接
+                </label>
+                <input
+                  type="url"
+                  value={formData.company_url}
+                  onChange={(e) => setFormData({ ...formData, company_url: e.target.value })}
+                  placeholder="https://careers.company.com"
+                  className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  填写后可在图表中快速跳转到该公司招聘页面
+                </p>
               </div>
 
               {/* 投递日期和状态 */}
@@ -528,6 +665,42 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
               </button>
             </div>
           </motion.div>
+        </div>
+      )}
+
+      {/* 删除确认对话框 */}
+      <Confirm
+        isOpen={showDeleteConfirm}
+        title="删除投递记录"
+        message="确定要删除这条投递记录吗？此操作无法撤销。"
+        confirmText="删除"
+        cancelText="取消"
+        danger={true}
+        onConfirm={() => deletingId && handleDelete(deletingId)}
+        onCancel={() => {
+          setShowDeleteConfirm(false);
+          setDeletingId(null);
+        }}
+      />
+
+      {/* 错误提示对话框 */}
+      {showErrorAlert.show && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowErrorAlert({ show: false, message: '' })} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">提示</h3>
+              <p className="text-gray-500 text-sm">{showErrorAlert.message}</p>
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button
+                onClick={() => setShowErrorAlert({ show: false, message: '' })}
+                className="flex-1 py-3 text-sm font-medium text-primary hover:bg-primary/5 transition-colors"
+              >
+                确定
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

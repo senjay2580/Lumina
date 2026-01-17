@@ -25,9 +25,16 @@ export default function ResumePreview({ data, photoData }: Props) {
   const isCampus = data.resumeType === 'campus';
 
   return (
-    <div className="bg-white shadow-lg" style={{ width: '210mm', minHeight: '297mm' }}>
+    <div className="bg-white" style={{ width: '210mm' }}>
       {/* A4 纸张样式 */}
       <style>{`
+        @media print {
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
+        }
         .resume-content ul {
           list-style-type: disc;
           padding-left: 1.5em;
@@ -108,22 +115,22 @@ export default function ResumePreview({ data, photoData }: Props) {
 
         {/* 教育背景 */}
         {education.length > 0 && (
-          <div className="mb-8">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 pb-2 border-b border-gray-300">
+          <div className="mb-5">
+            <h3 className="text-base font-bold text-blue-700 mb-4 pb-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
               教育背景
             </h3>
-            <div className="space-y-4">
+            <div className="space-y-4 ml-4">
               {education.map((edu) => (
                 <div key={edu.id}>
-                  <div className="flex justify-between items-start mb-1">
+                  <div className="flex justify-between items-start">
                     <div>
-                      <h4 className="text-base font-bold text-gray-900">
+                      <h4 className="text-sm text-gray-900">
                         {edu.school || '学校名称'}
                       </h4>
                       <p className="text-sm text-gray-700">
                         {edu.degree || '学位'} · {edu.major || '专业'}
-                        {edu.gpa && ` · GPA: ${edu.gpa}`}
-                        {isCampus && edu.ranking && ` · ${edu.ranking}`}
+                        {edu.gpa && <span className="font-bold"> · GPA: {edu.gpa}</span>}
+                        {isCampus && edu.ranking && <span className="font-bold"> · {edu.ranking}</span>}
                       </p>
                     </div>
                     <div className="text-sm text-gray-600 text-right">
@@ -133,15 +140,15 @@ export default function ResumePreview({ data, photoData }: Props) {
                     </div>
                   </div>
                   {edu.courses && (
-                    <p className="text-sm text-gray-700 leading-relaxed mt-2">
+                    <p className="text-sm text-gray-700 leading-relaxed">
                       <span className="font-bold">主修课程：</span>
                       {edu.courses}
                     </p>
                   )}
                   {edu.achievements && (
-                    <p className="text-sm text-gray-700 leading-relaxed mt-2">
-                      <span className="font-bold">获奖经历：</span>
-                      {edu.achievements}
+                    <p className="text-sm leading-relaxed">
+                      <span className="font-bold text-gray-900">获奖经历：</span>
+                      <span className="font-bold text-gray-700">{edu.achievements}</span>
                     </p>
                   )}
                 </div>
@@ -152,11 +159,11 @@ export default function ResumePreview({ data, photoData }: Props) {
 
         {/* 工作经验 / 实习经历 */}
         {experience.length > 0 && (
-          <div className="mb-8">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 pb-2 border-b border-gray-300">
+          <div className="mb-5">
+            <h3 className="text-base font-bold text-blue-700 mb-4 pb-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
               {isCampus ? '实习经历' : '工作经验'}
             </h3>
-            <div className="space-y-5">
+            <div className="space-y-5 ml-4">
               {experience.map((exp) => (
                 <div key={exp.id}>
                   <div className="flex justify-between items-baseline mb-2">
@@ -170,10 +177,20 @@ export default function ResumePreview({ data, photoData }: Props) {
                       )}
                     </div>
                   </div>
+                  
+                  {/* 主要职责 */}
                   {exp.description && (
+                    <p className="mb-3 text-sm text-gray-700 leading-relaxed">
+                      <span className="font-bold text-gray-900">主要职责：</span>
+                      {exp.description}
+                    </p>
+                  )}
+                  
+                  {/* 主要成就 */}
+                  {exp.achievements && (
                     <div 
-                      className="text-sm text-gray-700 leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: renderMarkdown(exp.description) }}
+                      className="text-sm text-gray-700 leading-relaxed [&>ul]:list-disc [&>ul]:ml-5 [&>ul]:space-y-1 [&>ol]:list-decimal [&>ol]:ml-5 [&>ol]:space-y-1"
+                      dangerouslySetInnerHTML={{ __html: renderMarkdown(exp.achievements) }}
                     />
                   )}
                 </div>
@@ -184,11 +201,11 @@ export default function ResumePreview({ data, photoData }: Props) {
 
         {/* 项目经历 */}
         {projects.length > 0 && (
-          <div className="mb-8">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 pb-2 border-b border-gray-300">
+          <div className="mb-5">
+            <h3 className="text-base font-bold text-blue-700 mb-4 pb-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
               项目经历
             </h3>
-            <div className="space-y-5">
+            <div className="space-y-5 ml-4">
               {projects.map((proj) => (
                 <div key={proj.id}>
                   <div className="flex justify-between items-start mb-2">
@@ -218,38 +235,33 @@ export default function ResumePreview({ data, photoData }: Props) {
                     )}
                   </div>
                   
-                  {/* 核心技术 - 紧跟项目名称 */}
-                  {proj.technologies && proj.technologies.length > 0 && (
-                    <div className="mb-2 flex items-start">
-                      <span className="text-sm font-medium text-gray-700 flex-shrink-0 mr-2">核心技术：</span>
-                      <div className="flex flex-wrap gap-2">
-                        {proj.technologies.map((tech, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-block px-2 py-0.5 bg-gray-100 text-gray-700 text-xs border border-gray-300"
-                          >
-                            {tech}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
                   {/* 项目描述 */}
                   {proj.description && (
-                    <div className="mb-2 flex items-start">
-                      <span className="text-sm font-medium text-gray-700 flex-shrink-0 mr-2">项目描述：</span>
-                      <div 
-                        className="text-sm text-gray-700 leading-relaxed flex-1"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdown(proj.description) }}
-                      />
+                    <p className="mb-3 text-sm text-gray-700 leading-relaxed">
+                      <span className="font-bold text-gray-900">项目描述：</span>
+                      {proj.description}
+                    </p>
+                  )}
+                  
+                  {/* 核心技术 */}
+                  {proj.technologies && proj.technologies.length > 0 && (
+                    <div className="mb-3">
+                      <span className="text-sm font-bold text-gray-900">核心技术：</span>
+                      {proj.technologies.map((tech, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-block px-2 py-0.5 bg-gray-100 text-gray-700 text-xs border border-gray-300 ml-2"
+                        >
+                          {tech}
+                        </span>
+                      ))}
                     </div>
                   )}
                   
                   {/* 项目亮点 */}
                   {proj.highlights && (
                     <div 
-                      className="text-sm text-gray-700 leading-relaxed"
+                      className="text-sm text-gray-700 leading-relaxed [&>ul]:list-disc [&>ul]:ml-5 [&>ul]:space-y-1 [&>ol]:list-decimal [&>ol]:ml-5 [&>ol]:space-y-1"
                       dangerouslySetInnerHTML={{ __html: renderMarkdown(proj.highlights) }}
                     />
                   )}
@@ -261,11 +273,11 @@ export default function ResumePreview({ data, photoData }: Props) {
 
         {/* 专业技能 */}
         {skills.length > 0 && (
-          <div className="mb-8">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 pb-2 border-b border-gray-300">
+          <div className="mb-5">
+            <h3 className="text-base font-bold text-blue-700 mb-4 pb-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
               专业技能
             </h3>
-            <div className="space-y-4">
+            <div className="space-y-4 ml-4">
               {skills.map((skillCat) => (
                 <div key={skillCat.id}>
                   <h4 className="text-sm font-bold text-gray-900 mb-2">
@@ -287,11 +299,11 @@ export default function ResumePreview({ data, photoData }: Props) {
 
         {/* 校招特有：校园经历 */}
         {isCampus && campusExperience && campusExperience.length > 0 && (
-          <div className="mb-8">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 pb-2 border-b border-gray-300">
+          <div className="mb-5">
+            <h3 className="text-base font-bold text-blue-700 mb-4 pb-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
               校园经历
             </h3>
-            <div className="space-y-5">
+            <div className="space-y-5 ml-4">
               {campusExperience.map((exp) => (
                 <div key={exp.id}>
                   <div className="flex justify-between items-start mb-2">
@@ -323,12 +335,12 @@ export default function ResumePreview({ data, photoData }: Props) {
 
         {/* 自我评价 - 放在最后 */}
         {personalInfo.summary && (
-          <div className="mb-8">
-            <h3 className="text-lg font-bold text-gray-900 mb-3 pb-2 border-b border-gray-300">
+          <div className="mb-5">
+            <h3 className="text-base font-bold text-blue-700 mb-3 pb-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
               自我评价
             </h3>
             <div 
-              className="text-sm text-gray-700 leading-relaxed"
+              className="text-sm text-gray-700 leading-relaxed ml-4"
               dangerouslySetInnerHTML={{ __html: renderMarkdown(personalInfo.summary) }}
             />
           </div>

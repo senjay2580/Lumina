@@ -16,6 +16,90 @@ Every time you modify the codebase, you must:
 
 ---
 
+## UI 组件使用规范
+
+**CRITICAL: 禁止使用系统原生对话框**
+
+在所有代码中，必须使用项目的共享 UI 组件，禁止使用浏览器原生的 `alert()` 和 `confirm()`。
+
+### 规则
+1. ❌ **禁止使用**：
+   - `alert()` - 系统提示框
+   - `confirm()` - 系统确认框
+   - `prompt()` - 系统输入框
+
+2. ✅ **必须使用**：
+   - `<Confirm />` 组件（位于 `shared/Confirm.tsx`）
+   - 用于所有确认、提示、警告场景
+
+### 使用示例
+
+```typescript
+import { Confirm } from '../../shared/Confirm';
+
+// 状态定义
+const [confirmDialog, setConfirmDialog] = useState({
+  isOpen: false,
+  title: '',
+  message: '',
+  onConfirm: () => {},
+  danger: false
+});
+
+const [alertDialog, setAlertDialog] = useState({
+  isOpen: false,
+  title: '',
+  message: ''
+});
+
+// 确认对话框（删除等危险操作）
+setConfirmDialog({
+  isOpen: true,
+  title: '删除确认',
+  message: '确定要删除吗？此操作不可恢复。',
+  danger: true,
+  onConfirm: async () => {
+    // 执行删除操作
+    setConfirmDialog({ ...confirmDialog, isOpen: false });
+  }
+});
+
+// 提示对话框（成功/失败提示）
+setAlertDialog({
+  isOpen: true,
+  title: '操作成功',
+  message: '数据已保存'
+});
+
+// JSX 中使用
+<Confirm
+  isOpen={confirmDialog.isOpen}
+  title={confirmDialog.title}
+  message={confirmDialog.message}
+  danger={confirmDialog.danger}
+  onConfirm={confirmDialog.onConfirm}
+  onCancel={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+/>
+
+<Confirm
+  isOpen={alertDialog.isOpen}
+  title={alertDialog.title}
+  message={alertDialog.message}
+  confirmText="确定"
+  onConfirm={() => setAlertDialog({ ...alertDialog, isOpen: false })}
+  onCancel={() => setAlertDialog({ ...alertDialog, isOpen: false })}
+/>
+```
+
+### 检查清单
+- [ ] 代码中不存在 `alert(`
+- [ ] 代码中不存在 `confirm(`
+- [ ] 代码中不存在 `prompt(`
+- [ ] 所有确认操作使用 `<Confirm />` 组件
+- [ ] 所有提示信息使用 `<Confirm />` 组件
+
+---
+
 ## 代码变更后处理检查规则
 
 **触发时机**: 每次完成功能修改或新增后，必须输出「变更影响分析报告」。

@@ -1,7 +1,7 @@
 // 通用版本管理组件（可插拔设计）
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Plus, Check, GitBranch, Trash2, AlertCircle } from 'lucide-react';
+import { Clock, Plus, Check, GitBranch, Trash2, AlertCircle, Edit2 } from 'lucide-react';
 import { 
   getVersions, 
   getCurrentVersion, 
@@ -10,6 +10,7 @@ import {
   deleteVersion,
   type Version 
 } from '../../lib/version-manager';
+import { supabase } from '../../lib/supabase';
 
 interface Props {
   creationId: string;
@@ -35,6 +36,10 @@ export default function VersionManager({
   const [newVersionTitle, setNewVersionTitle] = useState('');
   const [newVersionDesc, setNewVersionDesc] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editingVersion, setEditingVersion] = useState<Version | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     if (showVersionManager && !loadingRef.current) {
@@ -73,8 +78,7 @@ export default function VersionManager({
     try {
       const version = await createNewVersion(creationId, userId, currentContent, {
         title: newVersionTitle,
-        changeDescription: newVersionDesc,
-        tags: ['draft']
+        changeDescription: newVersionDesc
       });
       
       await loadVersions();
@@ -114,6 +118,39 @@ export default function VersionManager({
       await loadVersions();
     } catch (error) {
       console.error('Failed to delete version:', error);
+    }
+  };
+
+  const handleEditVersion = (version: Version) => {
+    setEditingVersion(version);
+    setEditTitle(version.title);
+    setEditDesc(version.change_description || '');
+  };
+
+  const handleUpdateVersion = async () => {
+    if (!editingVersion || !editTitle.trim()) return;
+    
+    setUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('creation_versions')
+        .update({
+          title: editTitle,
+          change_description: editDesc || null
+        })
+        .eq('id', editingVersion.id);
+
+      if (error) throw error;
+
+      await loadVersions();
+      setEditingVersion(null);
+      setEditTitle('');
+      setEditDesc('');
+    } catch (error) {
+      console.error('Failed to update version:', error);
+      alert('更新失败，请重试');
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -201,32 +238,34 @@ export default function VersionManager({
                       <Clock className="w-3 h-3" />
                       {formatDate(version.created_at)}
                     </span>
-                    {version.tags && version.tags.length > 0 && (
-                      <div className="flex gap-1">
-                        {version.tags.map(tag => (
-                          <span
-                            key={tag}
-                            className="px-2 py-0.5 bg-gray-200 text-gray-700 rounded-sm"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
                 
-                {!isCurrent && versions.length > 1 && (
+                <div className="flex items-center gap-1">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleDeleteVersion(version.id);
+                      handleEditVersion(version);
                     }}
-                    className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                    className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                    title="编辑版本信息"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Edit2 className="w-4 h-4" />
                   </button>
-                )}
+                  
+                  {!isCurrent && versions.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteVersion(version.id);
+                      }}
+                      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                      title="删除版本"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             </motion.div>
           );
@@ -302,6 +341,83 @@ export default function VersionManager({
                   className="flex-1 px-4 py-2 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {creating ? '创建中...' : '创建版本'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 编辑版本对话框 */}
+      <AnimatePresence>
+        {editingVersion && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+            onClick={() => {
+              setEditingVersion(null);
+              setEditTitle('');
+              setEditDesc('');
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-xl font-bold mb-4">编辑版本信息</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    版本名称 *
+                  </label>
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="例如：优化工作经历描述"
+                    className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
+                    autoFocus
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    变更说明（可选）
+                  </label>
+                  <textarea
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                    placeholder="描述这个版本的主要变更..."
+                    rows={3}
+                    className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none resize-none"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setEditingVersion(null);
+                    setEditTitle('');
+                    setEditDesc('');
+                  }}
+                  className="flex-1 px-4 py-2 border-2 border-gray-300 hover:bg-gray-50 transition-colors"
+                  disabled={updating}
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleUpdateVersion}
+                  disabled={!editTitle.trim() || updating}
+                  className="flex-1 px-4 py-2 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {updating ? '更新中...' : '保存修改'}
                 </button>
               </div>
             </motion.div>

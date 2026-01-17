@@ -322,22 +322,77 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
     });
   };
 
-  const SectionHeader = ({ icon: Icon, title, section }: any) => (
-    <button
-      onClick={() => toggleSection(section)}
-      className="w-full flex items-center justify-between p-4 bg-gray-50 border-b-2 border-gray-200 hover:bg-gray-100 transition-colors"
-    >
-      <div className="flex items-center gap-3">
-        <Icon className="w-5 h-5 text-gray-700" />
-        <h3 className="font-semibold text-gray-900">{title}</h3>
-      </div>
-      {expandedSections.has(section) ? (
-        <ChevronUp className="w-5 h-5 text-gray-600" />
-      ) : (
-        <ChevronDown className="w-5 h-5 text-gray-600" />
-      )}
-    </button>
-  );
+  // 检查区块完成状态
+  const checkSectionCompletion = (section: string): boolean => {
+    switch (section) {
+      case 'personalInfo':
+        return !!(
+          data.personalInfo.name?.trim() &&
+          data.personalInfo.email?.trim() &&
+          data.personalInfo.phone?.trim()
+        );
+      
+      case 'education':
+        return data.education.length > 0 && data.education.every(edu =>
+          edu.school?.trim() &&
+          edu.degree?.trim() &&
+          edu.major?.trim() &&
+          edu.startDate?.trim() &&
+          edu.endDate?.trim()
+        );
+      
+      case 'experience':
+        return data.experience.length > 0 && data.experience.every(exp =>
+          exp.company?.trim() &&
+          exp.position?.trim() &&
+          exp.startDate?.trim() &&
+          exp.endDate?.trim() &&
+          exp.description?.trim()
+        );
+      
+      case 'projects':
+        return data.projects.length > 0 && data.projects.every(proj =>
+          proj.name?.trim() &&
+          proj.description?.trim()
+        );
+      
+      case 'skills':
+        return data.skills.length > 0 && data.skills.every(skill =>
+          skill.category?.trim() &&
+          skill.skills.length > 0
+        );
+      
+      default:
+        return false;
+    }
+  };
+
+  const SectionHeader = ({ icon: Icon, title, section, optional = false }: any) => {
+    const isCompleted = !optional && checkSectionCompletion(section);
+    
+    return (
+      <button
+        onClick={() => toggleSection(section)}
+        className={`w-full flex items-center justify-between p-4 border-b-2 transition-colors ${
+          isCompleted 
+            ? 'bg-green-50 border-green-200 hover:bg-green-100' 
+            : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <Icon className={`w-5 h-5 ${isCompleted ? 'text-green-700' : 'text-gray-700'}`} />
+          <h3 className={`font-semibold ${isCompleted ? 'text-green-900' : 'text-gray-900'}`}>
+            {title}
+          </h3>
+        </div>
+        {expandedSections.has(section) ? (
+          <ChevronUp className="w-5 h-5 text-gray-600" />
+        ) : (
+          <ChevronDown className="w-5 h-5 text-gray-600" />
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -680,9 +735,17 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                 </div>
 
                 <textarea
-                  placeholder="工作描述（支持 Markdown，如：**粗体**、- 列表）"
+                  placeholder="主要职责（支持 Markdown，如：**粗体**、- 列表）"
                   value={exp.description}
                   onChange={(e) => updateExperience(exp.id, 'description', e.target.value)}
+                  rows={4}
+                  className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none resize-none font-mono text-sm"
+                />
+
+                <textarea
+                  placeholder="主要成就（可选，支持 Markdown，如：- 列表项）"
+                  value={exp.achievements || ''}
+                  onChange={(e) => updateExperience(exp.id, 'achievements', e.target.value)}
                   rows={4}
                   className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none resize-none font-mono text-sm"
                 />
@@ -777,6 +840,14 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                   className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none resize-none font-mono text-sm"
                 />
 
+                <textarea
+                  placeholder="项目亮点（可选，支持 Markdown，如：- 列表项）"
+                  value={proj.highlights || ''}
+                  onChange={(e) => updateProject(proj.id, 'highlights', e.target.value)}
+                  rows={4}
+                  className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none resize-none font-mono text-sm"
+                />
+
                 <input
                   type="text"
                   placeholder="技术栈（用顿号分隔，如：React、Node.js、MySQL）"
@@ -857,7 +928,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
       {/* 校招特有：校园经历 */}
       {isCampus && (
         <div className="border-2 border-gray-200">
-          <SectionHeader icon={Users} title="校园经历（可选）" section="campusExperience" />
+          <SectionHeader icon={Users} title="校园经历（可选）" section="campusExperience" optional={true} />
           {expandedSections.has('campusExperience') && (
             <div className="p-6 space-y-4">
               {(data.campusExperience || []).map((exp, index) => (

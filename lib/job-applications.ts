@@ -9,6 +9,7 @@ export interface JobApplication {
   creation_id: string;
   version_id: string;
   company_name: string;
+  company_url?: string;
   position: string;
   application_date: string;
   status: ApplicationStatus;
@@ -36,6 +37,7 @@ export interface CreateApplicationData {
   creation_id: string;
   version_id: string;
   company_name: string;
+  company_url?: string;
   position: string;
   application_date?: string;
   status?: ApplicationStatus;
@@ -49,6 +51,7 @@ export interface CreateApplicationData {
 
 export interface UpdateApplicationData {
   company_name?: string;
+  company_url?: string;
   position?: string;
   application_date?: string;
   status?: ApplicationStatus;
@@ -183,3 +186,83 @@ export const STATUS_CONFIG = {
   rejected: { label: '已拒绝', color: 'bg-red-100 text-red-700 border-red-300' },
   accepted: { label: '已接受', color: 'bg-purple-100 text-purple-700 border-purple-300' }
 };
+
+/**
+ * 获取用户投递过的公司列表（去重，包含URL）
+ */
+export async function getCompanyList(userId: string): Promise<Array<{ name: string; url?: string; count: number }>> {
+  const { data, error } = await supabase
+    .from('job_applications')
+    .select('company_name, company_url')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Failed to fetch company list:', error);
+    throw error;
+  }
+
+  // 按公司名称分组，统计数量，保留最新的URL
+  const companyMap = new Map<string, { url?: string; count: number }>();
+  
+  data.forEach(app => {
+    const existing = companyMap.get(app.company_name);
+    if (existing) {
+      existing.count++;
+      // 如果当前记录有URL且之前没有，则更新URL
+      if (app.company_url && !existing.url) {
+        existing.url = app.company_url;
+      }
+    } else {
+      companyMap.set(app.company_name, {
+        url: app.company_url || undefined,
+        count: 1
+      });
+    }
+  });
+
+  return Array.from(companyMap.entries())
+    .map(([name, data]) => ({ name, url: data.url, count: data.count }))
+    .sort((a, b) => b.count - a.count); // 按投递次数降序
+}
+
+/**
+ * 获取按公司分组的统计数据
+ */
+export async function getCompanyStats(userId: string) {
+  const { data, error } = await supabase
+    .from('job_applications')
+    .select('company_name, company_url')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Failed to fetch company stats:', error);
+    throw error;
+  }
+
+  // 按公司分组统计
+  const companyMap = new Map<string, { url?: string; count: number }>();
+  
+  data.forEach(app => {
+    const existing = companyMap.get(app.company_name);
+    if (existing) {
+      existing.count++;
+      if (app.company_url && !existing.url) {
+        existing.url = app.company_url;
+      }
+    } else {
+      companyMap.set(app.company_name, {
+        url: app.company_url || undefined,
+        count: 1
+      });
+    }
+  });
+
+  return Array.from(companyMap.entries())
+    .map(([name, data]) => ({ 
+      company: name, 
+      url: data.url,
+      count: data.count 
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10); // 只返回前10个
+}
