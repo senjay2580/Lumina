@@ -16,8 +16,8 @@ interface Props {
   creationId: string;
   userId: string;
   currentContent: any;
-  onVersionSwitch: (version: Version) => void;
-  onVersionCreated?: (version: Version) => void;
+  onVersionSwitch: (version: Version) => void | Promise<void>;
+  onVersionCreated?: (version: Version) => void | Promise<void>;
   showVersionManager: boolean; // 新增：控制是否加载
 }
 
@@ -42,17 +42,12 @@ export default function VersionManager({
   const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
-    if (showVersionManager && !loadingRef.current) {
+    if (showVersionManager) {
       loadVersions();
     }
-  }, [creationId, showVersionManager]); // 只在打开版本管理器时加载
-
-  const loadingRef = useRef(false);
+  }, [showVersionManager]);
 
   const loadVersions = async () => {
-    if (loadingRef.current) return;
-    
-    loadingRef.current = true;
     setLoading(true);
     try {
       const [versionsData, currentVersionData] = await Promise.all([
@@ -65,9 +60,6 @@ export default function VersionManager({
       console.error('Failed to load versions:', error);
     } finally {
       setLoading(false);
-      setTimeout(() => {
-        loadingRef.current = false;
-      }, 1000);
     }
   };
 
@@ -94,14 +86,23 @@ export default function VersionManager({
   };
 
   const handleSwitchVersion = async (version: Version) => {
-    if (version.id === currentVersion?.id) return;
+    console.log('[VersionManager] Switching to version:', version.id, version.title);
+    console.log('[VersionManager] Current version:', currentVersion?.id, currentVersion?.title);
+    
+    if (version.id === currentVersion?.id) {
+      console.log('[VersionManager] Already current version, skipping');
+      return; // 已经是当前版本，不需要切换
+    }
+    
+    console.log('[VersionManager] Calling onVersionSwitch callback');
+    console.log('[VersionManager] onVersionSwitch type:', typeof onVersionSwitch);
     
     try {
-      await switchVersion(creationId, version.id);
-      setCurrentVersion(version);
-      onVersionSwitch(version);
+      // 调用父组件的回调（可能是 async）
+      await onVersionSwitch(version);
+      console.log('[VersionManager] onVersionSwitch callback completed');
     } catch (error) {
-      console.error('Failed to switch version:', error);
+      console.error('[VersionManager] onVersionSwitch callback error:', error);
     }
   };
 

@@ -241,6 +241,9 @@ export async function switchVersion(creationId: string, versionId: string): Prom
     .eq('id', creationId);
 
   if (error) throw error;
+  
+  // 清除缓存，确保下次获取最新数据
+  invalidateCache(creationId);
 }
 
 // 更新版本内容

@@ -12,7 +12,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { type Creation } from '../../lib/creations';
-import { getCurrentVersion, updateVersionContent, type Version } from '../../lib/version-manager';
+import { getCurrentVersion, updateVersionContent, switchVersion, type Version } from '../../lib/version-manager';
 import { type ResumeData, DEFAULT_RESUME_DATA } from '../../types/resume';
 import { getPhoto, savePhoto } from '../../lib/resume-photo-cache';
 import { exportToHTML } from '../../lib/pdf-export';
@@ -41,35 +41,36 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
 
   // 加载当前版本数据
   useEffect(() => {
-    if (!loadingRef.current) {
-      loadCurrentVersion();
-    }
+    loadCurrentVersion();
   }, [creation.id]);
 
-  const loadingRef = useRef(false);
-
   const loadCurrentVersion = async () => {
-    if (loadingRef.current) return;
-    
-    loadingRef.current = true;
+    console.log('[ResumeEditorPage] loadCurrentVersion started');
     setLoading(true);
     try {
       const version = await getCurrentVersion(creation.id);
+      console.log('[ResumeEditorPage] Loaded version from DB:', version?.id, version?.title);
+      
       if (version) {
         setCurrentVersion(version);
+        console.log('[ResumeEditorPage] Set currentVersion state');
+        
         setResumeData(version.content || DEFAULT_RESUME_DATA);
+        console.log('[ResumeEditorPage] Set resumeData state');
         
         // 加载照片
         const photo = getPhoto(creation.id, version.id);
         setPhotoData(photo);
+        console.log('[ResumeEditorPage] Set photoData state');
+        
+        setHasUnsavedChanges(false);
+        console.log('[ResumeEditorPage] Reset hasUnsavedChanges');
       }
     } catch (error) {
-      console.error('Failed to load version:', error);
+      console.error('[ResumeEditorPage] Failed to load version:', error);
     } finally {
       setLoading(false);
-      setTimeout(() => {
-        loadingRef.current = false;
-      }, 1000);
+      console.log('[ResumeEditorPage] loadCurrentVersion completed');
     }
   };
 
@@ -111,22 +112,46 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
   };
 
   // 版本切换
-  const handleVersionSwitch = (version: Version) => {
+  const handleVersionSwitch = async (version: Version) => {
+    console.log('[ResumeEditorPage] handleVersionSwitch called with:', version.id, version.title);
+    console.log('[ResumeEditorPage] hasUnsavedChanges:', hasUnsavedChanges);
+    
+    // 检查未保存的更改
     if (hasUnsavedChanges) {
-      if (!confirm('有未保存的更改，切换版本将丢失这些更改。确定要继续吗？')) {
+      const confirmed = confirm('有未保存的更改，切换版本将丢失这些更改。确定要继续吗？');
+      console.log('[ResumeEditorPage] User confirmed:', confirmed);
+      if (!confirmed) {
         return;
       }
     }
     
-    setCurrentVersion(version);
-    setResumeData(version.content || DEFAULT_RESUME_DATA);
-    
-    // 加载该版本的照片
-    const photo = getPhoto(creation.id, version.id);
-    setPhotoData(photo);
-    
-    setHasUnsavedChanges(false);
+    try {
+      console.log('[ResumeEditorPage] Calling switchVersion API...');
+      // 在数据库中切换版本
+      await switchVersion(creation.id, version.id);
+      console.log('[ResumeEditorPage] switchVersion API success');
+      
+      // 关闭版本管理器
+      setShowVersionManager(false);
+      console.log('[ResumeEditorPage] Version manager closed');
+      
+      // 重新加载当前版本（从数据库获取最新状态）
+      console.log('[ResumeEditorPage] Reloading current version...');
+      await loadCurrentVersion();
+      console.log('[ResumeEditorPage] Version switch complete');
+    } catch (error) {
+      console.error('[ResumeEditorPage] Failed to switch version:', error);
+      alert('切换版本失败，请重试');
+    }
+  };
+
+  // 版本创建后的回调
+  const handleVersionCreated = async (version: Version) => {
+    // 关闭版本管理器
     setShowVersionManager(false);
+    
+    // 重新加载当前版本
+    await loadCurrentVersion();
   };
 
   // 导出 HTML
@@ -214,7 +239,7 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             
             {/* 版本管理 */}
             <button
-              onClick={() => setShowVersionManager(!showVersionManager)}
+              onClick={() => setShowVersionManager(true)}
               className="flex items-center gap-2 px-4 py-2 border-2 border-gray-300 hover:bg-gray-50 transition-colors"
             >
               <GitBranch className="w-4 h-4" />
@@ -302,11 +327,11 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
               creationId={creation.id}
               userId={userId}
               currentContent={resumeData}
-              onVersionSwitch={handleVersionSwitch}
-              onVersionCreated={(version) => {
-                setCurrentVersion(version);
-                setHasUnsavedChanges(false);
+              onVersionSwitch={(version) => {
+                console.log('[ResumeEditorPage] onVersionSwitch wrapper called with:', version);
+                return handleVersionSwitch(version);
               }}
+              onVersionCreated={handleVersionCreated}
               showVersionManager={showVersionManager}
             />
           </motion.div>
