@@ -78,6 +78,7 @@ import {
   getResources,
   getResourceStats,
   createLinkResource,
+  createBatchLinkResources,
   uploadFileResource,
   deleteResource,
   updateResource,
@@ -195,6 +196,12 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
   const [currentPage, setCurrentPage] = useState(1);
   const [isClassifying, setIsClassifying] = useState(false); // 一键分类文章状态
   const [showGitHubFollowing, setShowGitHubFollowing] = useState(false); // GitHub 用户关注弹窗
+  const [showCreateFolder, setShowCreateFolder] = useState(false); // 新建文件夹弹窗
+  const [newFolderName, setNewFolderName] = useState('新建文件夹');
+  const [newFolderType, setNewFolderType] = useState<ResourceType>('link');
+  const [newFolderColor, setNewFolderColor] = useState('#6366f1');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [textareaRows, setTextareaRows] = useState(1); // textarea 动态行数
   const pageSize = 10;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -374,19 +381,56 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
     return folders.filter(f => f.name.toLowerCase().includes(query));
   }, [folders, searchQuery]);
 
-  // 添加链接资源
+  // 添加链接资源（支持批量）
   const handleAddLink = async () => {
     if (!userId || !addInputValue.trim()) return;
     
     setIsAdding(true);
     try {
-      await createLinkResource(userId, addInputValue.trim(), addDescription.trim() || undefined);
+      // 解析输入中的多个 URL（支持换行、空格、逗号分隔）
+      const inputText = addInputValue.trim();
+      const urlRegex = /https?:\/\/[^\s,，\n]+/gi;
+      const urls = inputText.match(urlRegex) || [];
+      
+      if (urls.length === 0) {
+        // 如果没有找到 URL，尝试将整个输入当作单个 URL
+        if (inputText.startsWith('http://') || inputText.startsWith('https://')) {
+          await createLinkResource(userId, inputText, addDescription.trim() || undefined);
+          showToast('已添加 1 个资源');
+        } else {
+          showToast('请输入有效的链接地址');
+          setIsAdding(false);
+          return;
+        }
+      } else if (urls.length === 1) {
+        // 单个 URL，使用原有逻辑
+        await createLinkResource(userId, urls[0], addDescription.trim() || undefined);
+        showToast('已添加 1 个资源');
+      } else {
+        // 多个 URL，使用批量创建（智能分类 GitHub）
+        const result = await createBatchLinkResources(userId, urls, addDescription.trim() || undefined);
+        const githubCount = result.success.filter(r => r.type === 'github').length;
+        const linkCount = result.success.filter(r => r.type === 'link').length;
+        
+        let message = `已添加 ${result.success.length} 个资源`;
+        if (githubCount > 0 && linkCount > 0) {
+          message += ` (${githubCount} GitHub, ${linkCount} 链接)`;
+        } else if (githubCount > 0) {
+          message += ` (GitHub)`;
+        }
+        if (result.failed.length > 0) {
+          message += `，${result.failed.length} 个失败`;
+        }
+        showToast(message);
+      }
+      
       setAddInputValue('');
       setAddDescription('');
       setShowDescInput(false);
       await loadData();
     } catch (err) {
       console.error('Failed to add resource:', err);
+      showToast('添加失败，请重试');
     } finally {
       setIsAdding(false);
     }
@@ -668,17 +712,28 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
           <div className="bg-white rounded-xl p-4">
             <div className="flex items-center gap-3">
               <div className="flex-1 relative">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
                   <Plus className={`w-5 h-5 ${isDraggingOnInput ? 'text-primary' : 'text-gray-400'}`} />
                 </div>
-                <input
-                  type="text"
-                  placeholder="粘贴链接或图片、拖拽文件，或输入 GitHub 仓库地址..."
+                <textarea
+                  placeholder="粘贴链接或图片、拖拽文件，或输入 GitHub 仓库地址...（支持批量：每行一个链接，或用空格/逗号分隔）"
                   value={addInputValue}
-                  onChange={e => setAddInputValue(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddLink()}
+                  onChange={e => {
+                    setAddInputValue(e.target.value);
+                    // 动态调整高度：根据换行数量
+                    const lines = e.target.value.split('\n').length;
+                    setTextareaRows(Math.min(Math.max(1, lines), 6)); // 最小1行，最多6行
+                  }}
+                  onKeyDown={e => {
+                    // Ctrl+Enter 或 Cmd+Enter 提交
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      handleAddLink();
+                    }
+                  }}
                   onPaste={handlePaste}
-                  className="w-full pl-12 pr-4 py-3.5 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 focus:border-primary focus:bg-white focus:border-solid outline-none transition-all text-sm"
+                  rows={textareaRows}
+                  className="w-full pl-12 pr-4 py-3.5 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 focus:border-primary focus:bg-white focus:border-solid outline-none transition-all text-sm resize-none"
                 />
               </div>
               <input
@@ -805,6 +860,25 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
               className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
             />
           </div>
+          {/* 新建文件夹按钮 */}
+          <Tooltip content="创建新文件夹">
+            <div>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => {
+                  // 根据当前选中的类型设置默认类型
+                  if (activeType !== 'all') {
+                    setNewFolderType(activeType);
+                  }
+                  setShowCreateFolder(true);
+                }}
+                icon={<Plus className="w-4 h-4" />}
+              >
+                新建文件夹
+              </Button>
+            </div>
+          </Tooltip>
           {/* 一键分类文章按钮 - 仅在文章类型下显示 */}
           {activeType === 'article' && stats.article > 1 && (
             <Tooltip content="按公众号/订阅源自动分类文章到文件夹">
@@ -995,6 +1069,110 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
             </>
           )}
         </AnimatePresence>
+
+        {/* 新建文件夹弹窗 */}
+        <Modal
+          isOpen={showCreateFolder}
+          onClose={() => setShowCreateFolder(false)}
+          title="新建文件夹"
+        >
+          <div className="space-y-4">
+            {/* 文件夹名称 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                文件夹名称
+              </label>
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="请输入文件夹名称..."
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                autoFocus
+              />
+            </div>
+
+            {/* 资源类型 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                资源类型
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {(['link', 'github', 'article', 'document', 'image'] as ResourceType[]).map(type => {
+                  const config = typeConfig[type];
+                  const Icon = config.icon;
+                  const isSelected = newFolderType === type;
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => setNewFolderType(type)}
+                      className={`flex items-center gap-2 p-3 rounded-xl border-2 transition-all ${
+                        isSelected
+                          ? 'bg-primary/5 border-primary'
+                          : 'bg-white border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                        isSelected ? 'bg-primary/10' : config.bgColor
+                      }`}>
+                        <Icon className={`w-4 h-4 ${
+                          isSelected ? 'text-primary' : config.color
+                        }`} />
+                      </div>
+                      <span className={`text-sm font-medium ${
+                        isSelected ? 'text-primary' : 'text-gray-700'
+                      }`}>
+                        {config.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                文件夹只能包含相同类型的资源
+              </p>
+            </div>
+
+            {/* 按钮 */}
+            <div className="flex gap-3 pt-4">
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={() => setShowCreateFolder(false)}
+                disabled={isCreatingFolder}
+                className="flex-1"
+              >
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={async () => {
+                  if (!userId || !newFolderName.trim()) return;
+                  setIsCreatingFolder(true);
+                  try {
+                    await createFolder(userId, newFolderType, newFolderName.trim(), null, newFolderColor);
+                    showToast('文件夹创建成功');
+                    setShowCreateFolder(false);
+                    setNewFolderName('新建文件夹');
+                    setNewFolderColor('#6366f1');
+                    await loadData();
+                  } catch (err) {
+                    console.error('创建文件夹失败:', err);
+                    showToast('创建失败，请重试');
+                  } finally {
+                    setIsCreatingFolder(false);
+                  }
+                }}
+                disabled={!newFolderName.trim() || isCreatingFolder}
+                loading={isCreatingFolder}
+                className="flex-1"
+              >
+                创建
+              </Button>
+            </div>
+          </div>
+        </Modal>
 
         {/* 文件夹路径导航 */}
         {(currentFolderId || folderPath.length > 0) && (
@@ -3444,7 +3622,12 @@ function RecommendedResourcesModal({
       
       // 如果没有可用资源了，提示用户
       if (availableResources.length === 0 && recommendedUrls.size > 0) {
-        const response = `当前${selectedCategory ? ` ${selectedCategory} 年` : ''}分类下的项目已全部推荐完毕！\n\n你可以：\n1. 切换到其他年份查看更多项目\n2. 点击"清除对话"重新开始\n3. 使用搜索功能查找特定项目`;
+        const response = `当前${selectedCategory ? ` ${selectedCategory} 年` : ''}分类下的项目已全部推荐完毕！
+
+你可以：
+1. 切换到其他年份查看更多项目
+2. 点击\"清除对话\"重新开始
+3. 使用搜索功能查找特定项目`;
         setAiResponse(response);
         const assistantMessage = { role: 'assistant' as const, content: response };
         const finalHistory = [...newHistory, assistantMessage];
@@ -3461,12 +3644,12 @@ function RecommendedResourcesModal({
       
       // 构建对话历史上下文
       const historyContext = aiChatHistory.length > 0 
-        ? `\n\n之前的对话：\n${aiChatHistory.slice(-6).map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content.slice(0, 200)}${m.content.length > 200 ? '...' : ''}`).join('\n')}`
+        ? '\n\n之前的对话：\n' + aiChatHistory.slice(-6).map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content.slice(0, 200)}${m.content.length > 200 ? '...' : ''}`).join('\n')
         : '';
       
       // 已推荐项目提示
       const excludeHint = recommendedUrls.size > 0 
-        ? `\n\n重要：以下项目已经推荐过，请不要重复推荐：\n${Array.from(recommendedUrls).slice(-20).join('\n')}`
+        ? '\n\n重要：以下项目已经推荐过，请不要重复推荐：\n' + Array.from(recommendedUrls).slice(-20).join('\n')
         : '';
       
       const systemPrompt = `你是一个专业的 GitHub 开源项目推荐助手。你的任务是根据用户的具体需求，从提供的项目列表中精准匹配最相关的项目。

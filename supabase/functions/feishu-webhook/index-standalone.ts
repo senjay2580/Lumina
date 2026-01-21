@@ -220,6 +220,41 @@ function extractUrl(text: string): string | null {
   return match ? match[0] : null;
 }
 
+// 批量提取链接（支持 "标题: URL" 或单独的 "URL"）
+function extractAllUrls(text: string): Array<{ title: string; url: string }> {
+  const results: Array<{ title: string; url: string }> = [];
+  const lines = text.split('\n');
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    
+    // 匹配 "标题: URL" 或 "标题：URL" 格式
+    const titleUrlMatch = trimmed.match(/^([^:：]+)[：:]\s*(https?:\/\/[^\s]+)/);
+    if (titleUrlMatch) {
+      const [, title, url] = titleUrlMatch;
+      results.push({ title: title.trim(), url: url.trim() });
+      continue;
+    }
+    
+    // 匹配单独的 URL
+    const urlMatch = trimmed.match(/^(https?:\/\/[^\s]+)/);
+    if (urlMatch) {
+      const url = urlMatch[1];
+      // 自动生成 title（域名+路径）
+      try {
+        const parsed = new URL(url);
+        const title = parsed.host + parsed.pathname.replace(/\/$/, '');
+        results.push({ title, url });
+      } catch {
+        results.push({ title: url, url });
+      }
+    }
+  }
+  
+  return results;
+}
+
 function parseCommand(text: string): { command: string; args: string } | null {
   const trimmed = text.trim();
   
@@ -677,7 +712,11 @@ async function handleBindCommand(openId: string, code: string): Promise<string> 
 
   await supabase.from('feishu_bind_codes').update({ used_at: new Date().toISOString() }).eq('id', bindCode.id);
 
-  return `✅ 绑定成功！\n\n你好 ${userInfo.name}，现在可以直接发送链接、图片或文件来添加资源了。\n\n发送 /help 查看所有指令。`;
+  return `✅ 绑定成功！
+
+你好 ${userInfo.name}，现在可以直接发送链接、图片或文件来添加资源了。
+
+发送 /help 查看所有指令。`;
 }
 
 async function handleUnbindCommand(openId: string): Promise<string> {
@@ -1631,17 +1670,115 @@ async function handleMessage(event: any): Promise<void> {
       }
     }
 
-    // 检查是否包含 URL - 如果是链接则添加资源
-    const url = extractUrl(text);
-    if (url) {
-      console.log('[MSG] URL detected:', url);
-      try {
-        const result = await addLinkResource(userId, url);
-        await sendCardMessage(openId, generateResourceAddedCard(result.title, result.type));
-      } catch (e) {
-        console.error('[MSG] Add link error:', e);
-        await sendTextMessage(openId, '❌ 添加链接失败');
+    // 批量检查并添加所有链接（性能优化版）
+    const urlsWithTitles = extractAllUrls(text);
+    if (urlsWithTitles.length > 0) {
+      console.log('[MSG] URLs detected:', urlsWithTitles.length);
+      
+      // 并发获取 GitHub 元数据（最多 10 个，避免速率限制）
+      const githubUrls = urlsWithTitles.filter(({ url }) => url.includes('github.com')).slice(0, 10);
+      const githubMetadataMap = new Map<string, { metadata: any; description?: string }>();
+      
+      if (githubUrls.length > 0) {
+        const githubPromises = githubUrls.map(async ({ url }) => {
+          const match = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+          if (!match) return;
+          
+          const [, owner, repo] = match;
+          try {
+            const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+              headers: { 'Accept': 'application/vnd.github.v3+json' },
+            });
+            if (response.ok) {
+              const data = await response.json();
+              githubMetadataMap.set(url, {
+                metadata: { owner: data.owner.login, repo: data.name, stars: data.stargazers_count, forks: data.forks_count, language: data.language },
+                description: data.description
+              });
+            }
+          } catch (e) {
+            console.error('[MSG] GitHub API error:', owner, repo, e);
+          }
+        });
+        
+        await Promise.allSettled(githubPromises);
       }
+      
+      // 构建批量插入数据
+      const resourcesToInsert = urlsWithTitles.map(({ title, url }) => {
+        const isGitHub = url.includes('github.com');
+        const type = isGitHub ? 'github' : 'link';
+        const githubData = githubMetadataMap.get(url);
+        
+        return {
+          user_id: userId,
+          type,
+          title,
+          description: githubData?.description,
+          url,
+          metadata: githubData?.metadata || {}
+        };
+      });
+      
+      // 批量插入（一次数据库操作）
+      const { data: insertedData, error: insertError } = await supabase
+        .from('resources')
+        .insert(resourcesToInsert)
+        .select('title, type');
+      
+      const successCount = insertedData?.length || 0;
+      const failCount = urlsWithTitles.length - successCount;
+      
+      console.log('[MSG] Batch insert result:', successCount, 'success,', failCount, 'failed');
+      
+      // 构建结果列表（显示所有）
+      const resultElements: any[] = [
+        { 
+          tag: 'div', 
+          text: { 
+            tag: 'lark_md', 
+            content: `**类型**\n🔗 链接 × ${successCount}` + (failCount > 0 ? ` (${failCount} 条失败)` : '') 
+          } 
+        },
+        { tag: 'hr' }
+      ];
+      
+      // 显示所有成功的资源
+      if (insertedData && insertedData.length > 0) {
+        insertedData.forEach((r: any, i: number) => {
+          resultElements.push({
+            tag: 'div',
+            text: { 
+              tag: 'plain_text', 
+              content: `✓ ${r.title}` 
+            }
+          });
+          // 每条之间加分割线（除了最后一条）
+          if (i < insertedData.length - 1) {
+            resultElements.push({ tag: 'hr' });
+          }
+        });
+      } else if (insertError) {
+        resultElements.push({
+          tag: 'div',
+          text: { 
+            tag: 'plain_text', 
+            content: '✗ 批量插入失败，请检查链接格式' 
+          }
+        });
+      }
+      
+      // 发送结果卡片
+      const card = {
+        config: { wide_screen_mode: true },
+        header: { 
+          title: { tag: 'plain_text', content: `✅ 资源已添加 (${successCount}/${urlsWithTitles.length})` }, 
+          template: 'green' 
+        },
+        elements: resultElements
+      };
+      
+      await sendCardMessage(openId, card);
       return;
     }
 

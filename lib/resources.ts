@@ -270,6 +270,149 @@ export async function createLinkResource(
   return data;
 }
 
+// 批量创建链接资源（智能分类 + 并发优化）
+export interface BatchLinkResult {
+  success: Resource[];
+  failed: Array<{ url: string; error: string }>;
+}
+
+export async function createBatchLinkResources(
+  userId: string,
+  urls: string[],
+  description?: string
+): Promise<BatchLinkResult> {
+  const result: BatchLinkResult = { success: [], failed: [] };
+  
+  if (urls.length === 0) return result;
+  
+  // 分离 GitHub 和普通链接
+  const githubUrls: string[] = [];
+  const normalUrls: string[] = [];
+  
+  for (const url of urls) {
+    if (detectUrlType(url) === 'github') {
+      githubUrls.push(url);
+    } else {
+      normalUrls.push(url);
+    }
+  }
+  
+  // 并发获取 GitHub 元数据（最多 10 个，避免速率限制）
+  const githubMetadataMap = new Map<string, { title: string; metadata: any; description?: string }>();
+  
+  if (githubUrls.length > 0) {
+    const githubPromises = githubUrls.slice(0, 10).map(async (url) => {
+      const parsed = parseGitHubUrl(url);
+      if (!parsed) return;
+      
+      try {
+        const repoInfo = await fetchGitHubRepoInfo(parsed.owner, parsed.repo);
+        if (repoInfo) {
+          githubMetadataMap.set(url, {
+            title: `${repoInfo.owner}/${repoInfo.repo}`,
+            metadata: {
+              owner: repoInfo.owner,
+              repo: repoInfo.repo,
+              stars: repoInfo.stars,
+              forks: repoInfo.forks,
+              language: repoInfo.language,
+              topics: repoInfo.topics,
+              homepage: repoInfo.homepage,
+              pushed_at: repoInfo.pushed_at,
+            },
+            description: repoInfo.description || undefined
+          });
+        } else {
+          githubMetadataMap.set(url, {
+            title: `${parsed.owner}/${parsed.repo}`,
+            metadata: { owner: parsed.owner, repo: parsed.repo }
+          });
+        }
+      } catch (e) {
+        // 获取失败也设置基本信息
+        githubMetadataMap.set(url, {
+          title: `${parsed.owner}/${parsed.repo}`,
+          metadata: { owner: parsed.owner, repo: parsed.repo }
+        });
+      }
+    });
+    
+    await Promise.allSettled(githubPromises);
+  }
+  
+  // 构建批量插入数据
+  const resourcesToInsert = [];
+  
+  // 处理 GitHub 链接
+  for (const url of githubUrls) {
+    const githubData = githubMetadataMap.get(url);
+    if (githubData) {
+      resourcesToInsert.push({
+        user_id: userId,
+        type: 'github' as ResourceType,
+        title: githubData.title,
+        description: description || githubData.description,
+        url,
+        metadata: githubData.metadata
+      });
+    } else {
+      // 备用：没有元数据也插入
+      const parsed = parseGitHubUrl(url);
+      resourcesToInsert.push({
+        user_id: userId,
+        type: 'github' as ResourceType,
+        title: parsed ? `${parsed.owner}/${parsed.repo}` : generateTitleFromUrl(url),
+        description,
+        url,
+        metadata: parsed ? { owner: parsed.owner, repo: parsed.repo } : {}
+      });
+    }
+  }
+  
+  // 处理普通链接
+  for (const url of normalUrls) {
+    resourcesToInsert.push({
+      user_id: userId,
+      type: 'link' as ResourceType,
+      title: generateTitleFromUrl(url),
+      description,
+      url,
+      metadata: {}
+    });
+  }
+  
+  // 批量插入数据库
+  const { data: insertedData, error: insertError } = await supabase
+    .from('resources')
+    .insert(resourcesToInsert)
+    .select();
+  
+  if (insertError) {
+    // 批量插入失败，逐个插入以获取具体失败项
+    for (const item of resourcesToInsert) {
+      try {
+        const { data, error } = await supabase
+          .from('resources')
+          .insert(item)
+          .select()
+          .single();
+        
+        if (error) {
+          result.failed.push({ url: item.url!, error: error.message });
+        } else if (data) {
+          result.success.push(data);
+        }
+      } catch (e: any) {
+        result.failed.push({ url: item.url!, error: e.message || '未知错误' });
+      }
+    }
+  } else if (insertedData) {
+    result.success = insertedData;
+  }
+  
+  return result;
+}
+
 // 上传文件并创建资源
 export async function uploadFileResource(
   userId: string,
