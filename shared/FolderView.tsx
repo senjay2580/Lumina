@@ -24,7 +24,9 @@ import {
   ArchiveRestore,
   Download,
   Copy,
-  ArrowUpDown
+  ArrowUpDown,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 // @ts-ignore
 import { Github } from 'lucide-react';
@@ -386,6 +388,11 @@ export function FolderView({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sortByName, setSortByName] = useState(false); // 按名称排序
+  // 多选功能
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedResourceIds, setSelectedResourceIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const PAGE_SIZE = 100; // 每页加载 100 条
@@ -733,6 +740,34 @@ export function FolderView({
     }
   };
 
+  // 批量删除资源
+  const handleBatchDelete = async () => {
+    const idsToDelete = Array.from(selectedResourceIds);
+    if (idsToDelete.length === 0) return;
+
+    setIsDeletingBatch(true);
+    // 乐观更新 - 先移除 UI
+    const originalResources = [...resources];
+    setResources(prev => prev.filter(r => !selectedResourceIds.has(r.id)));
+    setTotalResourceCount(prev => prev - idsToDelete.length);
+    setSelectedResourceIds(new Set());
+    setIsSelectionMode(false);
+    setShowBatchDeleteConfirm(false);
+
+    try {
+      // 并发删除
+      await Promise.all(idsToDelete.map(id => deleteResource(id)));
+      onFolderUpdate?.();
+    } catch (err) {
+      // 回滚
+      setResources(originalResources);
+      setTotalResourceCount(prev => prev + idsToDelete.length);
+      console.error('Failed to batch delete resources:', err);
+    } finally {
+      setIsDeletingBatch(false);
+    }
+  };
+
   // 生成资源菜单�?
   const getResourceMenuItems = (resource: Resource): MenuItem[] => [
     menuItemGenerators.open(() => onResourceClick?.(resource)),
@@ -875,6 +910,45 @@ export function FolderView({
                 </div>
                 {/* 视图切换 */}
                 <div className="flex items-center gap-2">
+                  {/* 多选按钮 */}
+                  {!isSelectionMode ? (
+                    <Tooltip content="多选">
+                      <button
+                        onClick={() => setIsSelectionMode(true)}
+                        className="p-1.5 rounded-lg bg-gray-100 text-gray-500 hover:text-gray-700"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5" />
+                      </button>
+                    </Tooltip>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-500 px-2">已选 {selectedResourceIds.size}</span>
+                      <Tooltip content="取消多选">
+                        <button
+                          onClick={() => {
+                            setIsSelectionMode(false);
+                            setSelectedResourceIds(new Set());
+                          }}
+                          className="p-1.5 rounded-lg bg-gray-100 text-gray-500 hover:text-gray-700"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="删除选中">
+                        <button
+                          onClick={() => {
+                            if (selectedResourceIds.size === 0) return;
+                            setShowBatchDeleteConfirm(true);
+                          }}
+                          disabled={selectedResourceIds.size === 0}
+                          className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 disabled:opacity-30"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  )}
+                  
                   {/* 排序按钮 */}
                   <Tooltip content={sortByName ? '按时间排序' : '按名称排序'}>
                     <button
@@ -956,14 +1030,53 @@ export function FolderView({
                       />
                     ))}
                     {/* 资源 */}
-                    {sortedResources.map(resource => (
-                      <div
-                        key={resource.id}
-                        className="group grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center"
-                        onClick={() => onResourceClick?.(resource)}
-                      >
-                        <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-                          {resource.type === 'image' && resource.storage_path ? (
+                    {sortedResources.map(resource => {
+                      const isSelected = selectedResourceIds.has(resource.id);
+                      return (
+                        <div
+                          key={resource.id}
+                          className={`group grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer items-center ${
+                            isSelected ? 'bg-primary/5' : ''
+                          }`}
+                          onClick={(e) => {
+                            if (isSelectionMode) {
+                              e.stopPropagation();
+                              const newSelected = new Set(selectedResourceIds);
+                              if (isSelected) {
+                                newSelected.delete(resource.id);
+                              } else {
+                                newSelected.add(resource.id);
+                              }
+                              setSelectedResourceIds(newSelected);
+                            } else {
+                              onResourceClick?.(resource);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+                            {/* 复选框 */}
+                            {isSelectionMode && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const newSelected = new Set(selectedResourceIds);
+                                  if (isSelected) {
+                                    newSelected.delete(resource.id);
+                                  } else {
+                                    newSelected.add(resource.id);
+                                  }
+                                  setSelectedResourceIds(newSelected);
+                                }}
+                                className="flex-shrink-0"
+                              >
+                                {isSelected ? (
+                                  <CheckSquare className="w-4 h-4 text-primary" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-gray-400" />
+                                )}
+                              </button>
+                            )}
+                            {resource.type === 'image' && resource.storage_path ? (
                             <img src={getFileUrl(resource.storage_path)} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0" />
                           ) : resource.type === 'github' ? (
                             <Github className="w-4 h-4 text-gray-700 flex-shrink-0" />
@@ -993,7 +1106,8 @@ export function FolderView({
                           <ResourceItemMenu items={getResourceMenuItems(resource)} />
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                     {/* 加载更多指示器 */}
                     {isLoadingMore && (
                       <div className="flex items-center justify-center py-4">
@@ -1085,7 +1199,7 @@ export function FolderView({
             )}
           </motion.div>
 
-          {/* 删除确认弹窗 */}
+          {/* 删除文件夹确认弹窗 */}
           <ConfirmModal
             isOpen={showDeleteConfirm}
             onClose={() => setShowDeleteConfirm(false)}
@@ -1096,6 +1210,19 @@ export function FolderView({
             cancelText="取消"
             type="danger"
             loading={isDeleting}
+          />
+
+          {/* 批量删除确认弹窗 */}
+          <ConfirmModal
+            isOpen={showBatchDeleteConfirm}
+            onClose={() => setShowBatchDeleteConfirm(false)}
+            onConfirm={handleBatchDelete}
+            title="批量删除资源"
+            message={`确定要删除选中的 ${selectedResourceIds.size} 个资源吗？删除后将移入回收站。`}
+            confirmText="删除"
+            cancelText="取消"
+            type="danger"
+            loading={isDeletingBatch}
           />
         </>
       )}
