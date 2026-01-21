@@ -582,6 +582,44 @@ export async function emptyResourceTrash(userId: string): Promise<void> {
   if (error) throw error;
 }
 
+// 自动清理回收站30天前的资源（永久删除）
+export async function autoCleanupOldTrash(userId: string): Promise<number> {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
+  // 获取30天前删除的资源
+  const { data: oldDeletedResources, error: fetchError } = await supabase
+    .from('resources')
+    .select('*')
+    .eq('user_id', userId)
+    .not('deleted_at', 'is', null)
+    .lt('deleted_at', thirtyDaysAgo.toISOString());
+  
+  if (fetchError) throw fetchError;
+  if (!oldDeletedResources || oldDeletedResources.length === 0) return 0;
+  
+  // 删除所有文件
+  const filePaths = oldDeletedResources
+    .filter(r => r.storage_path)
+    .map(r => r.storage_path as string);
+  
+  if (filePaths.length > 0) {
+    await supabase.storage.from('resources').remove(filePaths);
+  }
+  
+  // 永久删除数据库记录
+  const { error: deleteError } = await supabase
+    .from('resources')
+    .delete()
+    .eq('user_id', userId)
+    .not('deleted_at', 'is', null)
+    .lt('deleted_at', thirtyDaysAgo.toISOString());
+  
+  if (deleteError) throw deleteError;
+  
+  return oldDeletedResources.length;
+}
+
 // 更新资源
 export async function updateResource(
   resourceId: string,

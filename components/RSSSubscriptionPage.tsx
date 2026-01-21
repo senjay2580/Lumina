@@ -16,7 +16,8 @@ import {
   MessageCircle,
   Download,
   FileText,
-  Circle
+  Circle,
+  Calendar
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Modal, Confirm, Button, Tooltip } from '../shared'
@@ -40,12 +41,9 @@ import {
   addWeweAccount,
   syncWeweToSubscriptions,
   generateWeweRssUrl,
-  getSubscriptionItems,
   toggleAutoSync,
   syncSubscriptionToResources,
-  syncAllAutoSyncSubscriptions,
-  markItemRead,
-  markAllItemsRead
+  syncAllAutoSyncSubscriptions
 } from '../lib/rss-subscription'
 import { getUserCredential, saveCredential } from '../lib/user-credentials'
 import { supabase } from '../lib/supabase'
@@ -90,8 +88,11 @@ export default function RSSSubscriptionPage({ userId }: Props) {
   
   // 文章列表
   const [expandedSubId, setExpandedSubId] = useState<string | null>(null)
-  const [articles, setArticles] = useState<RSSItem[]>([])
+  const [articles, setArticles] = useState<RSSItem[]>([])  // 当前已加载的文章
+  const [allArticles, setAllArticles] = useState<RSSItem[]>([])  // 所有可用文章（用于分页）
   const [loadingArticles, setLoadingArticles] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const ARTICLES_PER_PAGE = 15  // 每页显示15篇
   
   // 同步状态
   const [syncingSubId, setSyncingSubId] = useState<string | null>(null)
@@ -475,16 +476,21 @@ export default function RSSSubscriptionPage({ userId }: Props) {
     if (expandedSubId === subscriptionId) {
       setExpandedSubId(null)
       setArticles([])
+      setAllArticles([])
       return
     }
     
     setExpandedSubId(subscriptionId)
     setLoadingArticles(true)
     setArticles([])
+    setAllArticles([])
     
     try {
-      const items = await getSubscriptionItems(subscriptionId, 20)
-      setArticles(items)
+      const items = await refreshSubscription(subscriptionId)
+      // 保存所有文章
+      setAllArticles(items)
+      // 只显示前15篇
+      setArticles(items.slice(0, ARTICLES_PER_PAGE))
     } catch (err) {
       console.error('加载文章失败:', err)
     } finally {
@@ -492,15 +498,26 @@ export default function RSSSubscriptionPage({ userId }: Props) {
     }
   }
 
+  // 加载更多文章
+  const handleLoadMore = () => {
+    setLoadingMore(true)
+    try {
+      const currentLength = articles.length
+      const moreArticles = allArticles.slice(currentLength, currentLength + ARTICLES_PER_PAGE)
+      setArticles(prev => [...prev, ...moreArticles])
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
   // 刷新并加载文章
   const handleRefreshAndLoad = async (subscriptionId: string) => {
     setRefreshingId(subscriptionId)
     try {
-      await refreshSubscription(subscriptionId)
+      const items = await refreshSubscription(subscriptionId)
       loadSubscriptions()
-      // 如果当前展开的就是这个订阅，重新加载文章
+      // 如果当前展开的就是这个订阅，更新文章列表
       if (expandedSubId === subscriptionId) {
-        const items = await getSubscriptionItems(subscriptionId, 20)
         setArticles(items)
       }
     } catch (err) {
@@ -523,21 +540,27 @@ export default function RSSSubscriptionPage({ userId }: Props) {
     }
   }
 
-  // 手动同步单个订阅到资源中心
+  // 手动同步单个订阅到资源中心（同步全量文章）
   const handleSyncToResources = async (subscriptionId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     setSyncingSubId(subscriptionId)
     try {
-      // 先刷新获取最新文章
-      await refreshSubscription(subscriptionId)
-      // 同步到资源中心
-      const synced = await syncSubscriptionToResources(subscriptionId)
+      // 同步全量文章（allArticles），不是当前已加载的
+      const articlesToSync = expandedSubId === subscriptionId ? allArticles : await refreshSubscription(subscriptionId)
+      const result = await syncSubscriptionToResources(subscriptionId, articlesToSync)
       loadSubscriptions()
-      if (expandedSubId === subscriptionId) {
-        const items = await getSubscriptionItems(subscriptionId, 20)
-        setArticles(items)
+      
+      // 根据结果显示不同的提示
+      if (result.synced > 0) {
+        const msg = result.skipped > 0 
+          ? `已同步 ${result.synced} 篇文章，${result.skipped} 篇已存在`
+          : `已同步 ${result.synced} 篇文章到资源中心`
+        setSyncResult({ open: true, success: true, message: msg })
+      } else if (result.skipped > 0) {
+        setSyncResult({ open: true, success: true, message: `${result.skipped} 篇文章已存在，未重复添加` })
+      } else {
+        setSyncResult({ open: true, success: true, message: '没有新文章需要同步' })
       }
-      setSyncResult({ open: true, success: true, message: `已同步 ${synced} 篇文章到资源中心` })
     } catch (err) {
       console.error('同步失败:', err)
       setSyncResult({ open: true, success: false, message: '同步失败，请稍后重试' })
@@ -552,12 +575,48 @@ export default function RSSSubscriptionPage({ userId }: Props) {
     try {
       const result = await syncAllAutoSyncSubscriptions(userId)
       loadSubscriptions()
-      setSyncResult({ open: true, success: true, message: `已同步 ${result.synced} 篇文章到资源中心` })
+      // 根据结果显示不同的提示
+      if (result.synced > 0) {
+        const msg = result.skipped > 0 
+          ? `已同步 ${result.synced} 篇文章，${result.skipped} 篇已存在`
+          : `已同步 ${result.synced} 篇文章到资源中心`
+        setSyncResult({ open: true, success: true, message: msg })
+      } else if (result.skipped > 0) {
+        setSyncResult({ open: true, success: true, message: `${result.skipped} 篇文章已存在，未重复添加` })
+      } else {
+        setSyncResult({ open: true, success: true, message: '没有新文章需要同步' })
+      }
     } catch (err) {
       console.error('同步失败:', err)
       setSyncResult({ open: true, success: false, message: '同步失败，请稍后重试' })
     } finally {
       setSyncingAll(false)
+    }
+  }
+
+  // 刷新所有订阅
+  const [refreshingAll, setRefreshingAll] = useState(false)
+  const handleRefreshAll = async () => {
+    if (subscriptions.length === 0) return
+    setRefreshingAll(true)
+    try {
+      // 并发刷新所有订阅
+      await Promise.all(
+        subscriptions.map(sub => refreshSubscription(sub.id).catch(err => {
+          console.error(`刷新订阅 ${sub.title} 失败:`, err)
+          return null
+        }))
+      )
+      loadSubscriptions()
+      // 如果当前展开了某个订阅，重新加载文章
+      if (expandedSubId) {
+        const items = await refreshSubscription(expandedSubId)
+        setArticles(items)
+      }
+    } catch (err) {
+      console.error('刷新失败:', err)
+    } finally {
+      setRefreshingAll(false)
     }
   }
 
@@ -589,6 +648,18 @@ export default function RSSSubscriptionPage({ userId }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* 刷新所有按钮 */}
+            {subscriptions.length > 0 && (
+              <Tooltip content="刷新所有订阅">
+                <button
+                  onClick={handleRefreshAll}
+                  disabled={refreshingAll}
+                  className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-5 h-5 ${refreshingAll ? 'animate-spin' : ''}`} />
+                </button>
+              </Tooltip>
+            )}
             {/* 账号状态指示器 */}
             {weweRssUrl && weweAuthCode && accountStatus && (
               <Tooltip content={accountStatus.message}>
@@ -830,54 +901,29 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                       </div>
                     ) : (
                       <div className="divide-y divide-gray-100">
-                        {/* 全部标记已读按钮 */}
-                        {articles.some(a => !a.is_read) && (
-                          <div className="px-4 py-2 bg-gray-50 flex items-center justify-between">
-                            <span className="text-xs text-gray-500">
-                              {articles.filter(a => !a.is_read).length} 篇未读
-                            </span>
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation()
-                                await markAllItemsRead(sub.id)
-                                setArticles(prev => prev.map(a => ({ ...a, is_read: true })))
-                              }}
-                              className="text-xs text-primary hover:underline"
-                            >
-                              全部标记已读
-                            </button>
-                          </div>
-                        )}
-                        {articles.map((article) => (
+                        {articles.map((article) => {
+                          // 检查是否超过30天
+                          const isOld = article.pubDate ? (() => {
+                            const pubDate = new Date(article.pubDate)
+                            const thirtyDaysAgo = new Date()
+                            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+                            return pubDate < thirtyDaysAgo
+                          })() : false
+                          
+                          return (
                           <a
-                            key={article.id}
+                            key={article.guid}
                             href={article.link}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={async () => {
-                              if (!article.is_read) {
-                                await markItemRead(article.id)
-                                setArticles(prev => prev.map(a => 
-                                  a.id === article.id ? { ...a, is_read: true } : a
-                                ))
-                              }
-                            }}
-                            className={`flex items-start gap-3 p-4 hover:bg-white transition-colors ${
-                              article.is_read ? 'opacity-60' : ''
-                            }`}
+                            className="flex items-start gap-3 p-4 hover:bg-white transition-colors"
                           >
-                            {/* 未读指示器 */}
+                            {/* 文章图标 */}
                             <div className="flex-shrink-0 mt-1.5">
-                              {article.is_read ? (
-                                <FileText className="w-4 h-4 text-gray-300" />
-                              ) : (
-                                <Circle className="w-3 h-3 fill-primary text-primary" />
-                              )}
+                              <FileText className="w-4 h-4 text-gray-400" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <h4 className={`text-sm line-clamp-2 hover:text-primary transition-colors ${
-                                article.is_read ? 'font-normal text-gray-500' : 'font-medium text-gray-900'
-                              }`}>
+                              <h4 className="text-sm line-clamp-2 font-medium text-gray-900 hover:text-primary transition-colors">
                                 {article.title}
                               </h4>
                               {article.description && (
@@ -886,18 +932,52 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                                 </p>
                               )}
                               <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-                                {article.author && <span>{article.author}</span>}
-                                {article.pub_date && (
-                                  <span>{new Date(article.pub_date).toLocaleDateString('zh-CN')}</span>
+                                {article.pubDate && (
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" />
+                                    {formatTime(article.pubDate)}
+                                  </span>
                                 )}
-                                {article.is_synced && (
-                                  <span className="px-1.5 py-0.5 bg-blue-50 text-blue-500 rounded text-[10px]">已同步</span>
+                                {article.author && <span>作者：{article.author}</span>}
+                                {isOld && (
+                                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-medium">
+                                    超过30天，不同步
+                                  </span>
                                 )}
                               </div>
                             </div>
                             <ExternalLink className="w-4 h-4 text-gray-300 flex-shrink-0" />
                           </a>
-                        ))}
+                        )})
+                        }
+                        {/* 统计信息和加载更多按钮 */}
+                        {allArticles.length > 0 && (
+                          <div className="p-3 border-t border-gray-100 bg-gray-50/50">
+                            <div className="flex items-center justify-between text-xs text-gray-500">
+                              <span>共 {allArticles.length} 篇文章</span>
+                              <span>已加载 {articles.length} 篇</span>
+                            </div>
+                            {articles.length < allArticles.length && (
+                              <button
+                                onClick={handleLoadMore}
+                                disabled={loadingMore}
+                                className="w-full mt-2 py-2.5 rounded-lg bg-white hover:bg-gray-50 border border-gray-200 text-gray-600 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                              >
+                                {loadingMore ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    加载中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download className="w-4 h-4" />
+                                    加载更多
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

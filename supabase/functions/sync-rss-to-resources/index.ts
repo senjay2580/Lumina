@@ -137,28 +137,10 @@ Deno.serve(async (req) => {
 
     for (const subscription of subscriptions) {
       try {
-        // 1. 拉取最新文章
+        // 1. 拉取最新文章（直接到内存）
         const feedInfo = await parseFeed(subscription.feed_url)
         
-        // 2. 保存新文章到 rss_items
-        const records = feedInfo.items.map((item: any) => ({
-          subscription_id: subscription.id,
-          guid: item.guid,
-          title: item.title,
-          link: item.link,
-          description: item.description,
-          content: item.content,
-          author: item.author,
-          pub_date: item.pubDate,
-          is_read: false,
-          is_synced: false
-        }))
-
-        await supabase
-          .from('rss_items')
-          .upsert(records, { onConflict: 'subscription_id,guid', ignoreDuplicates: true })
-
-        // 更新订阅的最后获取时间
+        // 2. 更新订阅的最后获取时间
         await supabase
           .from('rss_subscriptions')
           .update({
@@ -168,23 +150,19 @@ Deno.serve(async (req) => {
           })
           .eq('id', subscription.id)
 
-        // 3. 获取未同步的文章
-        const { data: unsyncedItems } = await supabase
-          .from('rss_items')
-          .select('*')
-          .eq('subscription_id', subscription.id)
-          .eq('is_synced', false)
-          .order('pub_date', { ascending: false })
-          .limit(20)
-
-        if (!unsyncedItems || unsyncedItems.length === 0) {
-          results.push({ subscription: subscription.title, synced: 0 })
-          continue
-        }
+        // 3. 过滤30天前的文章
+        const thirtyDaysAgo = new Date()
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+        
+        const recentItems = feedInfo.items.filter(item => {
+          if (!item.pubDate) return true
+          const pubDate = new Date(item.pubDate)
+          return pubDate >= thirtyDaysAgo
+        })
 
         // 4. 同步到资源中心
         let synced = 0
-        for (const item of unsyncedItems) {
+        for (const item of recentItems) {
           // 检查是否已存在（按 URL）
           const { data: existingByUrl } = await supabase
             .from('resources')
@@ -195,31 +173,7 @@ Deno.serve(async (req) => {
             .maybeSingle()
 
           if (existingByUrl) {
-            // URL 已存在，标记为已同步
-            await supabase
-              .from('rss_items')
-              .update({ is_synced: true, synced_resource_id: existingByUrl.id })
-              .eq('id', item.id)
-            continue
-          }
-
-          // 检查是否已存在（按标题，同类型）
-          const { data: existingByTitle } = await supabase
-            .from('resources')
-            .select('id')
-            .eq('user_id', subscription.user_id)
-            .eq('type', 'article')
-            .eq('title', item.title)
-            .is('deleted_at', null)
-            .maybeSingle()
-
-          if (existingByTitle) {
-            // 标题已存在，标记为已同步
-            await supabase
-              .from('rss_items')
-              .update({ is_synced: true, synced_resource_id: existingByTitle.id })
-              .eq('id', item.id)
-            continue
+            continue // URL 已存在，跳过
           }
 
           // 创建新资源
@@ -228,32 +182,32 @@ Deno.serve(async (req) => {
           // 查找或创建对应的文件夹
           const folderId = await findOrCreateArticleFolder(supabase, subscription.user_id, sourceName)
           
+          const pubDate = item.pubDate ? new Date(item.pubDate) : null
+          const createdAt = pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString()
+          
           const { data: resource, error: resError } = await supabase
             .from('resources')
             .insert({
               user_id: subscription.user_id,
-              type: 'article', // 使用文章类型
+              type: 'article',
               title: item.title,
               description: item.description?.replace(/<[^>]*>/g, '').slice(0, 500) || null,
               url: item.link,
               folder_id: folderId, // 自动归类到文件夹
+              created_at: createdAt,
               metadata: {
                 source: 'rss',
                 subscription_id: subscription.id,
                 subscription_title: subscription.title,
                 source_type: subscription.source_type,
                 author: item.author,
-                pub_date: item.pub_date
+                pub_date: item.pubDate
               }
             })
             .select('id')
             .single()
 
           if (!resError && resource) {
-            await supabase
-              .from('rss_items')
-              .update({ is_synced: true, synced_resource_id: resource.id })
-              .eq('id', item.id)
             synced++
             totalSynced++
           }

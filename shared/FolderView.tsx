@@ -387,7 +387,7 @@ export function FolderView({
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [sortByName, setSortByName] = useState(false); // 按名称排序
+  const [sortAscending, setSortAscending] = useState(false); // 按时间升序（默认 false = 降序，最新在前）
   // 多选功能
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedResourceIds, setSelectedResourceIds] = useState<Set<string>>(new Set());
@@ -784,12 +784,22 @@ export function FolderView({
   const totalItems = subFolders.length + resources.length;
 
   // 排序后的数据
-  const sortedSubFolders = sortByName 
-    ? [...subFolders].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
-    : subFolders;
-  const sortedResources = sortByName
-    ? [...resources].sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
-    : resources;
+  const sortedSubFolders = [...subFolders].sort((a, b) => {
+    const timeA = new Date(a.created_at).getTime();
+    const timeB = new Date(b.created_at).getTime();
+    return sortAscending ? timeA - timeB : timeB - timeA;
+  });
+  
+  const sortedResources = [...resources].sort((a, b) => {
+    // 文章用 pub_date，其他用 created_at
+    const dateA = a.type === 'article' && a.metadata?.pub_date 
+      ? new Date(a.metadata.pub_date).getTime() 
+      : new Date(a.created_at).getTime();
+    const dateB = b.type === 'article' && b.metadata?.pub_date 
+      ? new Date(b.metadata.pub_date).getTime() 
+      : new Date(b.created_at).getTime();
+    return sortAscending ? dateA - dateB : dateB - dateA;
+  });
 
   return createPortal(
     <AnimatePresence>
@@ -950,11 +960,11 @@ export function FolderView({
                   )}
                   
                   {/* 排序按钮 */}
-                  <Tooltip content={sortByName ? '按时间排序' : '按名称排序'}>
+                  <Tooltip content={sortAscending ? '最新在前' : '最早在前'}>
                     <button
-                      onClick={() => setSortByName(!sortByName)}
+                      onClick={() => setSortAscending(!sortAscending)}
                       className={`p-1.5 rounded-lg transition-all ${
-                        sortByName 
+                        sortAscending 
                           ? 'bg-primary/10 text-primary' 
                           : 'bg-gray-100 text-gray-500 hover:text-gray-700'
                       }`}

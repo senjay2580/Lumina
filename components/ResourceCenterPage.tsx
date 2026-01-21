@@ -86,7 +86,8 @@ import {
   archiveResource,
   unarchiveResource,
   downloadFile,
-  canOpenInViewer
+  canOpenInViewer,
+  autoCleanupOldTrash
 } from '../lib/resources';
 import { fetchRecommendedResources, fetchDetailsForResources, fetchFeaturedProjects, groupByYear, formatStars, setGithubToken, type RecommendedResource, type FeaturedCategory } from '../lib/recommended-resources';
 import { getDefaultProvider, type AIProvider } from '../lib/ai-providers';
@@ -331,6 +332,17 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
   useEffect(() => {
     setLoading(true);
     loadData();
+    
+    // 首次加载时自动清理30天前的回收站资源
+    if (userId && !currentFolderId) {
+      autoCleanupOldTrash(userId).then(count => {
+        if (count > 0) {
+          console.log(`自动清理了 ${count} 个30天前的回收站资源`);
+        }
+      }).catch(err => {
+        console.error('自动清理回收站失败:', err);
+      });
+    }
   }, [userId, showArchived, currentFolderId]);
 
   // 导航到文件夹
@@ -368,10 +380,26 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
   // const handleCreateFolder = async () => { ... }
 
   // 过滤资源 - 使用 useMemo 优化（只根据搜索词过滤，类型过滤已在 useEffect 中处理）
+  // 对文章类型按发布日期排序，其他类型按创建时间排序
   const filteredResources = React.useMemo(() => {
-    if (!searchQuery) return resources;
-    const query = searchQuery.toLowerCase();
-    return resources.filter(r => r.title.toLowerCase().includes(query));
+    let result = resources;
+    
+    // 搜索过滤
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(r => r.title.toLowerCase().includes(query));
+    }
+    
+    // 按日期排序：文章用 pub_date，其他用 created_at
+    return [...result].sort((a, b) => {
+      const dateA = a.type === 'article' && a.metadata?.pub_date 
+        ? new Date(a.metadata.pub_date).getTime() 
+        : new Date(a.created_at).getTime();
+      const dateB = b.type === 'article' && b.metadata?.pub_date 
+        ? new Date(b.metadata.pub_date).getTime() 
+        : new Date(b.created_at).getTime();
+      return dateB - dateA; // 降序，最新的在前
+    });
   }, [resources, searchQuery]);
 
   // 过滤文件夹 - 使用 useMemo 优化
