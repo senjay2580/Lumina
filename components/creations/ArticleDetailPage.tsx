@@ -88,9 +88,15 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   });
   const [ttsIdx, setTtsIdx] = useState(0);
   const [ttsTotal, setTtsTotal] = useState(0);
+  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [ttsVoiceURI, setTtsVoiceURI] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem('lumina:tts:voice') || '';
+  });
   const ttsSegmentsRef = useRef<HTMLElement[]>([]);
   const ttsCurrentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const ttsCancelledRef = useRef(false);
+  const ttsOriginalHtmlRef = useRef<{ el: HTMLElement; html: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -174,16 +180,112 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
   const ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
+  // 加载可用语音 + 自动挑选最优中文/英文神经语音
+  useEffect(() => {
+    if (!ttsAvailable) return;
+    const refresh = () => {
+      const list = window.speechSynthesis.getVoices();
+      setTtsVoices(list);
+    };
+    refresh();
+    window.speechSynthesis.addEventListener('voiceschanged', refresh);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', refresh);
+  }, [ttsAvailable]);
+
+  const pickBestVoice = useCallback(
+    (text: string): SpeechSynthesisVoice | null => {
+      if (ttsVoices.length === 0) return null;
+      // 用户手动选择优先
+      if (ttsVoiceURI) {
+        const m = ttsVoices.find((v) => v.voiceURI === ttsVoiceURI);
+        if (m) return m;
+      }
+      const isChinese = /[一-龥]/.test(text);
+      const candidates = ttsVoices.filter((v) =>
+        isChinese ? v.lang.toLowerCase().startsWith('zh') : v.lang.toLowerCase().startsWith('en')
+      );
+      // 倾向更自然的神经语音：Online > Natural > Neural > Premium > Enhanced
+      const preferKeywords = ['Online', 'Natural', 'Neural', 'Premium', 'Enhanced', 'Wavenet'];
+      for (const kw of preferKeywords) {
+        const found = candidates.find((v) => v.name.includes(kw));
+        if (found) return found;
+      }
+      // 中文中再优先 Xiaoxiao / Yunxi / Yunjian / Xiaoyi
+      const chinesePref = ['Xiaoxiao', 'Yunxi', 'Yunjian', 'Xiaoyi', 'Yunyang', 'Yunxia'];
+      for (const kw of chinesePref) {
+        const found = candidates.find((v) => v.name.includes(kw));
+        if (found) return found;
+      }
+      return candidates[0] || ttsVoices[0];
+    },
+    [ttsVoices, ttsVoiceURI]
+  );
+
+  // 持久化 voice 选择
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (ttsVoiceURI) window.localStorage.setItem('lumina:tts:voice', ttsVoiceURI);
+  }, [ttsVoiceURI]);
+
+  // 把段落文本按字符（或英文词）拆分为可高亮的 spans
+  const wrapSegmentForHighlight = useCallback((el: HTMLElement) => {
+    if (ttsOriginalHtmlRef.current && ttsOriginalHtmlRef.current.el !== el) {
+      // 还原上一段
+      const { el: prev, html } = ttsOriginalHtmlRef.current;
+      prev.innerHTML = html;
+    }
+    if (ttsOriginalHtmlRef.current?.el === el) return; // 已包装
+
+    const text = el.textContent || '';
+    const html = el.innerHTML;
+    el.innerHTML = '';
+    let offset = 0;
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      // 英文词整词包一个 span（提升 onboundary 命中率）
+      if (/[a-zA-Z0-9]/.test(ch)) {
+        let j = i;
+        while (j < text.length && /[a-zA-Z0-9'\-]/.test(text[j])) j++;
+        const span = document.createElement('span');
+        span.setAttribute('data-tts-c', String(offset));
+        span.setAttribute('data-tts-l', String(j - i));
+        span.textContent = text.slice(i, j);
+        el.appendChild(span);
+        offset += j - i;
+        i = j;
+      } else {
+        const span = document.createElement('span');
+        span.setAttribute('data-tts-c', String(offset));
+        span.setAttribute('data-tts-l', String(ch.length));
+        span.textContent = ch;
+        el.appendChild(span);
+        offset += ch.length;
+        i++;
+      }
+    }
+    ttsOriginalHtmlRef.current = { el, html };
+  }, []);
+
+  const restoreSegment = useCallback(() => {
+    if (ttsOriginalHtmlRef.current) {
+      const { el, html } = ttsOriginalHtmlRef.current;
+      el.innerHTML = html;
+      ttsOriginalHtmlRef.current = null;
+    }
+  }, []);
+
   const stopTts = useCallback(() => {
     ttsCancelledRef.current = true;
     if (ttsAvailable) window.speechSynthesis.cancel();
     if (ttsSegmentsRef.current.length) {
       ttsSegmentsRef.current.forEach((el) => el.classList.remove('tts-active'));
     }
+    restoreSegment();
     setTtsState('idle');
     setTtsIdx(0);
     ttsCurrentUtteranceRef.current = null;
-  }, [ttsAvailable]);
+  }, [ttsAvailable, restoreSegment]);
 
   const speakSegment = useCallback(
     (idx: number) => {
@@ -194,10 +296,9 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         return;
       }
       const el = segs[idx];
-      // 高亮当前段
       segs.forEach((e) => e.classList.remove('tts-active'));
       el.classList.add('tts-active');
-      // 视图滚动到段（仅当不在视口）
+      // 视图滚动
       const rect = el.getBoundingClientRect();
       const container = scrollRef.current;
       if (container) {
@@ -213,21 +314,50 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
       const text = el.textContent || '';
       if (!text.trim()) {
-        // 空文本跳过
         setTtsIdx(idx + 1);
         speakSegment(idx + 1);
         return;
       }
+
+      // 把段落拆分为字符 span 用于同步高亮
+      wrapSegmentForHighlight(el);
+
       const u = new SpeechSynthesisUtterance(text);
       u.rate = ttsRate;
       u.lang = /[一-龥]/.test(text) ? 'zh-CN' : 'en-US';
+      const voice = pickBestVoice(text);
+      if (voice) u.voice = voice;
+
+      // 字符级同步高亮
+      u.onboundary = (e) => {
+        if (ttsCancelledRef.current) return;
+        if (e.name && e.name !== 'word' && e.name !== 'sentence') return;
+        const charIdx = e.charIndex;
+        const spans = el.querySelectorAll<HTMLElement>('[data-tts-c]');
+        spans.forEach((s) => {
+          const o = Number(s.getAttribute('data-tts-c'));
+          const len = Number(s.getAttribute('data-tts-l') || '1');
+          if (o + len > charIdx && o <= charIdx) {
+            s.classList.add('tts-char-active');
+          } else if (o + len <= charIdx) {
+            s.classList.add('tts-char-spoken');
+            s.classList.remove('tts-char-active');
+          } else {
+            s.classList.remove('tts-char-active');
+            s.classList.remove('tts-char-spoken');
+          }
+        });
+      };
       u.onend = () => {
+        // 还原本段 HTML 再继续
+        restoreSegment();
         if (ttsCancelledRef.current) return;
         const next = idx + 1;
         setTtsIdx(next);
         speakSegment(next);
       };
       u.onerror = () => {
+        restoreSegment();
         if (ttsCancelledRef.current) return;
         const next = idx + 1;
         setTtsIdx(next);
@@ -236,7 +366,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       ttsCurrentUtteranceRef.current = u;
       window.speechSynthesis.speak(u);
     },
-    [ttsAvailable, ttsRate, stopTts]
+    [ttsAvailable, ttsRate, stopTts, wrapSegmentForHighlight, restoreSegment, pickBestVoice]
   );
 
   const startTts = useCallback(() => {
@@ -698,6 +828,33 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                       <option value="2">2x</option>
                     </select>
                   </div>
+                  {ttsVoices.length > 0 && (
+                    <div className="article-tts-voice" title="语音">
+                      <select
+                        value={ttsVoiceURI}
+                        onChange={(e) => setTtsVoiceURI(e.target.value)}
+                        aria-label="朗读语音"
+                      >
+                        <option value="">自动（推荐自然语音）</option>
+                        {ttsVoices
+                          .filter((v) => v.lang.toLowerCase().startsWith('zh') || v.lang.toLowerCase().startsWith('en'))
+                          .sort((a, b) => {
+                            // 把含 Online/Natural/Neural 的排前面
+                            const score = (n: string) =>
+                              /Online|Natural|Neural|Premium|Enhanced|Wavenet/i.test(n) ? 0 : 1;
+                            return score(a.name) - score(b.name);
+                          })
+                          .map((v) => {
+                            const isPremium = /Online|Natural|Neural|Premium|Enhanced|Wavenet/i.test(v.name);
+                            return (
+                              <option key={v.voiceURI} value={v.voiceURI}>
+                                {isPremium ? '★ ' : ''}{v.name} ({v.lang})
+                              </option>
+                            );
+                          })}
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1615,12 +1772,50 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           padding: 0 4px;
         }
 
-        /* TTS 高亮当前段 */
+        /* TTS 高亮当前段（柔和外晕） */
         .article-prose .tts-active {
-          background: linear-gradient(120deg, rgba(244,217,204,0.55), rgba(244,217,204,0.25));
+          background: linear-gradient(120deg, rgba(244,217,204,0.18), rgba(244,217,204,0.06));
           border-radius: 6px;
-          box-shadow: 0 0 0 4px rgba(244,217,204,0.4);
+          box-shadow: 0 0 0 6px rgba(244,217,204,0.18);
           transition: background 0.2s, box-shadow 0.2s;
+        }
+        /* TTS 字符级高亮：当前正在朗读的字 */
+        .article-prose .tts-char-active {
+          background: linear-gradient(120deg, var(--accent-soft), rgba(244,217,204,0.5));
+          color: var(--accent-deep);
+          border-radius: 4px;
+          padding: 0 1px;
+          transition: background 0.12s ease;
+        }
+        /* 已读过的字 */
+        .article-prose .tts-char-spoken {
+          color: var(--ink-muted);
+          opacity: 0.85;
+        }
+
+        /* 语音选择 */
+        .article-tts-voice {
+          display: inline-flex;
+          align-items: center;
+          padding: 0 8px;
+          height: 36px;
+          border: 1px solid var(--rule);
+          border-radius: 8px;
+          background: rgba(255,255,255,0.6);
+          color: var(--ink-muted);
+          font-size: 12px;
+          max-width: 200px;
+        }
+        .article-tts-voice select {
+          background: transparent;
+          border: none;
+          outline: none;
+          font: inherit;
+          color: var(--ink);
+          cursor: pointer;
+          padding: 0 4px;
+          max-width: 180px;
+          text-overflow: ellipsis;
         }
 
         /* TTS 进度条（底部固定） */
