@@ -165,61 +165,129 @@ export function importedMarkdownToContent(md: string): string {
   return markdownToHtml(md);
 }
 
-// 高清导出 PNG：基于 html-to-image，pixelRatio 默认 2.5x
+// 把元素克隆到一个离屏宽幅容器（带留白），用于导出
+// 这样导出时不受当前阅读宽度影响，且四周有充足留白
+function buildExportFrame(
+  source: HTMLElement,
+  options: { contentWidth?: number; padding?: number; backgroundColor?: string }
+): { frame: HTMLElement; cleanup: () => void } {
+  const contentWidth = options.contentWidth ?? 880;
+  const padding = options.padding ?? 96;
+  const bg = options.backgroundColor ?? '#FCFBF7';
+
+  const frame = document.createElement('div');
+  frame.style.position = 'fixed';
+  frame.style.left = '-99999px';
+  frame.style.top = '0';
+  frame.style.width = `${contentWidth + padding * 2}px`;
+  frame.style.padding = `${padding}px`;
+  frame.style.background = bg;
+  frame.style.boxSizing = 'border-box';
+  frame.style.zIndex = '-1';
+  frame.style.pointerEvents = 'none';
+
+  const inner = document.createElement('div');
+  inner.style.width = `${contentWidth}px`;
+  inner.style.maxWidth = '100%';
+  inner.style.margin = '0 auto';
+
+  // 深拷贝节点，避免影响原节点
+  const clone = source.cloneNode(true) as HTMLElement;
+  // 重置克隆的宽度限制和 transition
+  clone.style.maxWidth = 'none';
+  clone.style.width = '100%';
+  clone.style.transition = 'none';
+
+  inner.appendChild(clone);
+  frame.appendChild(inner);
+  document.body.appendChild(frame);
+
+  return {
+    frame,
+    cleanup: () => {
+      if (frame.parentNode) frame.parentNode.removeChild(frame);
+    }
+  };
+}
+
+// 高清导出 PNG
 export async function exportElementToPng(
   el: HTMLElement,
   filename: string,
-  options?: { pixelRatio?: number; backgroundColor?: string }
+  options?: { pixelRatio?: number; backgroundColor?: string; contentWidth?: number; padding?: number }
 ): Promise<void> {
   const { toPng } = await import('html-to-image');
-  const dataUrl = await toPng(el, {
-    pixelRatio: options?.pixelRatio ?? 2.5,
-    backgroundColor: options?.backgroundColor ?? '#FAF9F5',
-    cacheBust: true
+  const { frame, cleanup } = buildExportFrame(el, {
+    contentWidth: options?.contentWidth ?? 880,
+    padding: options?.padding ?? 96,
+    backgroundColor: options?.backgroundColor
   });
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  try {
+    // 等下一帧让样式应用
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    const dataUrl = await toPng(frame, {
+      pixelRatio: options?.pixelRatio ?? 3,
+      backgroundColor: options?.backgroundColor ?? '#FCFBF7',
+      cacheBust: true,
+      width: frame.offsetWidth,
+      height: frame.offsetHeight
+    });
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } finally {
+    cleanup();
+  }
 }
 
 // 导出 PDF：A4 / 多页拼接
 export async function exportElementToPdf(
   el: HTMLElement,
   filename: string,
-  options?: { backgroundColor?: string }
+  options?: { backgroundColor?: string; contentWidth?: number; padding?: number }
 ): Promise<void> {
   const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
     import('html2canvas'),
     import('jspdf')
   ]);
 
-  const canvas = await html2canvas(el, {
-    scale: 2,
-    useCORS: true,
-    backgroundColor: options?.backgroundColor ?? '#FAF9F5',
-    windowWidth: el.scrollWidth,
-    windowHeight: el.scrollHeight
+  const { frame, cleanup } = buildExportFrame(el, {
+    contentWidth: options?.contentWidth ?? 720,
+    padding: options?.padding ?? 64,
+    backgroundColor: options?.backgroundColor
   });
+  try {
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    const canvas = await html2canvas(frame, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: options?.backgroundColor ?? '#FCFBF7',
+      windowWidth: frame.scrollWidth,
+      windowHeight: frame.scrollHeight
+    });
 
-  const imgData = canvas.toDataURL('image/jpeg', 0.95);
-  const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const ratio = canvas.width / pageWidth;
-  const imgHeightPt = canvas.height / ratio;
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const ratio = canvas.width / pageWidth;
+    const imgHeightPt = canvas.height / ratio;
 
-  let position = 0;
-  let remaining = imgHeightPt;
-  while (remaining > 0) {
-    pdf.addImage(imgData, 'JPEG', 0, position, pageWidth, imgHeightPt);
-    remaining -= pageHeight;
-    if (remaining > 0) {
-      pdf.addPage();
-      position -= pageHeight;
+    let position = 0;
+    let remaining = imgHeightPt;
+    while (remaining > 0) {
+      pdf.addImage(imgData, 'JPEG', 0, position, pageWidth, imgHeightPt);
+      remaining -= pageHeight;
+      if (remaining > 0) {
+        pdf.addPage();
+        position -= pageHeight;
+      }
     }
+    pdf.save(filename);
+  } finally {
+    cleanup();
   }
-  pdf.save(filename);
 }

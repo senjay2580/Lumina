@@ -123,10 +123,35 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     };
   }, [articleId, initial]);
 
-  const html = useMemo(() => {
-    if (!article?.content) return '';
-    return marked.parse(article.content, { async: false }) as string;
+  // 解析 HTML 时同步注入 heading id 并生成 TOC，保证 id 在首次渲染就在 DOM 上
+  const { html, tocFromHtml } = useMemo(() => {
+    if (!article?.content) return { html: '', tocFromHtml: [] as TocItem[] };
+    const raw = marked.parse(article.content, { async: false }) as string;
+    if (typeof DOMParser === 'undefined') return { html: raw, tocFromHtml: [] };
+    const doc = new DOMParser().parseFromString(`<div id="__article_root">${raw}</div>`, 'text/html');
+    const root = doc.querySelector('#__article_root');
+    if (!root) return { html: raw, tocFromHtml: [] };
+    const headings = root.querySelectorAll<HTMLElement>('h1, h2, h3');
+    const seen = new Set<string>();
+    const items: TocItem[] = [];
+    headings.forEach((h, idx) => {
+      const text = h.textContent?.trim() || '';
+      if (!text) return;
+      let id = slugify(text, idx);
+      let suffix = 1;
+      const baseId = id;
+      while (seen.has(id)) id = `${baseId}-${++suffix}`;
+      seen.add(id);
+      h.setAttribute('id', id);
+      const level = Number(h.tagName.substring(1));
+      items.push({ id, text, level });
+    });
+    return { html: root.innerHTML, tocFromHtml: items };
   }, [article?.content]);
+
+  useEffect(() => {
+    setToc(tocFromHtml);
+  }, [tocFromHtml]);
 
   const wordCount = useMemo(() => {
     if (!article?.content) return 0;
@@ -191,17 +216,21 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     return () => el.removeEventListener('scroll', onScroll);
   }, [html, toc.length]);
 
-  // 修正版滚动到标题：基于 boundingRect 计算 scroll container 内的偏移
+  // 滚动到标题：用 getBoundingClientRect 在 scroll 容器内计算偏移
   const scrollToHeading = useCallback((id: string) => {
     const container = scrollRef.current;
-    const target = articleRef.current?.querySelector<HTMLElement>(
-      `#${CSS.escape(id)}`
-    );
-    if (!container || !target) return;
-    const targetTop = target.getBoundingClientRect().top;
-    const containerTop = container.getBoundingClientRect().top;
-    const delta = targetTop - containerTop + container.scrollTop;
-    container.scrollTo({ top: delta - 96, behavior: 'smooth' });
+    if (!container) return;
+    // 优先 getElementById，再退到 querySelector
+    let target: HTMLElement | null = null;
+    if (articleRef.current) {
+      target = articleRef.current.querySelector<HTMLElement>(`[id="${id}"]`);
+    }
+    if (!target) target = document.getElementById(id);
+    if (!target) return;
+    const targetRect = target.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const newTop = container.scrollTop + (targetRect.top - containerRect.top) - 96;
+    container.scrollTo({ top: Math.max(0, newTop), behavior: 'smooth' });
     setShowTocMobile(false);
   }, []);
 
@@ -266,7 +295,9 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     try {
       await exportElementToPng(articleBodyRef.current, `${baseFileName}.png`, {
         pixelRatio: 3,
-        backgroundColor: '#FCFBF7'
+        backgroundColor: '#FCFBF7',
+        contentWidth: 880,
+        padding: 120
       });
     } catch (err) {
       console.error('PNG export failed:', err);
@@ -282,7 +313,9 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     setShowExportMenu(false);
     try {
       await exportElementToPdf(articleBodyRef.current, `${baseFileName}.pdf`, {
-        backgroundColor: '#FCFBF7'
+        backgroundColor: '#FCFBF7',
+        contentWidth: 720,
+        padding: 72
       });
     } catch (err) {
       console.error('PDF export failed:', err);
@@ -313,16 +346,17 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
   return (
     <div className="article-page w-full h-full relative">
-      {/* 背景：极光 + 几何装饰 */}
+      {/* 背景：极光 + 同心圆环 + 流式线条 */}
       <div className="article-bg-layer" aria-hidden="true">
         <div className="article-aurora-blob article-aurora-blob-1" />
         <div className="article-aurora-blob article-aurora-blob-2" />
         <div className="article-aurora-blob article-aurora-blob-3" />
-        {/* SVG 装饰：远景大圆 + 点阵 + 渐变描边 */}
-        <svg className="article-bg-svg article-bg-svg-1" viewBox="0 0 600 600" aria-hidden="true">
+
+        {/* 右上：同心圆环（accent 渐变描边） */}
+        <svg className="article-bg-rings" viewBox="0 0 600 600" aria-hidden="true">
           <defs>
             <linearGradient id="ringGrad" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0%" stopColor="#D97757" stopOpacity="0.35" />
+              <stop offset="0%" stopColor="#D97757" stopOpacity="0.32" />
               <stop offset="100%" stopColor="#D97757" stopOpacity="0" />
             </linearGradient>
           </defs>
@@ -330,23 +364,70 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           <circle cx="300" cy="300" r="220" fill="none" stroke="url(#ringGrad)" strokeWidth="0.8" />
           <circle cx="300" cy="300" r="160" fill="none" stroke="url(#ringGrad)" strokeWidth="0.6" />
         </svg>
-        <svg className="article-bg-svg article-bg-svg-2" viewBox="0 0 100 100" aria-hidden="true">
+
+        {/* 顶部：Windsurf 风格流式线条 */}
+        <svg
+          className="article-bg-flow"
+          viewBox="0 0 1600 320"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
           <defs>
-            <pattern id="dotGrid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
-              <circle cx="2" cy="2" r="0.6" fill="#1F1E1D" fillOpacity="0.10" />
-            </pattern>
+            <linearGradient id="flowGrad1" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#D97757" stopOpacity="0" />
+              <stop offset="50%" stopColor="#D97757" stopOpacity="0.5" />
+              <stop offset="100%" stopColor="#D97757" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="flowGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#C58A6F" stopOpacity="0" />
+              <stop offset="50%" stopColor="#C58A6F" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#C58A6F" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="flowGrad3" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#A8957F" stopOpacity="0" />
+              <stop offset="50%" stopColor="#A8957F" stopOpacity="0.32" />
+              <stop offset="100%" stopColor="#A8957F" stopOpacity="0" />
+            </linearGradient>
           </defs>
-          <rect width="100" height="100" fill="url(#dotGrid)" />
-        </svg>
-        <svg className="article-bg-svg article-bg-svg-3" viewBox="0 0 200 200" aria-hidden="true">
           <path
-            d="M40,100 C40,60 80,30 120,40 C160,50 180,90 170,130 C160,170 110,180 80,160 C50,140 40,140 40,100 Z"
+            d="M0,160 Q200,80 400,160 T800,160 T1200,160 T1600,160"
             fill="none"
-            stroke="#D97757"
-            strokeOpacity="0.18"
+            stroke="url(#flowGrad1)"
+            strokeWidth="1.6"
+            strokeDasharray="6 5"
+          >
+            <animate attributeName="stroke-dashoffset" from="0" to="-22" dur="6s" repeatCount="indefinite" />
+          </path>
+          <path
+            d="M0,200 Q260,120 520,200 T1040,200 T1600,200"
+            fill="none"
+            stroke="url(#flowGrad2)"
+            strokeWidth="1.2"
+            strokeDasharray="5 4"
+          >
+            <animate attributeName="stroke-dashoffset" from="0" to="18" dur="7s" repeatCount="indefinite" />
+          </path>
+          <path
+            d="M0,120 Q300,200 600,120 T1200,120 T1600,120"
+            fill="none"
+            stroke="url(#flowGrad3)"
             strokeWidth="1"
-          />
+            strokeDasharray="4 4"
+          >
+            <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="8s" repeatCount="indefinite" />
+          </path>
+          <path
+            d="M0,240 Q220,160 440,240 T880,240 T1320,240 T1600,240"
+            fill="none"
+            stroke="url(#flowGrad1)"
+            strokeWidth="0.8"
+            strokeDasharray="3 5"
+            opacity="0.7"
+          >
+            <animate attributeName="stroke-dashoffset" from="0" to="20" dur="9s" repeatCount="indefinite" />
+          </path>
         </svg>
+
         <div className="article-bg-grain" />
       </div>
 
@@ -455,23 +536,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             <article ref={articleBodyRef} className="article-body min-w-0">
               {/* 标题区 */}
               <header className="mb-12 pt-12 relative">
-                {/* 标题区角落装饰 */}
-                <svg
-                  className="article-corner-deco"
-                  viewBox="0 0 60 60"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M0 30 Q15 5, 30 15 T 60 0"
-                    stroke="#D97757"
-                    strokeWidth="1.2"
-                    strokeOpacity="0.45"
-                    fill="none"
-                  />
-                  <circle cx="56" cy="3" r="2.5" fill="#D97757" fillOpacity="0.6" />
-                </svg>
-
                 {article.tags && article.tags.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-5">
                     {article.tags.map((t) => (
@@ -712,25 +776,23 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           .article-aurora-blob { animation: none; }
         }
 
-        /* 装饰 SVG */
-        .article-bg-svg { position: absolute; pointer-events: none; }
-        .article-bg-svg-1 {
+        /* 同心圆环（右上远景） */
+        .article-bg-rings {
+          position: absolute;
           width: 720px; height: 720px;
           top: 60px; right: -260px;
-          opacity: 0.5;
+          opacity: 0.55;
+          pointer-events: none;
         }
-        .article-bg-svg-2 {
+
+        /* Windsurf 风格流式线条（顶部横向） */
+        .article-bg-flow {
           position: absolute;
-          width: 280px; height: 280px;
-          bottom: 240px; left: -60px;
-          opacity: 0.6;
-        }
-        .article-bg-svg-3 {
-          width: 300px; height: 300px;
-          top: 32%; left: -120px;
-          opacity: 0.6;
-          animation: auroraFloat 26s ease-in-out infinite alternate;
-          animation-delay: -6s;
+          top: 0; left: 0;
+          width: 100%;
+          height: 320px;
+          opacity: 0.55;
+          pointer-events: none;
         }
 
         .article-bg-grain {
@@ -883,14 +945,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           text-transform: uppercase;
         }
 
-        /* 标题区装饰 */
-        .article-corner-deco {
-          position: absolute;
-          top: -8px; right: -8px;
-          width: 60px; height: 60px;
-          opacity: 0.7;
-        }
-
         /* 标题 */
         .article-title {
           font-family: var(--serif);
@@ -930,9 +984,8 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           font-style: italic;
           padding: 18px 26px;
           margin: 32px 0 40px;
-          border-left: 3px solid var(--accent);
           background: linear-gradient(135deg, rgba(244,217,204,0.25), rgba(244,217,204,0.05));
-          border-radius: 0 12px 12px 0;
+          border-radius: 12px;
           letter-spacing: -0.005em;
         }
 
