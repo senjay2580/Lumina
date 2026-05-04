@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Edit2, Trash2, Calendar, ArrowUp, List, Clock, Tag,
-  Maximize2, Minimize2, AlignCenter, Download, FileDown, Image as ImageIcon, FileText, ChevronDown
+  Download, FileDown, Image as ImageIcon, FileText, ChevronDown
 } from 'lucide-react';
 import { marked } from 'marked';
 import { getArticle, deleteArticle, type Article } from '../../lib/articles';
@@ -88,19 +88,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
   }, [showExportMenu]);
-
-  const cycleWidth = () => {
-    const order: WidthMode[] = ['compact', 'standard', 'wide'];
-    const idx = order.indexOf(widthMode);
-    setWidthMode(order[(idx + 1) % order.length]);
-  };
-
-  const widthIcon =
-    widthMode === 'compact'
-      ? <Minimize2 className="w-4 h-4" />
-      : widthMode === 'wide'
-      ? <Maximize2 className="w-4 h-4" />
-      : <AlignCenter className="w-4 h-4" />;
 
   const preset = WIDTH_PRESETS[widthMode];
   const containerMaxWidth = preset.article + preset.toc + 64;
@@ -352,17 +339,22 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         <div className="article-aurora-blob article-aurora-blob-2" />
         <div className="article-aurora-blob article-aurora-blob-3" />
 
-        {/* 右上：同心圆环（accent 渐变描边） */}
+        {/* 右上：同心圆环（虚线 + 模糊，淡淡的远景） */}
         <svg className="article-bg-rings" viewBox="0 0 600 600" aria-hidden="true">
           <defs>
             <linearGradient id="ringGrad" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0%" stopColor="#D97757" stopOpacity="0.32" />
+              <stop offset="0%" stopColor="#D97757" stopOpacity="0.22" />
               <stop offset="100%" stopColor="#D97757" stopOpacity="0" />
             </linearGradient>
+            <filter id="ringBlur" x="-10%" y="-10%" width="120%" height="120%">
+              <feGaussianBlur stdDeviation="1.4" />
+            </filter>
           </defs>
-          <circle cx="300" cy="300" r="280" fill="none" stroke="url(#ringGrad)" strokeWidth="1.2" />
-          <circle cx="300" cy="300" r="220" fill="none" stroke="url(#ringGrad)" strokeWidth="0.8" />
-          <circle cx="300" cy="300" r="160" fill="none" stroke="url(#ringGrad)" strokeWidth="0.6" />
+          <g filter="url(#ringBlur)">
+            <circle cx="300" cy="300" r="280" fill="none" stroke="url(#ringGrad)" strokeWidth="1" strokeDasharray="3 7" />
+            <circle cx="300" cy="300" r="220" fill="none" stroke="url(#ringGrad)" strokeWidth="0.8" strokeDasharray="2 6" />
+            <circle cx="300" cy="300" r="160" fill="none" stroke="url(#ringGrad)" strokeWidth="0.6" strokeDasharray="2 5" />
+          </g>
         </svg>
 
         {/* 顶部：Windsurf 风格流式线条 */}
@@ -446,14 +438,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
               返回列表
             </button>
             <div className="flex items-center gap-2">
-              <button
-                onClick={cycleWidth}
-                className="article-icon-btn"
-                title={`阅读宽度：${preset.label}（点击切换）`}
-                aria-label="切换阅读宽度"
-              >
-                {widthIcon}
-              </button>
               <button
                 onClick={() => setShowTocMobile((v) => !v)}
                 className="article-icon-btn lg:hidden"
@@ -776,12 +760,12 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           .article-aurora-blob { animation: none; }
         }
 
-        /* 同心圆环（右上远景） */
+        /* 同心圆环（右上远景，虚线 + 模糊） */
         .article-bg-rings {
           position: absolute;
           width: 720px; height: 720px;
           top: 60px; right: -260px;
-          opacity: 0.55;
+          opacity: 0.4;
           pointer-events: none;
         }
 

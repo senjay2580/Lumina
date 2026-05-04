@@ -165,47 +165,63 @@ export function importedMarkdownToContent(md: string): string {
   return markdownToHtml(md);
 }
 
-// 把元素克隆到一个离屏宽幅容器（带留白），用于导出
-// 这样导出时不受当前阅读宽度影响，且四周有充足留白
-function buildExportFrame(
+// 在屏幕上但视觉隐藏地构造一个导出专用容器，把源节点的内容克隆进来
+// 必须保留布局可见（layout in render tree），否则 html-to-image / html2canvas 拍出来是空白
+function buildExportContainer(
   source: HTMLElement,
-  options: { contentWidth?: number; padding?: number; backgroundColor?: string }
-): { frame: HTMLElement; cleanup: () => void } {
-  const contentWidth = options.contentWidth ?? 880;
-  const padding = options.padding ?? 96;
-  const bg = options.backgroundColor ?? '#FCFBF7';
+  options: { contentWidth: number; padding: number; backgroundColor: string }
+): { container: HTMLElement; cleanup: () => void } {
+  const total = options.contentWidth + options.padding * 2;
 
-  const frame = document.createElement('div');
-  frame.style.position = 'fixed';
-  frame.style.left = '-99999px';
-  frame.style.top = '0';
-  frame.style.width = `${contentWidth + padding * 2}px`;
-  frame.style.padding = `${padding}px`;
-  frame.style.background = bg;
-  frame.style.boxSizing = 'border-box';
-  frame.style.zIndex = '-1';
-  frame.style.pointerEvents = 'none';
+  const container = document.createElement('div');
+  container.setAttribute('data-export-frame', '1');
+  // 让浏览器实际渲染（保留 layout），但用户看不到
+  container.style.position = 'fixed';
+  container.style.top = '0';
+  container.style.left = '0';
+  container.style.zIndex = '-1';
+  container.style.opacity = '0.001'; // 几乎不可见，但保留 paint
+  container.style.pointerEvents = 'none';
+  container.style.width = `${total}px`;
+  container.style.padding = `${options.padding}px`;
+  container.style.background = options.backgroundColor;
+  container.style.boxSizing = 'border-box';
+  container.style.fontFamily = "'Fraunces','Source Serif Pro','Iowan Old Style','Georgia',serif";
+  container.style.color = '#1F1E1D';
+  // 复制所需 CSS 变量到容器，让 var(--xxx) 在克隆树里也生效
+  container.style.setProperty('--bg', '#FCFBF7');
+  container.style.setProperty('--bg-alt', '#F6F4ED');
+  container.style.setProperty('--ink', '#1F1E1D');
+  container.style.setProperty('--ink-soft', '#3A3936');
+  container.style.setProperty('--ink-muted', '#6B6A65');
+  container.style.setProperty('--ink-faint', '#8E8C85');
+  container.style.setProperty('--rule', '#E8E6DC');
+  container.style.setProperty('--rule-strong', '#D8D5C7');
+  container.style.setProperty('--accent', '#D97757');
+  container.style.setProperty('--accent-soft', '#F4D9CC');
+  container.style.setProperty('--accent-deep', '#B85B3F');
+  container.style.setProperty('--code-bg', '#F2F0E8');
+  container.style.setProperty('--serif', "'Fraunces','Source Serif Pro','Iowan Old Style','Georgia',serif");
+  container.style.setProperty('--sans', "'Inter',system-ui,-apple-system,'Segoe UI',sans-serif");
+  container.style.setProperty('--mono', "'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace");
 
   const inner = document.createElement('div');
-  inner.style.width = `${contentWidth}px`;
-  inner.style.maxWidth = '100%';
+  inner.style.width = `${options.contentWidth}px`;
   inner.style.margin = '0 auto';
 
-  // 深拷贝节点，避免影响原节点
   const clone = source.cloneNode(true) as HTMLElement;
-  // 重置克隆的宽度限制和 transition
   clone.style.maxWidth = 'none';
   clone.style.width = '100%';
   clone.style.transition = 'none';
 
   inner.appendChild(clone);
-  frame.appendChild(inner);
-  document.body.appendChild(frame);
+  container.appendChild(inner);
+  document.body.appendChild(container);
 
   return {
-    frame,
+    container,
     cleanup: () => {
-      if (frame.parentNode) frame.parentNode.removeChild(frame);
+      if (container.parentNode) container.parentNode.removeChild(container);
     }
   };
 }
@@ -217,20 +233,21 @@ export async function exportElementToPng(
   options?: { pixelRatio?: number; backgroundColor?: string; contentWidth?: number; padding?: number }
 ): Promise<void> {
   const { toPng } = await import('html-to-image');
-  const { frame, cleanup } = buildExportFrame(el, {
-    contentWidth: options?.contentWidth ?? 880,
-    padding: options?.padding ?? 96,
-    backgroundColor: options?.backgroundColor
-  });
+  const contentWidth = options?.contentWidth ?? 880;
+  const padding = options?.padding ?? 120;
+  const bg = options?.backgroundColor ?? '#FCFBF7';
+  const { container, cleanup } = buildExportContainer(el, { contentWidth, padding, backgroundColor: bg });
   try {
-    // 等下一帧让样式应用
+    // 等两帧让浏览器完成布局
     await new Promise((r) => requestAnimationFrame(() => r(null)));
-    const dataUrl = await toPng(frame, {
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    const dataUrl = await toPng(container, {
       pixelRatio: options?.pixelRatio ?? 3,
-      backgroundColor: options?.backgroundColor ?? '#FCFBF7',
+      backgroundColor: bg,
       cacheBust: true,
-      width: frame.offsetWidth,
-      height: frame.offsetHeight
+      width: container.offsetWidth,
+      height: container.offsetHeight,
+      style: { opacity: '1' }
     });
     const a = document.createElement('a');
     a.href = dataUrl;
@@ -254,19 +271,27 @@ export async function exportElementToPdf(
     import('jspdf')
   ]);
 
-  const { frame, cleanup } = buildExportFrame(el, {
-    contentWidth: options?.contentWidth ?? 720,
-    padding: options?.padding ?? 64,
-    backgroundColor: options?.backgroundColor
-  });
+  const contentWidth = options?.contentWidth ?? 720;
+  const padding = options?.padding ?? 72;
+  const bg = options?.backgroundColor ?? '#FCFBF7';
+  const { container, cleanup } = buildExportContainer(el, { contentWidth, padding, backgroundColor: bg });
   try {
     await new Promise((r) => requestAnimationFrame(() => r(null)));
-    const canvas = await html2canvas(frame, {
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    // html2canvas 不读 opacity，但会读取 visibility/display；我们用 onclone 把容器透明度还原
+    const canvas = await html2canvas(container, {
       scale: 2,
       useCORS: true,
-      backgroundColor: options?.backgroundColor ?? '#FCFBF7',
-      windowWidth: frame.scrollWidth,
-      windowHeight: frame.scrollHeight
+      backgroundColor: bg,
+      windowWidth: container.scrollWidth,
+      windowHeight: container.scrollHeight,
+      onclone: (doc) => {
+        const target = doc.querySelector<HTMLElement>('[data-export-frame="1"]');
+        if (target) {
+          target.style.opacity = '1';
+          target.style.position = 'static';
+        }
+      }
     });
 
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
