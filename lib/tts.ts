@@ -10,9 +10,13 @@
 //   4. 不依赖 onstart / onboundary —— 中文 voice 经常不触发，
 //      统一用「立即估算时长 + 启动 interval」兜底。
 
+export type SegChangeReason = 'natural' | 'jump' | 'start';
+
 export interface TtsCallbacks {
-  onSegmentChange?: (idx: number) => void;
-  onProgress?: (pct: number) => void;  // 0-100
+  /** reason='natural'=自然推进，'jump'=用户点击跳段，'start'=首次启动 */
+  onSegmentChange?: (idx: number, reason: SegChangeReason) => void;
+  /** 全篇绝对进度 0-100（已包含 idx + 段内进度，前端直接用即可） */
+  onProgress?: (pct: number) => void;
   onStateChange?: (state: TtsState) => void;
   onError?: (msg: string) => void;
 }
@@ -36,6 +40,7 @@ export class TtsEngine {
   private voiceName: string | null = null;
   private state: TtsState = 'idle';
   private cb: TtsCallbacks;
+  private nextChangeReason: SegChangeReason = 'natural';
 
   constructor(cb: TtsCallbacks = {}) {
     this.cb = cb;
@@ -67,6 +72,7 @@ export class TtsEngine {
     this.segments = segments;
     this.idx = Math.max(0, Math.min(fromIdx, segments.length - 1));
     this.cancelled = false;
+    this.nextChangeReason = 'start';
     this.setState('playing');
     // 同步启动第一段（保留 user gesture）
     this.speakCurrent();
@@ -100,12 +106,13 @@ export class TtsEngine {
   }
 
   /** 切到指定段（用户点击段落跳转） */
-  jumpTo(idx: number) {
+  jumpTo(idx: number, reason: SegChangeReason = 'jump') {
     if (this.state === 'idle') return;
     this.idx = Math.max(0, Math.min(idx, this.segments.length - 1));
     this.cancelled = true;
     window.speechSynthesis.cancel();
     this.cancelled = false;
+    this.nextChangeReason = reason;
     this.speakCurrent();
   }
 
@@ -132,7 +139,11 @@ export class TtsEngine {
 
     this.clearActiveClass();
     el.classList.add('tts-active');
-    this.cb.onSegmentChange?.(this.idx);
+    const reason = this.nextChangeReason;
+    this.nextChangeReason = 'natural';
+    this.cb.onSegmentChange?.(this.idx, reason);
+    // 段切换瞬间立刻把绝对进度归零到「该段起点」，避免视觉跳变
+    this.cb.onProgress?.((this.idx / Math.max(1, segs.length)) * 100);
 
     if (!text) {
       this.idx++;
@@ -180,11 +191,13 @@ export class TtsEngine {
 
   private startProgressTimer() {
     this.clearProgressTimer();
+    const total = Math.max(1, this.segments.length);
     const tick = () => {
       if (this.cancelled || this.state !== 'playing') return;
       const elapsed = Date.now() - this.segStartTs;
-      const pct = Math.min(99, (elapsed / this.segDurationMs) * 100);
-      this.cb.onProgress?.(pct);
+      const segPct = Math.min(0.99, elapsed / this.segDurationMs);
+      const absPct = ((this.idx + segPct) / total) * 100;
+      this.cb.onProgress?.(absPct);
       if (elapsed >= this.segDurationMs) {
         this.clearProgressTimer();
       }

@@ -23,7 +23,8 @@ import {
 import {
   TtsEngine, collectReadableSegments,
   CURATED_VOICES, DEFAULT_VOICE_KEY, resolveVoiceName,
-  type TtsState as TtsEngineState
+  type TtsState as TtsEngineState,
+  type SegChangeReason
 } from '../../lib/tts';
 
 interface Props {
@@ -97,13 +98,15 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   });
   const [ttsIdx, setTtsIdx] = useState(0);
   const [ttsTotal, setTtsTotal] = useState(0);
-  const [ttsProgress, setTtsProgress] = useState(0);
   const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [ttsVoiceKey, setTtsVoiceKey] = useState<string>(() => {
     if (typeof window === 'undefined') return DEFAULT_VOICE_KEY;
     return window.localStorage.getItem(VOICE_STORAGE_KEY) || DEFAULT_VOICE_KEY;
   });
   const ttsEngineRef = useRef<TtsEngine | null>(null);
+  // 进度条和「跳段是否由用户点击触发」走 ref，避免 React 频繁重渲染
+  const ttsFillRef = useRef<HTMLDivElement | null>(null);
+  const ttsLastChangeReasonRef = useRef<SegChangeReason>('natural');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -190,8 +193,16 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     if (typeof window === 'undefined') return null;
     if (!ttsEngineRef.current) {
       ttsEngineRef.current = new TtsEngine({
-        onSegmentChange: (i) => setTtsIdx(i),
-        onProgress: (p) => setTtsProgress(p),
+        onSegmentChange: (i, reason) => {
+          ttsLastChangeReasonRef.current = reason;
+          setTtsIdx(i);
+        },
+        onProgress: (p) => {
+          // ⚡ 直接更新 DOM，避免 33 次/秒 setState 引发的全文重渲染
+          if (ttsFillRef.current) {
+            ttsFillRef.current.style.width = `${Math.min(100, p)}%`;
+          }
+        },
         onStateChange: (s) => setTtsState(s),
         onError: (msg) => console.warn('[TTS]', msg),
       });
@@ -253,18 +264,21 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     getEngine()?.stop();
   }, [getEngine]);
 
-  // 滚动当前激活段进入视图
+  // 自动滚动：仅在「自然推进」且段落出 viewport 时滚动；用户点击跳段不滚动
   useEffect(() => {
     if (ttsState !== 'playing') return;
+    if (ttsLastChangeReasonRef.current === 'jump') return; // 用户主动选了位置，别打扰
     const el = articleRef.current?.querySelector<HTMLElement>('.tts-active');
     const container = scrollRef.current;
     if (!el || !container) return;
     const rect = el.getBoundingClientRect();
-    const cTop = container.getBoundingClientRect().top;
-    const offset = rect.top - cTop;
-    if (offset < 80 || offset > container.clientHeight - 100) {
+    const cRect = container.getBoundingClientRect();
+    const offsetTop = rect.top - cRect.top;
+    const offsetBottom = rect.bottom - cRect.top;
+    // 段落完全在视口内 → 不滚；只在头超出顶部或尾超出底部时才滚
+    if (offsetTop < 60 || offsetBottom > container.clientHeight - 60) {
       container.scrollTo({
-        top: container.scrollTop + offset - 180,
+        top: container.scrollTop + offsetTop - 200,
         behavior: 'smooth',
       });
     }
@@ -1101,11 +1115,9 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           </div>
           <div className="article-tts-progress-bar">
             <div
+              ref={ttsFillRef}
               className="article-tts-progress-fill"
-              style={{
-                // 整篇进度 = 已完成段数比例 + 当前段内进度比例
-                width: `${Math.min(100, ((ttsIdx + ttsProgress / 100) / ttsTotal) * 100)}%`,
-              }}
+              style={{ width: '0%' }}
             />
           </div>
         </div>
@@ -1771,7 +1783,8 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           height: 100%;
           background: linear-gradient(90deg, var(--accent), var(--accent-deep));
           border-radius: 999px;
-          transition: width 0.3s ease;
+          /* 短 transition + linear，让 30ms 一次的更新看起来平滑且不滞后 */
+          transition: width 60ms linear;
         }
 
         /* 区块通用 */
