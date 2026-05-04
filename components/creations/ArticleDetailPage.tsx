@@ -20,6 +20,11 @@ import {
   exportElementToPdf,
   safeFileName
 } from '../../lib/markdown-io';
+import {
+  TtsEngine, collectReadableSegments,
+  CURATED_VOICES, DEFAULT_VOICE_KEY, resolveVoiceName,
+  type TtsState as TtsEngineState
+} from '../../lib/tts';
 
 interface Props {
   articleId: string;
@@ -45,29 +50,8 @@ const WIDTH_PRESETS: Record<WidthMode, { article: number; toc: number; label: st
 
 const WIDTH_STORAGE_KEY = 'lumina:article:width';
 
-// 精选朗读语音（Edge / Microsoft 神经语音）
-// 关键词数组用于在浏览器 speechSynthesis.getVoices() 里模糊匹配
-interface CuratedVoice {
-  key: string;
-  label: string;
-  desc: string;
-  lang: 'zh' | 'en';
-  match: string[];
-}
-
-const CURATED_VOICES: CuratedVoice[] = [
-  { key: 'xiaoxiao', label: '晓晓 · 女声温柔', desc: '微软主推，自然亲切', lang: 'zh', match: ['Xiaoxiao'] },
-  { key: 'yunxi',    label: '云希 · 男声少年感', desc: '清亮少年，推荐默认', lang: 'zh', match: ['Yunxi'] },
-  { key: 'yunjian',  label: '云健 · 男声浑厚', desc: '醇厚低音，沉稳成熟', lang: 'zh', match: ['Yunjian'] },
-  { key: 'xiaoyi',   label: '晓伊 · 女声甜美', desc: '甜美轻盈', lang: 'zh', match: ['Xiaoyi'] },
-  { key: 'yunyang',  label: '云扬 · 男声播音', desc: '新闻播音腔', lang: 'zh', match: ['Yunyang'] },
-  { key: 'yunxia',   label: '云夏 · 男童儿童感', desc: '童声活泼', lang: 'zh', match: ['Yunxia'] },
-  { key: 'aria',     label: 'Aria · English Female', desc: 'Natural female English', lang: 'en', match: ['Aria'] },
-  { key: 'guy',      label: 'Guy · English Male',   desc: 'Natural male English', lang: 'en', match: ['Guy'] }
-];
-
+// 精选朗读音色清单从 lib/tts 引入（保持单一事实源）
 const VOICE_STORAGE_KEY = 'lumina:tts:voice-key';
-const DEFAULT_VOICE_KEY = 'yunxi';
 
 function slugify(text: string, fallbackIdx: number): string {
   const base = text
@@ -104,8 +88,8 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   // 相关文章
   const [related, setRelated] = useState<{ article: Article; score: number }[]>([]);
 
-  // TTS
-  const [ttsState, setTtsState] = useState<'idle' | 'playing' | 'paused'>('idle');
+  // TTS（所有逻辑在 lib/tts.ts 的 TtsEngine 类里，组件只持有 ref + 显示状态）
+  const [ttsState, setTtsState] = useState<TtsEngineState>('idle');
   const [ttsRate, setTtsRate] = useState<number>(() => {
     if (typeof window === 'undefined') return 1;
     const v = parseFloat(window.localStorage.getItem('lumina:tts:rate') || '1');
@@ -113,15 +97,13 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   });
   const [ttsIdx, setTtsIdx] = useState(0);
   const [ttsTotal, setTtsTotal] = useState(0);
+  const [ttsProgress, setTtsProgress] = useState(0);
   const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [ttsVoiceKey, setTtsVoiceKey] = useState<string>(() => {
     if (typeof window === 'undefined') return DEFAULT_VOICE_KEY;
     return window.localStorage.getItem(VOICE_STORAGE_KEY) || DEFAULT_VOICE_KEY;
   });
-  const ttsSegmentsRef = useRef<HTMLElement[]>([]);
-  const ttsCurrentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const ttsCancelledRef = useRef(false);
-  const ttsOverlayRef = useRef<HTMLDivElement | null>(null);
+  const ttsEngineRef = useRef<TtsEngine | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -203,294 +185,128 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     try { window.localStorage.setItem('lumina:tts:rate', String(ttsRate)); } catch {}
   }, [ttsRate]);
 
+  // 单例 engine（首次访问时 lazy init）
+  const getEngine = useCallback((): TtsEngine | null => {
+    if (typeof window === 'undefined') return null;
+    if (!ttsEngineRef.current) {
+      ttsEngineRef.current = new TtsEngine({
+        onSegmentChange: (i) => setTtsIdx(i),
+        onProgress: (p) => setTtsProgress(p),
+        onStateChange: (s) => setTtsState(s),
+        onError: (msg) => console.warn('[TTS]', msg),
+      });
+    }
+    return ttsEngineRef.current;
+  }, []);
+
   const ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
-  // 加载可用语音 + 自动挑选最优中文/英文神经语音
+  // 加载可用语音清单
   useEffect(() => {
     if (!ttsAvailable) return;
-    const refresh = () => {
-      const list = window.speechSynthesis.getVoices();
-      setTtsVoices(list);
-    };
+    const refresh = () => setTtsVoices(window.speechSynthesis.getVoices());
     refresh();
     window.speechSynthesis.addEventListener('voiceschanged', refresh);
     return () => window.speechSynthesis.removeEventListener('voiceschanged', refresh);
   }, [ttsAvailable]);
 
-  const resolveCuratedVoice = useCallback(
-    (key: string, isChinese: boolean): SpeechSynthesisVoice | null => {
-      if (ttsVoices.length === 0) return null;
-      const def = CURATED_VOICES.find((c) => c.key === key);
-      const langCands = ttsVoices.filter((v) =>
-        isChinese ? v.lang.toLowerCase().startsWith('zh') : v.lang.toLowerCase().startsWith('en')
-      );
-      if (def) {
-        for (const kw of def.match) {
-          const found = langCands.find((v) => v.name.includes(kw)) || ttsVoices.find((v) => v.name.includes(kw));
-          if (found) return found;
-        }
-      }
-      const neural = langCands.find((v) => /Online|Natural|Neural|Premium|Enhanced|Wavenet/i.test(v.name));
-      if (neural) return neural;
-      return langCands[0] || ttsVoices[0];
-    },
-    [ttsVoices]
-  );
-
-  const pickBestVoice = useCallback(
-    (text: string): SpeechSynthesisVoice | null => {
-      const isChinese = /[一-龥]/.test(text);
-      return resolveCuratedVoice(ttsVoiceKey || DEFAULT_VOICE_KEY, isChinese);
-    },
-    [ttsVoiceKey, resolveCuratedVoice]
-  );
+  // voice / rate 变化 → 同步到 engine
+  useEffect(() => {
+    const eng = getEngine();
+    if (!eng) return;
+    eng.setRate(ttsRate);
+    try { window.localStorage.setItem('lumina:tts:rate', String(ttsRate)); } catch {}
+  }, [ttsRate, getEngine]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(VOICE_STORAGE_KEY, ttsVoiceKey);
-  }, [ttsVoiceKey]);
-
-  const removeOverlay = useCallback(() => {
-    if (ttsOverlayRef.current) {
-      ttsOverlayRef.current.remove();
-      ttsOverlayRef.current = null;
-    }
-  }, []);
-
-  const clearAllProgress = useCallback(() => {
-    removeOverlay();
-    if (!articleRef.current) return;
-    articleRef.current
-      .querySelectorAll<HTMLElement>('.tts-active')
-      .forEach((el) => {
-        el.classList.remove('tts-active');
-        el.style.removeProperty('position');
-      });
-    // 清掉残留 overlay
-    articleRef.current
-      .querySelectorAll<HTMLElement>('.tts-overlay')
-      .forEach((el) => el.remove());
-  }, [removeOverlay]);
-
-  const stopTts = useCallback(() => {
-    ttsCancelledRef.current = true;
-    if (ttsAvailable) window.speechSynthesis.cancel();
-    clearAllProgress();
-    setTtsState('idle');
-    setTtsIdx(0);
-    ttsCurrentUtteranceRef.current = null;
-  }, [ttsAvailable, clearAllProgress]);
-
-  const collectSegments = useCallback((): HTMLElement[] => {
-    if (!articleRef.current) return [];
-    return Array.from(
-      articleRef.current.querySelectorAll<HTMLElement>(
-        'h1, h2, h3, h4, p, blockquote, li'
-      )
-    ).filter((el) => (el.textContent || '').trim().length > 0);
-  }, []);
-
-  // 注入 overlay div + CSS transition 驱动进度（替代 rAF，浏览器原生动画，永不卡死）
-  const startOverlayAnimation = useCallback(
-    (el: HTMLElement, durationMs: number) => {
-      removeOverlay();
-      // 段落需要 position:relative 让 overlay 定位
-      const prevPosition = getComputedStyle(el).position;
-      if (prevPosition === 'static') el.style.position = 'relative';
-
-      const overlay = document.createElement('div');
-      overlay.className = 'tts-overlay';
-      overlay.style.cssText = [
-        'position:absolute',
-        'left:-10px',
-        'top:0',
-        'bottom:0',
-        'width:0',
-        'background:linear-gradient(90deg, rgba(244,217,204,0.55), rgba(244,217,204,0.40))',
-        'border-radius:6px',
-        'pointer-events:none',
-        'z-index:0',
-        `transition: width ${durationMs}ms linear`,
-      ].join(';');
-      el.prepend(overlay);
-      ttsOverlayRef.current = overlay;
-
-      // 强制 reflow 让浏览器先注册 width=0，再设置目标宽度，触发 transition
-      void overlay.offsetWidth;
-      overlay.style.width = 'calc(100% + 20px)';
-    },
-    [removeOverlay]
-  );
-
-  const speakSegment = useCallback(
-    (idx: number) => {
-      if (!ttsAvailable) return;
-      const segs = ttsSegmentsRef.current;
-      if (idx >= segs.length) {
-        stopTts();
-        return;
-      }
-      const el = segs[idx];
-      clearAllProgress();
-      el.classList.add('tts-active');
-
-      // 滚动到当前段附近
-      const container = scrollRef.current;
-      if (container) {
-        const rect = el.getBoundingClientRect();
-        const cTop = container.getBoundingClientRect().top;
-        const offset = rect.top - cTop;
-        if (offset < 80 || offset > container.clientHeight - 100) {
-          container.scrollTo({
-            top: container.scrollTop + offset - 180,
-            behavior: 'smooth'
-          });
-        }
-      }
-
-      const text = (el.textContent || '').trim();
-      if (!text) {
-        setTtsIdx(idx + 1);
-        speakSegment(idx + 1);
-        return;
-      }
-
-      const isChinese = /[一-龥]/.test(text);
-      // 估算时长：中文 ~4.2 字/秒（1x），英文 ~13 字符/秒
-      const baseCharsPerSec = isChinese ? 4.2 : 13;
-      const charsPerSec = baseCharsPerSec * ttsRate;
-      const estimatedDurationMs = Math.max(1500, (text.length / charsPerSec) * 1000);
-
-      // 立即启动 CSS overlay 动画（不依赖 onstart）
-      startOverlayAnimation(el, estimatedDurationMs);
-
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = ttsRate;
-      u.lang = isChinese ? 'zh-CN' : 'en-US';
-      const voice = pickBestVoice(text);
-      if (voice) u.voice = voice;
-
-      u.onend = () => {
-        if (ttsCancelledRef.current) return;
-        const next = idx + 1;
-        setTtsIdx(next);
-        speakSegment(next);
-      };
-      u.onerror = (e) => {
-        // voice 不可用时 onerror 触发，跳到下一段而不是卡住
-        console.warn('[TTS] utterance error:', e);
-        if (ttsCancelledRef.current) return;
-        const next = idx + 1;
-        setTtsIdx(next);
-        speakSegment(next);
-      };
-
-      ttsCurrentUtteranceRef.current = u;
-
-      // ✅ Chrome 已知 race condition：cancel 后立即 speak 会丢失 utterance
-      // 强制让出主线程一帧，确保 cancel 完成后再 speak
-      const synth = window.speechSynthesis;
-      synth.cancel();
-      requestAnimationFrame(() => {
-        if (ttsCancelledRef.current) return;
-        synth.speak(u);
-      });
-    },
-    [ttsAvailable, ttsRate, stopTts, clearAllProgress, startOverlayAnimation, pickBestVoice]
-  );
+    const eng = getEngine();
+    if (!eng) return;
+    eng.setVoiceName(resolveVoiceName(ttsVoiceKey, ttsVoices));
+    try { window.localStorage.setItem(VOICE_STORAGE_KEY, ttsVoiceKey); } catch {}
+  }, [ttsVoiceKey, ttsVoices, getEngine]);
 
   const startTts = useCallback(
     (fromIdx: number = 0) => {
-      if (!ttsAvailable) return;
-      const segs = collectSegments();
+      const eng = getEngine();
+      if (!eng) return;
+      const segs = collectReadableSegments(articleRef.current);
       if (segs.length === 0) return;
-      ttsSegmentsRef.current = segs;
       setTtsTotal(segs.length);
-      ttsCancelledRef.current = true; // 先标记取消，避免旧 utterance onend 链式启动
-      window.speechSynthesis.cancel();
-      clearAllProgress();
-      ttsCancelledRef.current = false;
-      setTtsState('playing');
-      const safeIdx = Math.max(0, Math.min(fromIdx, segs.length - 1));
-      setTtsIdx(safeIdx);
-      speakSegment(safeIdx);
+      // 先把 voice/rate 同步上去（防止首次启动时还没 set）
+      eng.setRate(ttsRate);
+      eng.setVoiceName(resolveVoiceName(ttsVoiceKey, ttsVoices));
+      // ⚡ 同步调用，必须在用户手势栈内（点击事件）
+      eng.start(segs, fromIdx);
     },
-    [ttsAvailable, collectSegments, clearAllProgress, speakSegment]
+    [getEngine, ttsRate, ttsVoiceKey, ttsVoices]
   );
 
-  // 点击段落跳到该段开始朗读
+  const pauseTts = useCallback(() => {
+    getEngine()?.pause();
+  }, [getEngine]);
+
+  const resumeTts = useCallback(() => {
+    getEngine()?.resume();
+  }, [getEngine]);
+
+  const stopTts = useCallback(() => {
+    getEngine()?.stop();
+  }, [getEngine]);
+
+  // 滚动当前激活段进入视图
+  useEffect(() => {
+    if (ttsState !== 'playing') return;
+    const el = articleRef.current?.querySelector<HTMLElement>('.tts-active');
+    const container = scrollRef.current;
+    if (!el || !container) return;
+    const rect = el.getBoundingClientRect();
+    const cTop = container.getBoundingClientRect().top;
+    const offset = rect.top - cTop;
+    if (offset < 80 || offset > container.clientHeight - 100) {
+      container.scrollTo({
+        top: container.scrollTop + offset - 180,
+        behavior: 'smooth',
+      });
+    }
+  }, [ttsIdx, ttsState]);
+
+  // 点击段落跳读
   useEffect(() => {
     const root = articleRef.current;
     if (!root) return;
     const onClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target) return;
-      if (target.closest('a')) return;
+      if (!target || target.closest('a')) return;
       const seg = target.closest<HTMLElement>('h1, h2, h3, h4, p, blockquote, li');
       if (!seg || !root.contains(seg)) return;
-      const segs = collectSegments();
+      const segs = collectReadableSegments(root);
       const idx = segs.indexOf(seg);
       if (idx < 0) return;
       if (ttsState === 'playing' || ttsState === 'paused') {
-        startTts(idx);
+        getEngine()?.jumpTo(idx);
       }
     };
     root.addEventListener('click', onClick);
     return () => root.removeEventListener('click', onClick);
-  }, [ttsState, collectSegments, startTts]);
+  }, [ttsState, getEngine]);
 
-  const pauseTts = useCallback(() => {
-    if (!ttsAvailable) return;
-    window.speechSynthesis.pause();
-    // 暂停 CSS transition：把当前 width 固化为 inline，并去掉 transition
-    if (ttsOverlayRef.current) {
-      const w = getComputedStyle(ttsOverlayRef.current).width;
-      ttsOverlayRef.current.style.transition = 'none';
-      ttsOverlayRef.current.style.width = w;
-    }
-    setTtsState('paused');
-  }, [ttsAvailable]);
-
-  const resumeTts = useCallback(() => {
-    if (!ttsAvailable) return;
-    window.speechSynthesis.resume();
-    // 恢复 transition：根据剩余距离按原速率继续
-    const overlay = ttsOverlayRef.current;
-    const el = articleRef.current?.querySelector<HTMLElement>('.tts-active');
-    if (overlay && el) {
-      const fullW = el.getBoundingClientRect().width + 20;
-      const curW = parseFloat(getComputedStyle(overlay).width) || 0;
-      const remainPct = Math.max(0, 1 - curW / fullW);
-      const text = (el.textContent || '').trim();
-      const isChinese = /[一-龥]/.test(text);
-      const baseCharsPerSec = isChinese ? 4.2 : 13;
-      const fullDur = Math.max(1500, (text.length / (baseCharsPerSec * ttsRate)) * 1000);
-      const remainMs = fullDur * remainPct;
-      overlay.style.transition = `width ${remainMs}ms linear`;
-      void overlay.offsetWidth;
-      overlay.style.width = 'calc(100% + 20px)';
-    }
-    setTtsState('playing');
-  }, [ttsAvailable, ttsRate]);
-
-  // 语速变化时重启当前段（浏览器不支持 utterance.rate 热更）
+  // 语速变化：正在朗读时重启当前段（utterance.rate 不支持热更）
   useEffect(() => {
-    if (ttsState === 'playing' && ttsCurrentUtteranceRef.current) {
-      requestAnimationFrame(() => speakSegment(ttsIdx));
+    const eng = getEngine();
+    if (!eng) return;
+    if (ttsState === 'playing') {
+      eng.jumpTo(ttsIdx);
     }
-    try { window.localStorage.setItem('lumina:tts:rate', String(ttsRate)); } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ttsRate]);
 
-  // 卸载时停止
+  // 卸载清理
   useEffect(() => {
     return () => {
-      if (ttsAvailable) {
-        ttsCancelledRef.current = true;
-        window.speechSynthesis.cancel();
-      }
+      ttsEngineRef.current?.destroy();
+      ttsEngineRef.current = null;
     };
-  }, [ttsAvailable]);
+  }, []);
 
   // 笔记提交
   const handleAddNote = async () => {
@@ -1286,7 +1102,10 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           <div className="article-tts-progress-bar">
             <div
               className="article-tts-progress-fill"
-              style={{ width: `${Math.min(100, ((ttsIdx + 1) / ttsTotal) * 100)}%` }}
+              style={{
+                // 整篇进度 = 已完成段数比例 + 当前段内进度比例
+                width: `${Math.min(100, ((ttsIdx + ttsProgress / 100) / ttsTotal) * 100)}%`,
+              }}
             />
           </div>
         </div>
@@ -1865,35 +1684,18 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           padding: 0 4px;
         }
 
-        /* TTS 当前段：底色 + 左侧 accent 竖线，进度由 .tts-overlay 实现 */
+        /* TTS 当前段：纯 className 高亮（最稳，不依赖 DOM 注入） */
         .article-prose .tts-active {
           position: relative;
-          background: rgba(244,217,204,0.10);
+          background: rgba(244,217,204,0.35);
           border-radius: 6px;
           padding: 4px 10px;
           margin-left: -10px;
           margin-right: -10px;
-          box-shadow: 0 0 0 4px rgba(244,217,204,0.12);
-          transition: box-shadow 0.2s;
-          isolation: isolate;
+          box-shadow: 0 0 0 4px rgba(244,217,204,0.18);
+          transition: background 0.25s, box-shadow 0.25s;
         }
-        /* overlay 在段落底部铺一层，width 从 0 → 100% 通过 CSS transition 推进 */
-        .article-prose .tts-active .tts-overlay {
-          position: absolute;
-          left: -10px;
-          top: 0;
-          bottom: 0;
-          width: 0;
-          background: linear-gradient(90deg, rgba(244,217,204,0.55), rgba(244,217,204,0.40));
-          border-radius: 6px;
-          pointer-events: none;
-          z-index: 0;
-        }
-        .article-prose .tts-active > * {
-          position: relative;
-          z-index: 1;
-        }
-        /* 当前段左侧 accent 竖线指示器 */
+        /* 左侧 accent 竖线指示器 */
         .article-prose .tts-active::before {
           content: '';
           position: absolute;
@@ -1903,7 +1705,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           width: 3px;
           background: var(--accent);
           border-radius: 2px;
-          z-index: 2;
         }
 
         /* 语音选择 */
