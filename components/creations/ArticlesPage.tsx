@@ -1,14 +1,20 @@
 // 文章列表页
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Search, Trash2, FileText, Calendar } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Trash2, FileText, Calendar, Upload } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
+  createArticle,
   getArticles,
   deleteArticle,
   searchArticles,
   type Article
 } from '../../lib/articles';
 import { Confirm } from '../../shared/Confirm';
+import {
+  pickMarkdownFile,
+  importedMarkdownToContent,
+  extractTitleFromMarkdown
+} from '../../lib/markdown-io';
 
 interface Props {
   userId: string;
@@ -17,10 +23,34 @@ interface Props {
   onCreateArticle: () => void;
 }
 
+// 解析简单 frontmatter（YAML 子集）：title, excerpt, tags, cover
+function parseFrontmatter(md: string): { meta: Record<string, any>; body: string } {
+  if (!md.startsWith('---')) return { meta: {}, body: md };
+  const end = md.indexOf('\n---', 3);
+  if (end < 0) return { meta: {}, body: md };
+  const head = md.slice(3, end).trim();
+  const body = md.slice(end + 4).replace(/^\r?\n/, '');
+  const meta: Record<string, any> = {};
+  for (const line of head.split('\n')) {
+    const m = line.match(/^([\w-]+):\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].trim();
+    let value: any = m[2].trim();
+    if (value.startsWith('[') && value.endsWith(']')) {
+      try { value = JSON.parse(value); } catch { /* ignore */ }
+    } else if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    meta[key] = value;
+  }
+  return { meta, body };
+}
+
 export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateArticle }: Props) {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [importing, setImporting] = useState(false);
 
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -62,6 +92,32 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
       setArticles(data);
     } catch (err) {
       console.error('Search failed:', err);
+    }
+  };
+
+  const handleImport = async () => {
+    setImporting(true);
+    try {
+      const file = await pickMarkdownFile();
+      if (!file) return;
+      const { meta, body } = parseFrontmatter(file.content);
+      const titleFromFile = (meta.title as string) || extractTitleFromMarkdown(body) || file.name.replace(/\.(md|markdown|txt)$/i, '');
+      // 把 markdown body 转成 HTML 存储，与 TipTap 编辑器一致
+      const contentHtml = importedMarkdownToContent(body.trim());
+      const tags: string[] = Array.isArray(meta.tags) ? meta.tags : (typeof meta.tags === 'string' && meta.tags ? meta.tags.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+      await createArticle(userId, {
+        title: titleFromFile,
+        excerpt: typeof meta.excerpt === 'string' ? meta.excerpt : undefined,
+        cover_url: typeof meta.cover === 'string' ? meta.cover : undefined,
+        content: contentHtml,
+        tags
+      });
+      await loadArticles();
+    } catch (err) {
+      console.error('Import failed:', err);
+      alert('导入失败，请检查文件格式');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -113,13 +169,23 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
               <p className="text-gray-600">沉淀长文与博客内容</p>
             </div>
 
-            <button
-              onClick={onCreateArticle}
-              className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)]"
-            >
-              <Plus className="w-5 h-5" />
-              新建文章
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleImport}
+                disabled={importing}
+                className="flex items-center gap-2 px-4 py-3 border-2 border-gray-900 hover:bg-gray-100 disabled:opacity-60 transition-colors"
+              >
+                <Upload className="w-5 h-5" />
+                {importing ? '导入中…' : '导入 MD'}
+              </button>
+              <button
+                onClick={onCreateArticle}
+                className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)]"
+              >
+                <Plus className="w-5 h-5" />
+                新建文章
+              </button>
+            </div>
           </div>
         </div>
 

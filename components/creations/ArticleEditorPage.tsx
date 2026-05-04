@@ -1,6 +1,6 @@
 // 文章编辑页（WYSIWYG，所见即所得 + 自动保存 + 离开保护）
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { ArrowLeft, Save, X, Tag, Loader2, Check } from 'lucide-react';
+import { ArrowLeft, Save, X, Tag, Loader2, Check, Upload } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -14,6 +14,11 @@ import {
 } from '../../lib/articles';
 import { supabase } from '../../lib/supabase';
 import { Confirm } from '../../shared/Confirm';
+import {
+  pickMarkdownFile,
+  importedMarkdownToContent,
+  extractTitleFromMarkdown
+} from '../../lib/markdown-io';
 
 interface Props {
   userId: string;
@@ -317,6 +322,30 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
     performSave();
   };
 
+  const handleImportMarkdown = async () => {
+    if (!editor) return;
+    const file = await pickMarkdownFile();
+    if (!file) return;
+    // 简单 frontmatter 处理：截掉头部 ---block---，正文转 HTML
+    let body = file.content;
+    if (body.startsWith('---')) {
+      const end = body.indexOf('\n---', 3);
+      if (end > 0) {
+        const head = body.slice(3, end);
+        body = body.slice(end + 4).replace(/^\r?\n/, '');
+        const titleMatch = head.match(/^title:\s*(.+)$/m);
+        if (titleMatch && !title.trim()) setTitle(titleMatch[1].trim().replace(/^["']|["']$/g, ''));
+      }
+    }
+    if (!title.trim()) {
+      const t = extractTitleFromMarkdown(body);
+      if (t) setTitle(t);
+    }
+    const html = importedMarkdownToContent(body);
+    editor.commands.setContent(html, { emitUpdate: true });
+    setStatus('dirty');
+  };
+
   const formatTime = (d: Date | null) => {
     if (!d) return '';
     return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
@@ -371,6 +400,14 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
 
           <div className="flex items-center gap-3">
             {renderStatus()}
+            <button
+              onClick={handleImportMarkdown}
+              className="flex items-center gap-2 px-3 py-2 border-2 border-gray-300 hover:bg-gray-100 transition-colors text-sm"
+              title="导入 Markdown 文件（替换当前内容）"
+            >
+              <Upload className="w-4 h-4" />
+              导入 MD
+            </button>
             <button
               onClick={handleManualSave}
               disabled={status === 'saving'}
