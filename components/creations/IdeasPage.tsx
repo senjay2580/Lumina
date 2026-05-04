@@ -167,7 +167,7 @@ export default function IdeasPage({ userId, onBack }: Props) {
           
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">文章/想法</h1>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">想法</h1>
               <p className="text-gray-600">记录灵感和思考</p>
             </div>
             

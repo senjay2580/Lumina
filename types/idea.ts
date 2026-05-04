@@ -1,10 +1,15 @@
 // 文章/想法类型定义
 
+export type IdeaKind = 'idea' | 'article';
+
 export interface Idea {
   id: string;
   user_id: string;
-  title?: string; // 标题可选
+  kind: IdeaKind;
+  title?: string;
   content: string;
+  excerpt?: string;
+  cover_url?: string;
   tags: string[];
   source: 'manual' | 'feishu';
   created_at: string;
@@ -12,8 +17,11 @@ export interface Idea {
 }
 
 export interface CreateIdeaData {
-  title?: string; // 标题可选
+  kind?: IdeaKind;
+  title?: string;
   content: string;
+  excerpt?: string;
+  cover_url?: string;
   tags?: string[];
   source?: 'manual' | 'feishu';
 }
@@ -21,5 +29,7 @@ export interface CreateIdeaData {
 export interface UpdateIdeaData {
   title?: string;
   content?: string;
+  excerpt?: string;
+  cover_url?: string;
   tags?: string[];
 }

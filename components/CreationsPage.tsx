@@ -9,17 +9,32 @@ import JobApplicationsPage from './creations/JobApplicationsPage';
 import CharacterGalleryPage from './creations/CharacterGalleryPage';
 import HabitSchedulePage from './creations/HabitSchedulePage';
 import IdeasPage from './creations/IdeasPage';
+import ArticlesPage from './creations/ArticlesPage';
+import ArticleDetailPage from './creations/ArticleDetailPage';
+import ArticleEditorPage from './creations/ArticleEditorPage';
+import type { Article } from '../lib/articles';
 
 interface Props {
   userId?: string;
 }
 
-type ViewMode = 'home' | 'resume-list' | 'resume-editor' | 'job-applications' | 'character-gallery' | 'habit-schedule' | 'ideas';
+type ViewMode =
+  | 'home'
+  | 'resume-list'
+  | 'resume-editor'
+  | 'job-applications'
+  | 'character-gallery'
+  | 'habit-schedule'
+  | 'ideas'
+  | 'articles'
+  | 'article-detail'
+  | 'article-editor';
 
 export default function CreationsPage({ userId }: Props) {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('home');
   const [selectedResume, setSelectedResume] = useState<Creation | null>(null);
+  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
 
   useEffect(() => {
     if (userId) {
@@ -39,98 +54,116 @@ export default function CreationsPage({ userId }: Props) {
     }
   };
 
-  const handleResumeClick = () => {
-    setViewMode('resume-list');
-  };
-
+  const handleResumeClick = () => setViewMode('resume-list');
   const handleSelectResume = (creation: Creation) => {
     setSelectedResume(creation);
     setViewMode('resume-editor');
   };
-
-  const handleOpenApplications = () => {
-    setViewMode('job-applications');
-  };
-
+  const handleOpenApplications = () => setViewMode('job-applications');
   const handleBackToList = () => {
     setSelectedResume(null);
     setViewMode('resume-list');
   };
-
   const handleBackToHome = () => {
     setSelectedResume(null);
+    setSelectedArticle(null);
     setViewMode('home');
   };
-
-  const handleBackFromApplications = () => {
-    setViewMode('resume-list');
+  const handleBackFromApplications = () => setViewMode('resume-list');
+  const handleOpenCharacterGallery = () => setViewMode('character-gallery');
+  const handleBackFromCharacterGallery = () => setViewMode('home');
+  const handleOpenHabitSchedule = () => setViewMode('habit-schedule');
+  const handleBackFromHabitSchedule = () => setViewMode('home');
+  const handleOpenIdeas = () => setViewMode('ideas');
+  const handleBackFromIdeas = () => setViewMode('home');
+  const handleOpenArticles = () => setViewMode('articles');
+  const handleBackFromArticles = () => setViewMode('home');
+  const handleOpenArticle = (article: Article) => {
+    setSelectedArticle(article);
+    setViewMode('article-detail');
+  };
+  const handleCreateArticle = () => {
+    setSelectedArticle(null);
+    setViewMode('article-editor');
+  };
+  const handleEditArticle = (article: Article) => {
+    setSelectedArticle(article);
+    setViewMode('article-editor');
+  };
+  const handleArticleSaved = (article: Article) => {
+    setSelectedArticle(article);
+    setViewMode('article-detail');
+  };
+  const handleArticleDeleted = () => {
+    setSelectedArticle(null);
+    setViewMode('articles');
+  };
+  const handleBackFromArticleDetail = () => {
+    setSelectedArticle(null);
+    setViewMode('articles');
+  };
+  const handleBackFromArticleEditor = () => {
+    if (selectedArticle?.id) {
+      setViewMode('article-detail');
+    } else {
+      setViewMode('articles');
+    }
   };
 
-  const handleOpenCharacterGallery = () => {
-    setViewMode('character-gallery');
-  };
+  // 文章编辑器
+  if (viewMode === 'article-editor' && userId) {
+    return (
+      <ArticleEditorPage
+        userId={userId}
+        initial={selectedArticle}
+        onBack={handleBackFromArticleEditor}
+        onSaved={handleArticleSaved}
+      />
+    );
+  }
 
-  const handleBackFromCharacterGallery = () => {
-    setViewMode('home');
-  };
+  // 文章详情
+  if (viewMode === 'article-detail' && selectedArticle && userId) {
+    return (
+      <ArticleDetailPage
+        articleId={selectedArticle.id}
+        initial={selectedArticle}
+        onBack={handleBackFromArticleDetail}
+        onEdit={handleEditArticle}
+        onDeleted={handleArticleDeleted}
+      />
+    );
+  }
 
-  const handleOpenHabitSchedule = () => {
-    setViewMode('habit-schedule');
-  };
+  // 文章列表
+  if (viewMode === 'articles' && userId) {
+    return (
+      <ArticlesPage
+        userId={userId}
+        onBack={handleBackFromArticles}
+        onOpenArticle={handleOpenArticle}
+        onCreateArticle={handleCreateArticle}
+      />
+    );
+  }
 
-  const handleBackFromHabitSchedule = () => {
-    setViewMode('home');
-  };
-
-  const handleOpenIdeas = () => {
-    setViewMode('ideas');
-  };
-
-  const handleBackFromIdeas = () => {
-    setViewMode('home');
-  };
-
-  // 文章/想法视图
+  // 想法
   if (viewMode === 'ideas' && userId) {
-    return (
-      <IdeasPage
-        userId={userId}
-        onBack={handleBackFromIdeas}
-      />
-    );
+    return <IdeasPage userId={userId} onBack={handleBackFromIdeas} />;
   }
 
-  // 习惯纠正站视图
   if (viewMode === 'habit-schedule' && userId) {
-    return (
-      <HabitSchedulePage
-        userId={userId}
-        onBack={handleBackFromHabitSchedule}
-      />
-    );
+    return <HabitSchedulePage userId={userId} onBack={handleBackFromHabitSchedule} />;
   }
 
-  // 语言/行为画廊视图
   if (viewMode === 'character-gallery' && userId) {
-    return (
-      <CharacterGalleryPage
-        userId={userId}
-        onBack={handleBackFromCharacterGallery}
-      />
-    );
+    return <CharacterGalleryPage userId={userId} onBack={handleBackFromCharacterGallery} />;
   }
 
-  // 投递记录视图
   if (viewMode === 'job-applications' && userId) {
-    return (
-      <JobApplicationsPage
-        userId={userId}
-        onBack={handleBackFromApplications}
-      />
-    );
+    return <JobApplicationsPage userId={userId} onBack={handleBackFromApplications} />;
   }
 
-  // 简历编辑器视图
   if (viewMode === 'resume-editor' && selectedResume && userId) {
     return (
       <ResumeEditorPage
@@ -141,7 +174,6 @@ export default function CreationsPage({ userId }: Props) {
     );
   }
 
-  // 简历列表视图
   if (viewMode === 'resume-list' && userId) {
     return (
       <ResumeListPage
@@ -156,12 +188,11 @@ export default function CreationsPage({ userId }: Props) {
   return (
     <div className="w-full h-full overflow-y-auto">
       <div className="max-w-7xl mx-auto px-6 md:px-10 py-8">
-        {/* 头部 */}
         <div className="mb-12">
           <div className="flex items-center gap-3 mb-2">
-            <img 
-              src="/icons/database-stack.svg" 
-              alt="我的创作" 
+            <img
+              src="/icons/database-stack.svg"
+              alt="我的创作"
               className="w-10 h-10"
             />
             <div>
@@ -176,16 +207,12 @@ export default function CreationsPage({ userId }: Props) {
             <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
           </div>
         ) : (
-          /* 不规则网格布局 - 简约风格 */
           <div className="grid grid-cols-12 gap-6 auto-rows-[180px]">
-            {/* 简历 - 超大卡片 (占据 7列 x 2行) */}
+            {/* 简历 - 超大卡片 (7 x 2) */}
             <motion.button
               onClick={handleResumeClick}
               className="col-span-7 row-span-2 group relative overflow-hidden bg-white border-2 border-gray-900 p-8 text-gray-900 transition-all"
-              whileHover={{ 
-                scale: 1.02,
-                boxShadow: '0 8px 16px rgba(0,0,0,0.1)'
-              }}
+              whileHover={{ scale: 1.02, boxShadow: '0 8px 16px rgba(0,0,0,0.1)' }}
               whileTap={{ scale: 0.98 }}
             >
               <div className="relative z-10 h-full flex flex-col items-center justify-center text-center">
@@ -200,33 +227,52 @@ export default function CreationsPage({ userId }: Props) {
               </div>
             </motion.button>
 
-            {/* 文章 - 中等卡片 (5列 x 2行) */}
+            {/* 文章 - 中等卡片 (5 x 1) */}
             <motion.button
-              onClick={handleOpenIdeas}
-              className="col-span-5 row-span-2 group relative overflow-hidden bg-white border-2 border-gray-900 p-8 text-gray-900 transition-all"
-              whileHover={{ 
-                scale: 1.02,
-                boxShadow: '0 8px 16px rgba(0,0,0,0.1)'
-              }}
+              onClick={handleOpenArticles}
+              className="col-span-5 row-span-1 group relative overflow-hidden bg-white border-2 border-gray-900 p-6 text-gray-900 transition-all"
+              whileHover={{ scale: 1.02, boxShadow: '0 8px 16px rgba(0,0,0,0.1)' }}
               whileTap={{ scale: 0.98 }}
             >
-              <div className="relative z-10 h-full flex flex-col items-center justify-center text-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-14 h-14 mb-6" viewBox="0 0 16 16">
-                  <path fill="currentColor" d="m14.4 13l-.239 1.196a1 1 0 0 1-.98.804h-.362a1 1 0 0 1-.98-.804L11.599 13zM6 2c.788 0 1.499.331 2 .862A2.74 2.74 0 0 1 10 2h3.25c.966 0 1.75.784 1.75 1.75v1.786a4 4 0 0 0-1.5-.505V3.75a.25.25 0 0 0-.25-.25H10c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h.48l.3 1.5H10a2.74 2.74 0 0 1-2-.862A2.74 2.74 0 0 1 6 14H2.75A1.75 1.75 0 0 1 1 12.25v-8.5C1 2.784 1.784 2 2.75 2zM2.75 3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25H6c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25zM13 6a3 3 0 0 1 1.706 5.468L14.6 12h-3.2l-.106-.532A3 3 0 0 1 13 6"/>
-                </svg>
-                <h3 className="text-3xl font-bold mb-2">文章/想法</h3>
-                <p className="text-gray-500 text-sm mb-3">Article/Idea</p>
-                <p className="text-gray-600 text-sm">捕捉灵感火花，沉淀思考深度</p>
+              <div className="relative z-10 h-full flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12" viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2m-2 14H7v-2h10zm0-4H7v-2h10zm0-4H7V7h10z"/>
+                  </svg>
+                  <div className="text-left">
+                    <h3 className="text-2xl font-bold mb-1">文章</h3>
+                    <p className="text-gray-500 text-sm">Article</p>
+                    <p className="text-gray-600 text-xs mt-1">沉淀长文，构建你的博客</p>
+                  </div>
+                </div>
               </div>
             </motion.button>
 
-            {/* 设计 - 中等卡片 (5列 x 1行) */}
+            {/* 想法 - 中等卡片 (5 x 1) */}
+            <motion.button
+              onClick={handleOpenIdeas}
+              className="col-span-5 row-span-1 group relative overflow-hidden bg-white border-2 border-gray-900 p-6 text-gray-900 transition-all"
+              whileHover={{ scale: 1.02, boxShadow: '0 8px 16px rgba(0,0,0,0.1)' }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <div className="relative z-10 h-full flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12" viewBox="0 0 16 16">
+                    <path fill="currentColor" d="m14.4 13l-.239 1.196a1 1 0 0 1-.98.804h-.362a1 1 0 0 1-.98-.804L11.599 13zM6 2c.788 0 1.499.331 2 .862A2.74 2.74 0 0 1 10 2h3.25c.966 0 1.75.784 1.75 1.75v1.786a4 4 0 0 0-1.5-.505V3.75a.25.25 0 0 0-.25-.25H10c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h.48l.3 1.5H10a2.74 2.74 0 0 1-2-.862A2.74 2.74 0 0 1 6 14H2.75A1.75 1.75 0 0 1 1 12.25v-8.5C1 2.784 1.784 2 2.75 2zM2.75 3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25H6c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25zM13 6a3 3 0 0 1 1.706 5.468L14.6 12h-3.2l-.106-.532A3 3 0 0 1 13 6"/>
+                  </svg>
+                  <div className="text-left">
+                    <h3 className="text-2xl font-bold mb-1">想法</h3>
+                    <p className="text-gray-500 text-sm">Idea</p>
+                    <p className="text-gray-600 text-xs mt-1">捕捉灵感火花，记录碎片思考</p>
+                  </div>
+                </div>
+              </div>
+            </motion.button>
+
+            {/* 设计 - 中等卡片 (5 x 1) */}
             <motion.button
               className="col-span-5 row-span-1 group relative overflow-hidden bg-white border-2 border-gray-900 p-6 text-gray-900 transition-all"
-              whileHover={{ 
-                scale: 1.02,
-                boxShadow: '0 8px 16px rgba(0,0,0,0.1)'
-              }}
+              whileHover={{ scale: 1.02, boxShadow: '0 8px 16px rgba(0,0,0,0.1)' }}
               whileTap={{ scale: 0.98 }}
             >
               <div className="relative z-10 h-full flex items-center justify-between">
@@ -243,14 +289,11 @@ export default function CreationsPage({ userId }: Props) {
               </div>
             </motion.button>
 
-            {/* 习惯纠正站 - 中等卡片 (4列 x 1行) */}
+            {/* 习惯纠正站 (4 x 1) */}
             <motion.button
               onClick={handleOpenHabitSchedule}
               className="col-span-4 row-span-1 group relative overflow-hidden bg-white border-2 border-gray-900 p-6 text-gray-900 transition-all"
-              whileHover={{ 
-                scale: 1.02,
-                boxShadow: '0 8px 16px rgba(0,0,0,0.1)'
-              }}
+              whileHover={{ scale: 1.02, boxShadow: '0 8px 16px rgba(0,0,0,0.1)' }}
               whileTap={{ scale: 0.98 }}
             >
               <div className="relative z-10 h-full flex items-center justify-between">
@@ -270,14 +313,11 @@ export default function CreationsPage({ userId }: Props) {
               </div>
             </motion.button>
 
-            {/* 文档 - 中等卡片 (3列 x 1行) */}
+            {/* 语言/行为 (3 x 1) */}
             <motion.button
               onClick={handleOpenCharacterGallery}
               className="col-span-3 row-span-1 group relative overflow-hidden bg-white border-2 border-gray-900 p-6 text-gray-900 transition-all"
-              whileHover={{ 
-                scale: 1.02,
-                boxShadow: '0 8px 16px rgba(0,0,0,0.1)'
-              }}
+              whileHover={{ scale: 1.02, boxShadow: '0 8px 16px rgba(0,0,0,0.1)' }}
               whileTap={{ scale: 0.98 }}
             >
               <div className="relative z-10 h-full flex flex-col items-center justify-center text-center">

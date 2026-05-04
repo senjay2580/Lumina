@@ -1,83 +1,85 @@
-// 想法数据库操作（kind='idea'）
+// 文章数据库操作（kind='article'）
 import { supabase } from './supabase';
 import type { Idea, CreateIdeaData, UpdateIdeaData } from '../types/idea';
 
-export async function getIdeas(userId: string): Promise<Idea[]> {
+export type Article = Idea;
+
+export async function getArticles(userId: string): Promise<Article[]> {
   const { data, error } = await supabase
     .from('ideas')
     .select('*')
     .eq('user_id', userId)
-    .eq('kind', 'idea')
+    .eq('kind', 'article')
     .order('created_at', { ascending: false });
 
   if (error) throw error;
   return data || [];
 }
 
-export async function getIdea(ideaId: string): Promise<Idea | null> {
+export async function getArticle(articleId: string): Promise<Article | null> {
   const { data, error } = await supabase
     .from('ideas')
     .select('*')
-    .eq('id', ideaId)
+    .eq('id', articleId)
     .single();
 
   if (error) throw error;
   return data;
 }
 
-export async function createIdea(
+export async function createArticle(
   userId: string,
   data: CreateIdeaData
-): Promise<Idea> {
-  const { data: idea, error } = await supabase
+): Promise<Article> {
+  const { data: article, error } = await supabase
     .from('ideas')
     .insert({
       user_id: userId,
       ...data,
-      kind: data.kind || 'idea',
+      kind: 'article',
       source: data.source || 'manual'
     })
     .select()
     .single();
 
   if (error) throw error;
-  return idea;
+  return article;
 }
 
-export async function updateIdea(
-  ideaId: string,
+export async function updateArticle(
+  articleId: string,
   data: UpdateIdeaData
-): Promise<Idea> {
-  const { data: idea, error } = await supabase
+): Promise<Article> {
+  const { data: article, error } = await supabase
     .from('ideas')
     .update({
       ...data,
       updated_at: new Date().toISOString()
     })
-    .eq('id', ideaId)
+    .eq('id', articleId)
     .select()
     .single();
 
   if (error) throw error;
-  return idea;
+  return article;
 }
 
-export async function deleteIdea(ideaId: string): Promise<void> {
+export async function deleteArticle(articleId: string): Promise<void> {
   const { error } = await supabase
     .from('ideas')
     .delete()
-    .eq('id', ideaId);
+    .eq('id', articleId);
 
   if (error) throw error;
 }
 
-export async function searchIdeas(userId: string, keyword: string): Promise<Idea[]> {
+export async function searchArticles(userId: string, keyword: string): Promise<Article[]> {
   const { data, error } = await supabase
     .from('ideas')
     .select('*')
     .eq('user_id', userId)
-    .eq('kind', 'idea')
-    .or(`title.ilike.%${keyword}%,content.ilike.%${keyword}%`)
+    .eq('kind', 'article')
+    .or(`title.ilike.%${keyword}%,content.ilike.%${keyword}%,excerpt.ilike.%${keyword}%`)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
