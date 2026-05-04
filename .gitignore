@@ -28,3 +28,7 @@ dist-ssr
 
 # Personal memory files
 docs/career-planning-memory.md
+
+# Local secrets / auth
+auth.json
+
