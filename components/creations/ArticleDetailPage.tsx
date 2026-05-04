@@ -2,10 +2,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Edit2, Trash2, Calendar, ArrowUp, List, Clock, Tag,
-  Download, FileDown, Image as ImageIcon, FileText, ChevronDown
+  Download, FileDown, Image as ImageIcon, FileText, ChevronDown,
+  Play, Pause, Square, MessageSquare, Send, Sparkles, Gauge
 } from 'lucide-react';
 import { marked } from 'marked';
-import { getArticle, deleteArticle, type Article } from '../../lib/articles';
+import {
+  getArticle, deleteArticle, getNotes, addNote, deleteNote,
+  getRelatedArticles, type Article, type ArticleNote
+} from '../../lib/articles';
 import { Confirm } from '../../shared/Confirm';
 import {
   articleContentToMarkdown,
@@ -34,7 +38,7 @@ type WidthMode = 'compact' | 'standard' | 'wide';
 const WIDTH_PRESETS: Record<WidthMode, { article: number; toc: number; label: string }> = {
   compact: { article: 760, toc: 220, label: '紧凑' },
   standard: { article: 880, toc: 240, label: '标准' },
-  wide: { article: 1040, toc: 260, label: '宽阔' }
+  wide: { article: 1120, toc: 260, label: '宽阔' }
 };
 
 const WIDTH_STORAGE_KEY = 'lumina:article:width';
@@ -60,11 +64,33 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const [activeId, setActiveId] = useState<string>('');
   const [exporting, setExporting] = useState<'png' | 'pdf' | 'md' | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [tocVisible, setTocVisible] = useState(true);
   const [widthMode, setWidthMode] = useState<WidthMode>(() => {
     if (typeof window === 'undefined') return 'wide';
     const stored = window.localStorage.getItem(WIDTH_STORAGE_KEY) as WidthMode | null;
     return stored && stored in WIDTH_PRESETS ? stored : 'wide';
   });
+
+  // 笔记
+  const [notes, setNotes] = useState<ArticleNote[]>([]);
+  const [noteInput, setNoteInput] = useState('');
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
+
+  // 相关文章
+  const [related, setRelated] = useState<{ article: Article; score: number }[]>([]);
+
+  // TTS
+  const [ttsState, setTtsState] = useState<'idle' | 'playing' | 'paused'>('idle');
+  const [ttsRate, setTtsRate] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1;
+    const v = parseFloat(window.localStorage.getItem('lumina:tts:rate') || '1');
+    return isNaN(v) ? 1 : v;
+  });
+  const [ttsIdx, setTtsIdx] = useState(0);
+  const [ttsTotal, setTtsTotal] = useState(0);
+  const ttsSegmentsRef = useRef<HTMLElement[]>([]);
+  const ttsCurrentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const ttsCancelledRef = useRef(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -109,6 +135,189 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       active = false;
     };
   }, [articleId, initial]);
+
+  // 加载笔记
+  const reloadNotes = useCallback(async () => {
+    try {
+      const list = await getNotes(articleId);
+      setNotes(list);
+    } catch (err) {
+      console.error('Failed to load notes:', err);
+    }
+  }, [articleId]);
+
+  useEffect(() => {
+    reloadNotes();
+  }, [reloadNotes]);
+
+  // 加载相关文章
+  useEffect(() => {
+    if (!article) return;
+    let active = true;
+    (async () => {
+      try {
+        const list = await getRelatedArticles(article.user_id, article, 6);
+        if (active) setRelated(list);
+      } catch (err) {
+        console.error('Failed to load related articles:', err);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [article?.id, article?.user_id]);
+
+  // 持久化语速
+  useEffect(() => {
+    try { window.localStorage.setItem('lumina:tts:rate', String(ttsRate)); } catch {}
+  }, [ttsRate]);
+
+  const ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
+
+  const stopTts = useCallback(() => {
+    ttsCancelledRef.current = true;
+    if (ttsAvailable) window.speechSynthesis.cancel();
+    if (ttsSegmentsRef.current.length) {
+      ttsSegmentsRef.current.forEach((el) => el.classList.remove('tts-active'));
+    }
+    setTtsState('idle');
+    setTtsIdx(0);
+    ttsCurrentUtteranceRef.current = null;
+  }, [ttsAvailable]);
+
+  const speakSegment = useCallback(
+    (idx: number) => {
+      if (!ttsAvailable) return;
+      const segs = ttsSegmentsRef.current;
+      if (idx >= segs.length) {
+        stopTts();
+        return;
+      }
+      const el = segs[idx];
+      // 高亮当前段
+      segs.forEach((e) => e.classList.remove('tts-active'));
+      el.classList.add('tts-active');
+      // 视图滚动到段（仅当不在视口）
+      const rect = el.getBoundingClientRect();
+      const container = scrollRef.current;
+      if (container) {
+        const cTop = container.getBoundingClientRect().top;
+        const offset = rect.top - cTop;
+        if (offset < 80 || offset > container.clientHeight - 100) {
+          container.scrollTo({
+            top: container.scrollTop + offset - 200,
+            behavior: 'smooth'
+          });
+        }
+      }
+
+      const text = el.textContent || '';
+      if (!text.trim()) {
+        // 空文本跳过
+        setTtsIdx(idx + 1);
+        speakSegment(idx + 1);
+        return;
+      }
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = ttsRate;
+      u.lang = /[一-龥]/.test(text) ? 'zh-CN' : 'en-US';
+      u.onend = () => {
+        if (ttsCancelledRef.current) return;
+        const next = idx + 1;
+        setTtsIdx(next);
+        speakSegment(next);
+      };
+      u.onerror = () => {
+        if (ttsCancelledRef.current) return;
+        const next = idx + 1;
+        setTtsIdx(next);
+        speakSegment(next);
+      };
+      ttsCurrentUtteranceRef.current = u;
+      window.speechSynthesis.speak(u);
+    },
+    [ttsAvailable, ttsRate, stopTts]
+  );
+
+  const startTts = useCallback(() => {
+    if (!ttsAvailable || !articleRef.current) return;
+    // 收集可朗读片段
+    const segs = Array.from(
+      articleRef.current.querySelectorAll<HTMLElement>(
+        'h1, h2, h3, h4, p, blockquote, li'
+      )
+    ).filter((el) => (el.textContent || '').trim().length > 0);
+    if (segs.length === 0) return;
+    ttsSegmentsRef.current = segs;
+    setTtsTotal(segs.length);
+    ttsCancelledRef.current = false;
+    setTtsState('playing');
+    setTtsIdx(0);
+    speakSegment(0);
+  }, [ttsAvailable, speakSegment]);
+
+  const pauseTts = useCallback(() => {
+    if (!ttsAvailable) return;
+    window.speechSynthesis.pause();
+    setTtsState('paused');
+  }, [ttsAvailable]);
+
+  const resumeTts = useCallback(() => {
+    if (!ttsAvailable) return;
+    window.speechSynthesis.resume();
+    setTtsState('playing');
+  }, [ttsAvailable]);
+
+  // 语速变化时重新设置当前 utterance（浏览器不支持热更，需要重启当前段）
+  useEffect(() => {
+    if (ttsState === 'playing' && ttsCurrentUtteranceRef.current) {
+      // 取消当前并重启当前段（保持 idx 不变）
+      window.speechSynthesis.cancel();
+      ttsCurrentUtteranceRef.current = null;
+      // 用最新 rate 重启
+      requestAnimationFrame(() => {
+        speakSegment(ttsIdx);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsRate]);
+
+  // 卸载时停止
+  useEffect(() => {
+    return () => {
+      if (ttsAvailable) {
+        ttsCancelledRef.current = true;
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [ttsAvailable]);
+
+  // 笔记提交
+  const handleAddNote = async () => {
+    if (!article) return;
+    const content = noteInput.trim();
+    if (!content) return;
+    setNoteSubmitting(true);
+    try {
+      await addNote(article.user_id, article.id, content);
+      setNoteInput('');
+      await reloadNotes();
+    } catch (err) {
+      console.error('Failed to add note:', err);
+      alert('添加笔记失败');
+    } finally {
+      setNoteSubmitting(false);
+    }
+  };
+
+  const handleDeleteNote = async (noteId: string) => {
+    try {
+      await deleteNote(noteId);
+      await reloadNotes();
+    } catch (err) {
+      console.error('Failed to delete note:', err);
+    }
+  };
 
   // 解析 HTML 时同步注入 heading id 并生成 TOC，保证 id 在首次渲染就在 DOM 上
   const { html, tocFromHtml } = useMemo(() => {
@@ -439,13 +648,58 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             </button>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowTocMobile((v) => !v)}
-                className="article-icon-btn lg:hidden"
-                title="目录"
-                aria-label="目录"
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
+                    setTocVisible((v) => !v);
+                  } else {
+                    setShowTocMobile((v) => !v);
+                  }
+                }}
+                className={`article-icon-btn ${tocVisible ? 'is-active' : ''}`}
+                title={tocVisible ? '隐藏目录' : '显示目录'}
+                aria-label="切换目录"
               >
                 <List className="w-4 h-4" />
               </button>
+
+              {/* TTS 朗读 */}
+              {ttsAvailable && (
+                <div className="article-tts-group" title="朗读">
+                  {ttsState === 'idle' ? (
+                    <button onClick={startTts} className="article-icon-btn" aria-label="开始朗读">
+                      <Play className="w-4 h-4" />
+                    </button>
+                  ) : ttsState === 'playing' ? (
+                    <button onClick={pauseTts} className="article-icon-btn is-active" aria-label="暂停">
+                      <Pause className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button onClick={resumeTts} className="article-icon-btn is-active" aria-label="继续">
+                      <Play className="w-4 h-4" />
+                    </button>
+                  )}
+                  {ttsState !== 'idle' && (
+                    <button onClick={stopTts} className="article-icon-btn" aria-label="停止">
+                      <Square className="w-4 h-4" />
+                    </button>
+                  )}
+                  <div className="article-tts-rate" title="语速">
+                    <Gauge className="w-3.5 h-3.5" />
+                    <select
+                      value={ttsRate}
+                      onChange={(e) => setTtsRate(parseFloat(e.target.value))}
+                      aria-label="朗读语速"
+                    >
+                      <option value="0.75">0.75x</option>
+                      <option value="1">1x</option>
+                      <option value="1.25">1.25x</option>
+                      <option value="1.5">1.5x</option>
+                      <option value="1.75">1.75x</option>
+                      <option value="2">2x</option>
+                    </select>
+                  </div>
+                </div>
+              )}
 
               {/* 导出下拉菜单 */}
               <div className="relative" ref={exportMenuRef}>
@@ -509,7 +763,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           style={{ maxWidth: `${containerMaxWidth}px` }}
         >
           <div
-            className="article-grid gap-12"
+            className={`article-grid gap-12 ${tocVisible ? '' : 'is-toc-hidden'}`}
             style={
               {
                 '--article-w': `${preset.article}px`,
@@ -570,7 +824,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                 dangerouslySetInnerHTML={{ __html: html }}
               />
 
-              {/* 文末分隔 + 装饰 SVG */}
+              {/* 文末分隔 + 装饰 SVG（居中） */}
               <div className="article-footer">
                 <svg
                   className="article-footer-flourish"
@@ -578,32 +832,125 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                   fill="none"
                   aria-hidden="true"
                 >
-                  <path
-                    d="M0 12 H80 M120 12 H200"
-                    stroke="#D8D5C7"
-                    strokeWidth="1"
-                  />
+                  <path d="M0 12 H80 M120 12 H200" stroke="#D8D5C7" strokeWidth="1" />
                   <circle cx="100" cy="12" r="3.5" fill="none" stroke="#D97757" strokeOpacity="0.7" />
                   <circle cx="100" cy="12" r="1" fill="#D97757" />
                 </svg>
 
                 {article.tags && article.tags.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 mt-8">
+                  <div className="article-footer-tags">
                     <Tag className="w-4 h-4 text-stone-400" />
                     {article.tags.map((t) => (
                       <span key={t} className="article-tag">{t}</span>
                     ))}
                   </div>
                 )}
-                <button onClick={scrollToTop} className="article-link-btn flex items-center gap-2 mt-6">
+                <button onClick={scrollToTop} className="article-link-btn article-back-top-link">
                   <ArrowUp className="w-4 h-4" />
                   回到顶部
                 </button>
               </div>
+
+              {/* 笔记 / 备注 区块 */}
+              <section className="article-notes-section">
+                <div className="article-section-header">
+                  <MessageSquare className="w-4 h-4" />
+                  <span>笔记 · {notes.length}</span>
+                </div>
+                <div className="article-note-input">
+                  <textarea
+                    value={noteInput}
+                    onChange={(e) => setNoteInput(e.target.value)}
+                    placeholder="写下你对这篇文章的想法、批注或延伸思考…"
+                    rows={3}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddNote();
+                      }
+                    }}
+                  />
+                  <div className="article-note-input-actions">
+                    <span className="article-note-hint">⌘/Ctrl + Enter 提交</span>
+                    <button
+                      onClick={handleAddNote}
+                      disabled={!noteInput.trim() || noteSubmitting}
+                      className="article-note-submit"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      {noteSubmitting ? '提交中…' : '添加笔记'}
+                    </button>
+                  </div>
+                </div>
+                {notes.length > 0 && (
+                  <ul className="article-notes-list">
+                    {notes.map((n) => (
+                      <li key={n.id} className="article-note-item">
+                        <div className="article-note-content">{n.content}</div>
+                        <div className="article-note-meta">
+                          <span>{formatDate(n.created_at)}</span>
+                          <button
+                            onClick={() => handleDeleteNote(n.id)}
+                            className="article-note-delete"
+                            aria-label="删除笔记"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {/* 相关文章 */}
+              {related.length > 0 && (
+                <section className="article-related-section">
+                  <div className="article-section-header">
+                    <Sparkles className="w-4 h-4" />
+                    <span>同类文章</span>
+                  </div>
+                  <div className="article-related-grid">
+                    {related.map(({ article: a, score }) => (
+                      <button
+                        key={a.id}
+                        onClick={() => {
+                          // 简单刷新策略：通过路由跳到该文章详情
+                          window.location.hash = `#article/${a.id}`;
+                          window.location.reload();
+                        }}
+                        className="article-related-card"
+                        title={`匹配度 ${(score * 10).toFixed(1)}`}
+                      >
+                        {a.cover_url ? (
+                          <div className="article-related-cover">
+                            <img src={a.cover_url} alt="" loading="lazy" />
+                          </div>
+                        ) : (
+                          <div className="article-related-cover article-related-cover-placeholder">
+                            <FileText className="w-6 h-6" />
+                          </div>
+                        )}
+                        <div className="article-related-body">
+                          <div className="article-related-title">{a.title || '无标题'}</div>
+                          {a.excerpt && <div className="article-related-excerpt">{a.excerpt}</div>}
+                          {a.tags && a.tags.length > 0 && (
+                            <div className="article-related-tags">
+                              {a.tags.slice(0, 3).map((t) => (
+                                <span key={t} className="article-related-tag">{t}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
             </article>
 
             {/* 侧边浮动目录（桌面） */}
-            {toc.length > 0 && (
+            {toc.length > 0 && tocVisible && (
               <aside className="hidden lg:block">
                 <nav className="sticky top-24 article-toc-wrap">
                   <div className="article-toc-header">
@@ -675,6 +1022,22 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       >
         <ArrowUp className="w-5 h-5" />
       </button>
+
+      {/* TTS 浮动进度条 */}
+      {ttsState !== 'idle' && ttsTotal > 0 && (
+        <div className="article-tts-progress" role="progressbar" aria-label="朗读进度">
+          <div className="article-tts-progress-info">
+            <span>朗读中 {ttsIdx + 1} / {ttsTotal}</span>
+            <span className="article-tts-progress-rate">{ttsRate}x</span>
+          </div>
+          <div className="article-tts-progress-bar">
+            <div
+              className="article-tts-progress-fill"
+              style={{ width: `${Math.min(100, ((ttsIdx + 1) / ttsTotal) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <Confirm
         isOpen={confirmOpen}
@@ -1116,13 +1479,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         }
         .article-prose tr:hover td { background: var(--bg-alt); }
 
-        /* 文末 */
-        .article-footer { margin-top: 80px; }
-        .article-footer-flourish {
-          width: 200px; height: 24px;
-          margin: 24px 0;
-        }
-
         /* 浮动目录 */
         .article-toc-wrap {
           font-family: var(--sans);
@@ -1190,6 +1546,341 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         }
         .article-toc-link.is-active .article-toc-text {
           color: var(--accent);
+          font-weight: 500;
+        }
+
+        /* 文末居中 */
+        .article-footer { margin-top: 80px; text-align: center; }
+        .article-footer-flourish {
+          width: 200px; height: 24px;
+          margin: 24px auto;
+        }
+        .article-footer-tags {
+          display: inline-flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+          margin-top: 12px;
+          justify-content: center;
+        }
+        .article-back-top-link {
+          display: inline-flex !important;
+          align-items: center;
+          gap: 8px;
+          margin: 24px auto 0;
+        }
+
+        /* 隐藏目录时单列 */
+        @media (min-width: 1024px) {
+          .article-grid.is-toc-hidden {
+            grid-template-columns: minmax(0, var(--article-w, 1120px));
+            justify-content: center;
+          }
+        }
+
+        .article-icon-btn.is-active {
+          color: var(--accent);
+          border-color: var(--accent);
+          background: rgba(217,119,87,0.08);
+        }
+
+        /* TTS 控件组 */
+        .article-tts-group {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding-left: 6px;
+          margin-left: 2px;
+          border-left: 1px solid var(--rule);
+        }
+        .article-tts-rate {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 0 8px;
+          height: 36px;
+          border: 1px solid var(--rule);
+          border-radius: 8px;
+          background: rgba(255,255,255,0.6);
+          color: var(--ink-muted);
+          font-size: 12px;
+        }
+        .article-tts-rate select {
+          background: transparent;
+          border: none;
+          outline: none;
+          font: inherit;
+          color: var(--ink);
+          cursor: pointer;
+          padding: 0 4px;
+        }
+
+        /* TTS 高亮当前段 */
+        .article-prose .tts-active {
+          background: linear-gradient(120deg, rgba(244,217,204,0.55), rgba(244,217,204,0.25));
+          border-radius: 6px;
+          box-shadow: 0 0 0 4px rgba(244,217,204,0.4);
+          transition: background 0.2s, box-shadow 0.2s;
+        }
+
+        /* TTS 进度条（底部固定） */
+        .article-tts-progress {
+          position: fixed;
+          left: 50%;
+          bottom: 22px;
+          transform: translateX(-50%);
+          width: min(560px, calc(100vw - 80px));
+          padding: 12px 16px;
+          background: rgba(252, 251, 247, 0.92);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid var(--rule);
+          border-radius: 999px;
+          box-shadow: 0 4px 16px rgba(31,30,29,0.10);
+          z-index: 35;
+          font-family: var(--sans);
+        }
+        .article-tts-progress-info {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 12px;
+          color: var(--ink-muted);
+          margin-bottom: 6px;
+        }
+        .article-tts-progress-rate {
+          color: var(--accent);
+          font-weight: 600;
+        }
+        .article-tts-progress-bar {
+          height: 4px;
+          background: var(--rule);
+          border-radius: 999px;
+          overflow: hidden;
+        }
+        .article-tts-progress-fill {
+          height: 100%;
+          background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+          border-radius: 999px;
+          transition: width 0.3s ease;
+        }
+
+        /* 区块通用 */
+        .article-section-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-family: var(--sans);
+          font-size: 13px;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--ink-muted);
+          margin-bottom: 20px;
+        }
+        .article-section-header svg { color: var(--accent); }
+
+        /* 笔记区 */
+        .article-notes-section {
+          margin-top: 64px;
+          padding-top: 40px;
+          border-top: 1px solid var(--rule);
+        }
+        .article-note-input {
+          background: rgba(255,255,255,0.6);
+          border: 1px solid var(--rule);
+          border-radius: 12px;
+          padding: 14px 16px;
+          transition: border-color 0.15s, background 0.15s;
+        }
+        .article-note-input:focus-within {
+          border-color: var(--accent);
+          background: #fff;
+        }
+        .article-note-input textarea {
+          width: 100%;
+          border: none;
+          outline: none;
+          resize: vertical;
+          font-family: var(--serif);
+          font-size: 15px;
+          line-height: 1.65;
+          color: var(--ink);
+          background: transparent;
+          min-height: 60px;
+        }
+        .article-note-input textarea::placeholder { color: var(--ink-faint); }
+        .article-note-input-actions {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px dashed var(--rule);
+        }
+        .article-note-hint {
+          font-family: var(--sans);
+          font-size: 11px;
+          color: var(--ink-faint);
+        }
+        .article-note-submit {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 14px;
+          background: var(--ink);
+          color: #FCFBF7;
+          border: none;
+          border-radius: 8px;
+          font-family: var(--sans);
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+        .article-note-submit:hover { background: var(--accent); }
+        .article-note-submit:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          background: var(--ink-muted);
+        }
+
+        .article-notes-list {
+          list-style: none;
+          padding: 0;
+          margin: 24px 0 0;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .article-note-item {
+          padding: 14px 18px;
+          background: rgba(255,255,255,0.55);
+          border: 1px solid var(--rule);
+          border-radius: 10px;
+          transition: border-color 0.15s, background 0.15s;
+        }
+        .article-note-item:hover {
+          border-color: var(--rule-strong);
+          background: rgba(255,255,255,0.85);
+        }
+        .article-note-content {
+          font-family: var(--serif);
+          font-size: 15.5px;
+          line-height: 1.7;
+          color: var(--ink-soft);
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+        .article-note-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-top: 8px;
+          font-family: var(--sans);
+          font-size: 11px;
+          color: var(--ink-faint);
+        }
+        .article-note-delete {
+          background: transparent;
+          border: none;
+          color: var(--ink-faint);
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 4px;
+          transition: color 0.15s, background 0.15s;
+          display: inline-flex;
+          align-items: center;
+        }
+        .article-note-delete:hover {
+          color: #B53D2E;
+          background: rgba(181, 61, 46, 0.08);
+        }
+
+        /* 相关文章 */
+        .article-related-section {
+          margin-top: 56px;
+          padding-top: 40px;
+          border-top: 1px solid var(--rule);
+        }
+        .article-related-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+          gap: 16px;
+        }
+        .article-related-card {
+          display: flex;
+          flex-direction: column;
+          background: rgba(255,255,255,0.6);
+          border: 1px solid var(--rule);
+          border-radius: 12px;
+          overflow: hidden;
+          text-align: left;
+          cursor: pointer;
+          transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+          padding: 0;
+        }
+        .article-related-card:hover {
+          transform: translateY(-2px);
+          border-color: var(--rule-strong);
+          box-shadow: 0 8px 24px rgba(31,30,29,0.08);
+        }
+        .article-related-cover {
+          aspect-ratio: 16 / 9;
+          width: 100%;
+          background: var(--bg-alt);
+          overflow: hidden;
+          border-bottom: 1px solid var(--rule);
+        }
+        .article-related-cover img {
+          width: 100%; height: 100%;
+          object-fit: cover;
+        }
+        .article-related-cover-placeholder {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--ink-faint);
+        }
+        .article-related-body {
+          padding: 14px 16px 16px;
+        }
+        .article-related-title {
+          font-family: var(--serif);
+          font-size: 16px;
+          font-weight: 600;
+          line-height: 1.35;
+          color: var(--ink);
+          margin-bottom: 6px;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .article-related-excerpt {
+          font-family: var(--sans);
+          font-size: 12.5px;
+          line-height: 1.55;
+          color: var(--ink-muted);
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          margin-bottom: 8px;
+        }
+        .article-related-tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin-top: 6px;
+        }
+        .article-related-tag {
+          font-family: var(--sans);
+          font-size: 10.5px;
+          padding: 2px 8px;
+          color: var(--accent);
+          background: var(--accent-soft);
+          border-radius: 999px;
           font-weight: 500;
         }
 
