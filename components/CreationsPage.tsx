@@ -130,7 +130,7 @@ export default function CreationsPage({ userId }: Props) {
         initial={selectedArticle}
         onBack={handleBackFromArticleDetail}
         onEdit={handleEditArticle}
-        onDeleted={handleArticleDeleted}
+        onImported={handleArticleSaved}
       />
     );
   }

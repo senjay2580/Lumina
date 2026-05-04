@@ -2,15 +2,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Edit2, Trash2, Calendar, ArrowUp, List, Clock, Tag,
-  Download, FileDown, Image as ImageIcon, FileText, ChevronDown,
+  Download, FileDown, Image as ImageIcon, FileText, ChevronDown, Upload,
   Play, Pause, Square, MessageSquare, Send, Sparkles, Gauge
 } from 'lucide-react';
 import { marked } from 'marked';
 import {
-  getArticle, deleteArticle, getNotes, addNote, deleteNote,
+  getArticle, createArticle, getNotes, addNote, deleteNote,
   getRelatedArticles, type Article, type ArticleNote
 } from '../../lib/articles';
-import { Confirm } from '../../shared/Confirm';
+import {
+  pickMarkdownFile, importedMarkdownToContent, extractTitleFromMarkdown
+} from '../../lib/markdown-io';
 import {
   articleContentToMarkdown,
   downloadTextFile,
@@ -24,7 +26,7 @@ interface Props {
   initial?: Article | null;
   onBack: () => void;
   onEdit: (article: Article) => void;
-  onDeleted: () => void;
+  onImported?: (article: Article) => void;
 }
 
 interface TocItem {
@@ -53,10 +55,9 @@ function slugify(text: string, fallbackIdx: number): string {
   return base || `heading-${fallbackIdx}`;
 }
 
-export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, onDeleted }: Props) {
+export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, onImported }: Props) {
   const [article, setArticle] = useState<Article | null>(initial || null);
   const [loading, setLoading] = useState(!initial);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showBackTop, setShowBackTop] = useState(false);
   const [showTocMobile, setShowTocMobile] = useState(false);
@@ -97,6 +98,8 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const ttsCurrentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const ttsCancelledRef = useRef(false);
   const ttsOriginalHtmlRef = useRef<{ el: HTMLElement; html: string } | null>(null);
+  const ttsTickerRef = useRef<number | null>(null);
+  const ttsBoundaryFiredRef = useRef(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -278,6 +281,10 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const stopTts = useCallback(() => {
     ttsCancelledRef.current = true;
     if (ttsAvailable) window.speechSynthesis.cancel();
+    if (ttsTickerRef.current) {
+      clearInterval(ttsTickerRef.current);
+      ttsTickerRef.current = null;
+    }
     if (ttsSegmentsRef.current.length) {
       ttsSegmentsRef.current.forEach((el) => el.classList.remove('tts-active'));
     }
@@ -328,17 +335,14 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       const voice = pickBestVoice(text);
       if (voice) u.voice = voice;
 
-      // 字符级同步高亮
-      u.onboundary = (e) => {
-        if (ttsCancelledRef.current) return;
-        if (e.name && e.name !== 'word' && e.name !== 'sentence') return;
-        const charIdx = e.charIndex;
+      const advanceHighlight = (charIdx: number) => {
         const spans = el.querySelectorAll<HTMLElement>('[data-tts-c]');
         spans.forEach((s) => {
           const o = Number(s.getAttribute('data-tts-c'));
           const len = Number(s.getAttribute('data-tts-l') || '1');
           if (o + len > charIdx && o <= charIdx) {
             s.classList.add('tts-char-active');
+            s.classList.remove('tts-char-spoken');
           } else if (o + len <= charIdx) {
             s.classList.add('tts-char-spoken');
             s.classList.remove('tts-char-active');
@@ -348,8 +352,53 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           }
         });
       };
+
+      // 字符级同步：优先 onboundary（中文 voice 多数不触发，会回退到时间估算）
+      ttsBoundaryFiredRef.current = false;
+      u.onboundary = (e) => {
+        if (ttsCancelledRef.current) return;
+        if (e.name && e.name !== 'word' && e.name !== 'sentence') return;
+        ttsBoundaryFiredRef.current = true;
+        if (ttsTickerRef.current) {
+          clearInterval(ttsTickerRef.current);
+          ttsTickerRef.current = null;
+        }
+        advanceHighlight(e.charIndex);
+      };
+
+      // 时间估算的兜底：中文约 5 字/秒（1x），英文约 14 字符/秒
+      const isChinese = /[一-龥]/.test(text);
+      const baseCharsPerSec = isChinese ? 5 : 14;
+      const charsPerSec = baseCharsPerSec * ttsRate;
+      const start = Date.now();
+      // 启动后 250ms 还没收到 boundary，就用时间估算推进
+      const startTicker = () => {
+        if (ttsTickerRef.current) clearInterval(ttsTickerRef.current);
+        ttsTickerRef.current = window.setInterval(() => {
+          if (ttsBoundaryFiredRef.current) return; // boundary 接管
+          const elapsed = (Date.now() - start) / 1000;
+          const estimatedChar = Math.min(text.length, Math.floor(elapsed * charsPerSec));
+          advanceHighlight(estimatedChar);
+        }, 80);
+      };
+
+      u.onstart = () => {
+        setTimeout(() => {
+          if (!ttsBoundaryFiredRef.current && !ttsCancelledRef.current) startTicker();
+        }, 250);
+      };
+
       u.onend = () => {
-        // 还原本段 HTML 再继续
+        if (ttsTickerRef.current) {
+          clearInterval(ttsTickerRef.current);
+          ttsTickerRef.current = null;
+        }
+        // 收尾：所有字标为已读
+        const spans = el.querySelectorAll<HTMLElement>('[data-tts-c]');
+        spans.forEach((s) => {
+          s.classList.remove('tts-char-active');
+          s.classList.add('tts-char-spoken');
+        });
         restoreSegment();
         if (ttsCancelledRef.current) return;
         const next = idx + 1;
@@ -357,6 +406,10 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         speakSegment(next);
       };
       u.onerror = () => {
+        if (ttsTickerRef.current) {
+          clearInterval(ttsTickerRef.current);
+          ttsTickerRef.current = null;
+        }
         restoreSegment();
         if (ttsCancelledRef.current) return;
         const next = idx + 1;
@@ -365,26 +418,68 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       };
       ttsCurrentUtteranceRef.current = u;
       window.speechSynthesis.speak(u);
+      // 部分浏览器 onstart 不触发或延迟，启动 ticker 兜底
+      setTimeout(() => {
+        if (!ttsBoundaryFiredRef.current && !ttsCancelledRef.current && ttsTickerRef.current === null) {
+          startTicker();
+        }
+      }, 350);
     },
     [ttsAvailable, ttsRate, stopTts, wrapSegmentForHighlight, restoreSegment, pickBestVoice]
   );
 
-  const startTts = useCallback(() => {
-    if (!ttsAvailable || !articleRef.current) return;
-    // 收集可朗读片段
-    const segs = Array.from(
+  const collectSegments = useCallback((): HTMLElement[] => {
+    if (!articleRef.current) return [];
+    return Array.from(
       articleRef.current.querySelectorAll<HTMLElement>(
         'h1, h2, h3, h4, p, blockquote, li'
       )
     ).filter((el) => (el.textContent || '').trim().length > 0);
-    if (segs.length === 0) return;
-    ttsSegmentsRef.current = segs;
-    setTtsTotal(segs.length);
-    ttsCancelledRef.current = false;
-    setTtsState('playing');
-    setTtsIdx(0);
-    speakSegment(0);
-  }, [ttsAvailable, speakSegment]);
+  }, []);
+
+  const startTts = useCallback(
+    (fromIdx: number = 0) => {
+      if (!ttsAvailable) return;
+      const segs = collectSegments();
+      if (segs.length === 0) return;
+      ttsSegmentsRef.current = segs;
+      setTtsTotal(segs.length);
+      // 取消现有朗读
+      if (window.speechSynthesis.speaking) {
+        ttsCancelledRef.current = true;
+        window.speechSynthesis.cancel();
+      }
+      restoreSegment();
+      ttsCancelledRef.current = false;
+      setTtsState('playing');
+      setTtsIdx(Math.max(0, Math.min(fromIdx, segs.length - 1)));
+      speakSegment(Math.max(0, Math.min(fromIdx, segs.length - 1)));
+    },
+    [ttsAvailable, collectSegments, restoreSegment, speakSegment]
+  );
+
+  // 点击段落跳到该段开始朗读
+  useEffect(() => {
+    const root = articleRef.current;
+    if (!root) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      // 忽略链接点击
+      if (target.closest('a')) return;
+      const seg = target.closest<HTMLElement>('h1, h2, h3, h4, p, blockquote, li');
+      if (!seg || !root.contains(seg)) return;
+      const segs = collectSegments();
+      const idx = segs.indexOf(seg);
+      if (idx < 0) return;
+      // 仅在 TTS 已激活时跳转，否则不要打扰阅读
+      if (ttsState === 'playing' || ttsState === 'paused') {
+        startTts(idx);
+      }
+    };
+    root.addEventListener('click', onClick);
+    return () => root.removeEventListener('click', onClick);
+  }, [ttsState, collectSegments, startTts]);
 
   const pauseTts = useCallback(() => {
     if (!ttsAvailable) return;
@@ -437,6 +532,56 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       alert('添加笔记失败');
     } finally {
       setNoteSubmitting(false);
+    }
+  };
+
+  // 导入 MD 创建新文章并跳转
+  const handleImportMd = async () => {
+    if (!article) return;
+    setShowExportMenu(false);
+    try {
+      const file = await pickMarkdownFile();
+      if (!file) return;
+      // 简单解析 frontmatter
+      let body = file.content;
+      let title: string | undefined;
+      let excerpt: string | undefined;
+      let cover: string | undefined;
+      let tags: string[] = [];
+      if (body.startsWith('---')) {
+        const end = body.indexOf('\n---', 3);
+        if (end > 0) {
+          const head = body.slice(3, end);
+          body = body.slice(end + 4).replace(/^\r?\n/, '');
+          for (const line of head.split('\n')) {
+            const m = line.match(/^([\w-]+):\s*(.*)$/);
+            if (!m) continue;
+            const key = m[1].trim();
+            let value: string = m[2].trim().replace(/^["']|["']$/g, '');
+            if (key === 'title') title = value;
+            else if (key === 'excerpt') excerpt = value;
+            else if (key === 'cover') cover = value;
+            else if (key === 'tags') {
+              try {
+                const arr = JSON.parse(value);
+                if (Array.isArray(arr)) tags = arr.map(String);
+              } catch {
+                tags = value.split(',').map((s) => s.trim()).filter(Boolean);
+              }
+            }
+          }
+        }
+      }
+      if (!title) title = extractTitleFromMarkdown(body) || file.name.replace(/\.(md|markdown|txt)$/i, '');
+      const html = importedMarkdownToContent(body.trim());
+      const created = await createArticle(article.user_id, {
+        title, excerpt, cover_url: cover, content: html, tags
+      });
+      if (onImported) onImported(created);
+      else onBack();
+    } catch (err) {
+      console.error('Import failed:', err);
+      alert('导入失败，请检查文件格式');
     }
   };
 
@@ -562,17 +707,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
   const scrollToTop = () => {
     scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDelete = async () => {
-    if (!article) return;
-    try {
-      await deleteArticle(article.id);
-      setConfirmOpen(false);
-      onDeleted();
-    } catch (err) {
-      console.error('Failed to delete article:', err);
-    }
   };
 
   const formatDate = (dateStr?: string) => {
@@ -796,7 +930,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
               {ttsAvailable && (
                 <div className="article-tts-group" title="朗读">
                   {ttsState === 'idle' ? (
-                    <button onClick={startTts} className="article-icon-btn" aria-label="开始朗读">
+                    <button onClick={() => startTts()} className="article-icon-btn" aria-label="开始朗读">
                       <Play className="w-4 h-4" />
                     </button>
                   ) : ttsState === 'playing' ? (
@@ -828,33 +962,43 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                       <option value="2">2x</option>
                     </select>
                   </div>
-                  {ttsVoices.length > 0 && (
-                    <div className="article-tts-voice" title="语音">
-                      <select
-                        value={ttsVoiceURI}
-                        onChange={(e) => setTtsVoiceURI(e.target.value)}
-                        aria-label="朗读语音"
-                      >
-                        <option value="">自动（推荐自然语音）</option>
-                        {ttsVoices
-                          .filter((v) => v.lang.toLowerCase().startsWith('zh') || v.lang.toLowerCase().startsWith('en'))
-                          .sort((a, b) => {
-                            // 把含 Online/Natural/Neural 的排前面
-                            const score = (n: string) =>
-                              /Online|Natural|Neural|Premium|Enhanced|Wavenet/i.test(n) ? 0 : 1;
-                            return score(a.name) - score(b.name);
-                          })
-                          .map((v) => {
-                            const isPremium = /Online|Natural|Neural|Premium|Enhanced|Wavenet/i.test(v.name);
-                            return (
-                              <option key={v.voiceURI} value={v.voiceURI}>
-                                {isPremium ? '★ ' : ''}{v.name} ({v.lang})
-                              </option>
-                            );
-                          })}
-                      </select>
-                    </div>
-                  )}
+                  {(() => {
+                    const isPremium = (n: string) =>
+                      /Online|Natural|Neural|Premium|Enhanced|Wavenet/i.test(n);
+                    const isChinesePref = (n: string) =>
+                      /(Xiaoxiao|Yunxi|Yunjian|Xiaoyi|Yunyang|Yunxia|Xiaomeng)/i.test(n);
+                    // 精选：优先 Online/Natural 中文，再加 1-2 个英文神经；最多 6 个
+                    const cnPremium = ttsVoices.filter(
+                      (v) => v.lang.toLowerCase().startsWith('zh') && (isPremium(v.name) || isChinesePref(v.name))
+                    );
+                    const enPremium = ttsVoices
+                      .filter((v) => v.lang.toLowerCase().startsWith('en') && isPremium(v.name))
+                      .slice(0, 2);
+                    let list = [...cnPremium, ...enPremium];
+                    // 如果一个精选都没有，回退到所有中文+少量英文
+                    if (list.length === 0) {
+                      list = ttsVoices
+                        .filter((v) => v.lang.toLowerCase().startsWith('zh') || v.lang.toLowerCase().startsWith('en'))
+                        .slice(0, 6);
+                    }
+                    if (list.length === 0) return null;
+                    return (
+                      <div className="article-tts-voice" title="语音">
+                        <select
+                          value={ttsVoiceURI}
+                          onChange={(e) => setTtsVoiceURI(e.target.value)}
+                          aria-label="朗读语音"
+                        >
+                          <option value="">自动</option>
+                          {list.map((v) => (
+                            <option key={v.voiceURI} value={v.voiceURI}>
+                              {isPremium(v.name) ? '★ ' : ''}{v.name.replace(/^Microsoft\s+/, '').replace(/\s+\([^)]+\)$/, '')} ({v.lang})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -892,6 +1036,14 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                         <div className="article-export-sub">A4 排版，多页拼接</div>
                       </div>
                     </button>
+                    <div className="article-export-divider" />
+                    <button onClick={handleImportMd} className="article-export-item">
+                      <Upload className="w-4 h-4" />
+                      <div className="text-left">
+                        <div className="font-medium">导入 Markdown</div>
+                        <div className="article-export-sub">从 .md 创建新文章</div>
+                      </div>
+                    </button>
                   </div>
                 )}
               </div>
@@ -902,13 +1054,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
               >
                 <Edit2 className="w-4 h-4" />
                 <span className="hidden sm:inline">编辑</span>
-              </button>
-              <button
-                onClick={() => setConfirmOpen(true)}
-                className="article-danger-btn flex items-center gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span className="hidden sm:inline">删除</span>
               </button>
             </div>
           </div>
@@ -1196,14 +1341,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         </div>
       )}
 
-      <Confirm
-        isOpen={confirmOpen}
-        title="删除文章"
-        message={`确定要删除"${article.title || '无标题'}"吗？`}
-        danger
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmOpen(false)}
-      />
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -1433,6 +1570,11 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           font-size: 12px;
           color: var(--ink-faint);
           margin-top: 1px;
+        }
+        .article-export-divider {
+          height: 1px;
+          background: var(--rule);
+          margin: 4px 0;
         }
 
         /* 标签 */
