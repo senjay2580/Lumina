@@ -121,9 +121,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const ttsSegmentsRef = useRef<HTMLElement[]>([]);
   const ttsCurrentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const ttsCancelledRef = useRef(false);
-  const ttsRafRef = useRef<number | null>(null);
-  const ttsAudioStartRef = useRef<number>(0);
-  const ttsPauseElapsedRef = useRef<number>(0);
+  const ttsOverlayRef = useRef<HTMLDivElement | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -252,34 +250,36 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
     window.localStorage.setItem(VOICE_STORAGE_KEY, ttsVoiceKey);
   }, [ttsVoiceKey]);
 
-  const cancelRaf = useCallback(() => {
-    if (ttsRafRef.current !== null) {
-      cancelAnimationFrame(ttsRafRef.current);
-      ttsRafRef.current = null;
+  const removeOverlay = useCallback(() => {
+    if (ttsOverlayRef.current) {
+      ttsOverlayRef.current.remove();
+      ttsOverlayRef.current = null;
     }
   }, []);
 
   const clearAllProgress = useCallback(() => {
+    removeOverlay();
     if (!articleRef.current) return;
     articleRef.current
       .querySelectorAll<HTMLElement>('.tts-active')
       .forEach((el) => {
         el.classList.remove('tts-active');
-        el.style.removeProperty('--tts-progress');
+        el.style.removeProperty('position');
       });
-  }, []);
+    // 清掉残留 overlay
+    articleRef.current
+      .querySelectorAll<HTMLElement>('.tts-overlay')
+      .forEach((el) => el.remove());
+  }, [removeOverlay]);
 
   const stopTts = useCallback(() => {
     ttsCancelledRef.current = true;
     if (ttsAvailable) window.speechSynthesis.cancel();
-    cancelRaf();
     clearAllProgress();
     setTtsState('idle');
     setTtsIdx(0);
     ttsCurrentUtteranceRef.current = null;
-    ttsAudioStartRef.current = 0;
-    ttsPauseElapsedRef.current = 0;
-  }, [ttsAvailable, cancelRaf, clearAllProgress]);
+  }, [ttsAvailable, clearAllProgress]);
 
   const collectSegments = useCallback((): HTMLElement[] => {
     if (!articleRef.current) return [];
@@ -289,6 +289,38 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       )
     ).filter((el) => (el.textContent || '').trim().length > 0);
   }, []);
+
+  // 注入 overlay div + CSS transition 驱动进度（替代 rAF，浏览器原生动画，永不卡死）
+  const startOverlayAnimation = useCallback(
+    (el: HTMLElement, durationMs: number) => {
+      removeOverlay();
+      // 段落需要 position:relative 让 overlay 定位
+      const prevPosition = getComputedStyle(el).position;
+      if (prevPosition === 'static') el.style.position = 'relative';
+
+      const overlay = document.createElement('div');
+      overlay.className = 'tts-overlay';
+      overlay.style.cssText = [
+        'position:absolute',
+        'left:-10px',
+        'top:0',
+        'bottom:0',
+        'width:0',
+        'background:linear-gradient(90deg, rgba(244,217,204,0.55), rgba(244,217,204,0.40))',
+        'border-radius:6px',
+        'pointer-events:none',
+        'z-index:0',
+        `transition: width ${durationMs}ms linear`,
+      ].join(';');
+      el.prepend(overlay);
+      ttsOverlayRef.current = overlay;
+
+      // 强制 reflow 让浏览器先注册 width=0，再设置目标宽度，触发 transition
+      void overlay.offsetWidth;
+      overlay.style.width = 'calc(100% + 20px)';
+    },
+    [removeOverlay]
+  );
 
   const speakSegment = useCallback(
     (idx: number) => {
@@ -301,7 +333,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       const el = segs[idx];
       clearAllProgress();
       el.classList.add('tts-active');
-      el.style.setProperty('--tts-progress', '0');
 
       // 滚动到当前段附近
       const container = scrollRef.current;
@@ -317,70 +348,37 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         }
       }
 
-      const text = el.textContent || '';
-      if (!text.trim()) {
+      const text = (el.textContent || '').trim();
+      if (!text) {
         setTtsIdx(idx + 1);
         speakSegment(idx + 1);
         return;
       }
 
+      const isChinese = /[一-龥]/.test(text);
+      // 估算时长：中文 ~4.2 字/秒（1x），英文 ~13 字符/秒
+      const baseCharsPerSec = isChinese ? 4.2 : 13;
+      const charsPerSec = baseCharsPerSec * ttsRate;
+      const estimatedDurationMs = Math.max(1500, (text.length / charsPerSec) * 1000);
+
+      // 立即启动 CSS overlay 动画（不依赖 onstart）
+      startOverlayAnimation(el, estimatedDurationMs);
+
       const u = new SpeechSynthesisUtterance(text);
       u.rate = ttsRate;
-      u.lang = /[一-龥]/.test(text) ? 'zh-CN' : 'en-US';
+      u.lang = isChinese ? 'zh-CN' : 'en-US';
       const voice = pickBestVoice(text);
       if (voice) u.voice = voice;
 
-      // 估算时长：中文 ~4.2 字/秒（1x，神经语音），英文 ~13 字符/秒
-      const isChinese = /[一-龥]/.test(text);
-      const baseCharsPerSec = isChinese ? 4.2 : 13;
-      const charsPerSec = baseCharsPerSec * ttsRate;
-      const estimatedDurationMs = (text.length / charsPerSec) * 1000;
-
-      // ✅ 关键修复 1：进度推进 tick 不再依赖 ttsAudioStartRef===0 的 busy-wait
-      // 之前的 bug：onstart 不触发 + setTimeout 被节流时，tick 死循环等待
-      // 现在：speak() 调用前就把 audioStart 设为 Date.now()，tick 立即可用
-      const tick = () => {
-        if (ttsCancelledRef.current) return;
-        const start = ttsAudioStartRef.current;
-        if (start === 0) {
-          // 极端兜底：保险起见也不死等，给个微小起点
-          ttsAudioStartRef.current = Date.now();
-          ttsRafRef.current = requestAnimationFrame(tick);
-          return;
-        }
-        const elapsed = Date.now() - start;
-        const pct = Math.min(99.5, (elapsed / estimatedDurationMs) * 100);
-        el.style.setProperty('--tts-progress', String(pct));
-        if (elapsed < estimatedDurationMs) {
-          ttsRafRef.current = requestAnimationFrame(tick);
-        }
-      };
-
-      // onboundary 触发时按真实 charIndex 校准（中文很多 voice 不触发，但触发了就用）
-      u.onboundary = (e) => {
-        if (ttsCancelledRef.current) return;
-        if (e.name && e.name !== 'word' && e.name !== 'sentence') return;
-        const pct = Math.min(99.5, (e.charIndex / Math.max(1, text.length)) * 100);
-        el.style.setProperty('--tts-progress', String(pct));
-        const expectedElapsed = (e.charIndex / Math.max(1, text.length)) * estimatedDurationMs;
-        ttsAudioStartRef.current = Date.now() - expectedElapsed;
-      };
-
-      u.onstart = () => {
-        // onstart 一旦触发，校准为真实开始时间（覆盖之前的预设值）
-        ttsAudioStartRef.current = Date.now();
-      };
-
       u.onend = () => {
-        cancelRaf();
-        el.style.setProperty('--tts-progress', '100');
         if (ttsCancelledRef.current) return;
         const next = idx + 1;
         setTtsIdx(next);
         speakSegment(next);
       };
-      u.onerror = () => {
-        cancelRaf();
+      u.onerror = (e) => {
+        // voice 不可用时 onerror 触发，跳到下一段而不是卡住
+        console.warn('[TTS] utterance error:', e);
         if (ttsCancelledRef.current) return;
         const next = idx + 1;
         setTtsIdx(next);
@@ -389,15 +387,16 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
       ttsCurrentUtteranceRef.current = u;
 
-      // ✅ 关键修复 2：在 speak() 之前直接设置 audio start + 启动 rAF
-      // 不依赖 onstart / setTimeout 的不可靠回调，确保高亮立刻开始推进
-      cancelRaf();
-      ttsAudioStartRef.current = Date.now();
-      ttsRafRef.current = requestAnimationFrame(tick);
-
-      window.speechSynthesis.speak(u);
+      // ✅ Chrome 已知 race condition：cancel 后立即 speak 会丢失 utterance
+      // 强制让出主线程一帧，确保 cancel 完成后再 speak
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      requestAnimationFrame(() => {
+        if (ttsCancelledRef.current) return;
+        synth.speak(u);
+      });
     },
-    [ttsAvailable, ttsRate, stopTts, clearAllProgress, cancelRaf, pickBestVoice]
+    [ttsAvailable, ttsRate, stopTts, clearAllProgress, startOverlayAnimation, pickBestVoice]
   );
 
   const startTts = useCallback(
@@ -407,20 +406,16 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       if (segs.length === 0) return;
       ttsSegmentsRef.current = segs;
       setTtsTotal(segs.length);
-      if (window.speechSynthesis.speaking) {
-        ttsCancelledRef.current = true;
-        window.speechSynthesis.cancel();
-      }
-      cancelRaf();
+      ttsCancelledRef.current = true; // 先标记取消，避免旧 utterance onend 链式启动
+      window.speechSynthesis.cancel();
       clearAllProgress();
       ttsCancelledRef.current = false;
-      ttsAudioStartRef.current = 0;
       setTtsState('playing');
       const safeIdx = Math.max(0, Math.min(fromIdx, segs.length - 1));
       setTtsIdx(safeIdx);
       speakSegment(safeIdx);
     },
-    [ttsAvailable, collectSegments, cancelRaf, clearAllProgress, speakSegment]
+    [ttsAvailable, collectSegments, clearAllProgress, speakSegment]
   );
 
   // 点击段落跳到该段开始朗读
@@ -447,53 +442,41 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const pauseTts = useCallback(() => {
     if (!ttsAvailable) return;
     window.speechSynthesis.pause();
-    cancelRaf();
-    if (ttsAudioStartRef.current > 0) {
-      ttsPauseElapsedRef.current = Date.now() - ttsAudioStartRef.current;
+    // 暂停 CSS transition：把当前 width 固化为 inline，并去掉 transition
+    if (ttsOverlayRef.current) {
+      const w = getComputedStyle(ttsOverlayRef.current).width;
+      ttsOverlayRef.current.style.transition = 'none';
+      ttsOverlayRef.current.style.width = w;
     }
     setTtsState('paused');
-  }, [ttsAvailable, cancelRaf]);
+  }, [ttsAvailable]);
 
   const resumeTts = useCallback(() => {
     if (!ttsAvailable) return;
     window.speechSynthesis.resume();
-    if (ttsPauseElapsedRef.current > 0) {
-      ttsAudioStartRef.current = Date.now() - ttsPauseElapsedRef.current;
-      ttsPauseElapsedRef.current = 0;
-    }
-    // 恢复 rAF 进度推进
-    if (ttsRafRef.current === null && ttsCurrentUtteranceRef.current) {
-      // 用现有段元素继续，重新创建 tick 闭包代价小
-      const el = articleRef.current?.querySelector<HTMLElement>('.tts-active');
-      if (el) {
-        const text = el.textContent || '';
-        const isChinese = /[一-龥]/.test(text);
-        const baseCharsPerSec = isChinese ? 4.2 : 13;
-        const charsPerSec = baseCharsPerSec * ttsRate;
-        const estimatedDurationMs = (text.length / charsPerSec) * 1000;
-        const tick = () => {
-          if (ttsCancelledRef.current) return;
-          const elapsed = Date.now() - ttsAudioStartRef.current;
-          const pct = Math.min(99.5, (elapsed / estimatedDurationMs) * 100);
-          el.style.setProperty('--tts-progress', String(pct));
-          if (elapsed < estimatedDurationMs) {
-            ttsRafRef.current = requestAnimationFrame(tick);
-          }
-        };
-        ttsRafRef.current = requestAnimationFrame(tick);
-      }
+    // 恢复 transition：根据剩余距离按原速率继续
+    const overlay = ttsOverlayRef.current;
+    const el = articleRef.current?.querySelector<HTMLElement>('.tts-active');
+    if (overlay && el) {
+      const fullW = el.getBoundingClientRect().width + 20;
+      const curW = parseFloat(getComputedStyle(overlay).width) || 0;
+      const remainPct = Math.max(0, 1 - curW / fullW);
+      const text = (el.textContent || '').trim();
+      const isChinese = /[一-龥]/.test(text);
+      const baseCharsPerSec = isChinese ? 4.2 : 13;
+      const fullDur = Math.max(1500, (text.length / (baseCharsPerSec * ttsRate)) * 1000);
+      const remainMs = fullDur * remainPct;
+      overlay.style.transition = `width ${remainMs}ms linear`;
+      void overlay.offsetWidth;
+      overlay.style.width = 'calc(100% + 20px)';
     }
     setTtsState('playing');
   }, [ttsAvailable, ttsRate]);
 
-  // 语速变化时重新设置当前 utterance（浏览器不支持热更，需要重启当前段）
+  // 语速变化时重启当前段（浏览器不支持 utterance.rate 热更）
   useEffect(() => {
     if (ttsState === 'playing' && ttsCurrentUtteranceRef.current) {
-      window.speechSynthesis.cancel();
-      ttsCurrentUtteranceRef.current = null;
-      requestAnimationFrame(() => {
-        speakSegment(ttsIdx);
-      });
+      requestAnimationFrame(() => speakSegment(ttsIdx));
     }
     try { window.localStorage.setItem('lumina:tts:rate', String(ttsRate)); } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -505,9 +488,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       if (ttsAvailable) {
         ttsCancelledRef.current = true;
         window.speechSynthesis.cancel();
-      }
-      if (ttsRafRef.current !== null) {
-        cancelAnimationFrame(ttsRafRef.current);
       }
     };
   }, [ttsAvailable]);
@@ -1181,7 +1161,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                 <section className="article-related-section">
                   <div className="article-section-header">
                     <Sparkles className="w-4 h-4" />
-                    <span>同类文章</span>
+                    <span>更多文章</span>
                   </div>
                   <div className="article-related-grid">
                     {related.map(({ article: a, score }) => (
@@ -1885,23 +1865,33 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           padding: 0 4px;
         }
 
-        /* TTS 当前段：渐变进度从左向右随播放推进 */
+        /* TTS 当前段：底色 + 左侧 accent 竖线，进度由 .tts-overlay 实现 */
         .article-prose .tts-active {
-          --tts-progress: 0;
           position: relative;
-          background: linear-gradient(
-            90deg,
-            rgba(244,217,204,0.55) 0%,
-            rgba(244,217,204,0.55) calc(var(--tts-progress) * 1%),
-            rgba(244,217,204,0.10) calc(var(--tts-progress) * 1%),
-            rgba(244,217,204,0.10) 100%
-          );
+          background: rgba(244,217,204,0.10);
           border-radius: 6px;
           padding: 4px 10px;
           margin-left: -10px;
           margin-right: -10px;
           box-shadow: 0 0 0 4px rgba(244,217,204,0.12);
           transition: box-shadow 0.2s;
+          isolation: isolate;
+        }
+        /* overlay 在段落底部铺一层，width 从 0 → 100% 通过 CSS transition 推进 */
+        .article-prose .tts-active .tts-overlay {
+          position: absolute;
+          left: -10px;
+          top: 0;
+          bottom: 0;
+          width: 0;
+          background: linear-gradient(90deg, rgba(244,217,204,0.55), rgba(244,217,204,0.40));
+          border-radius: 6px;
+          pointer-events: none;
+          z-index: 0;
+        }
+        .article-prose .tts-active > * {
+          position: relative;
+          z-index: 1;
         }
         /* 当前段左侧 accent 竖线指示器 */
         .article-prose .tts-active::before {
@@ -1913,6 +1903,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           width: 3px;
           background: var(--accent);
           border-radius: 2px;
+          z-index: 2;
         }
 
         /* 语音选择 */
