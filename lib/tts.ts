@@ -41,6 +41,16 @@ export class TtsEngine {
   private state: TtsState = 'idle';
   private cb: TtsCallbacks;
   private nextChangeReason: SegChangeReason = 'natural';
+  /**
+   * 世代号：每次 start/jumpTo/stop 递增。所有 setInterval / utterance.onend /
+   * utterance.onerror 在执行业务逻辑前必须比对世代号，不一致直接 bail。
+   *
+   * 解决高频跨段点击场景下旧 utterance 的延迟回调污染新段状态的根本问题：
+   *   t=0   click  → jumpTo(5)  → speak(u5)
+   *   t=50  click  → jumpTo(10) → speak(u10)（会触发 u5 的 onerror）
+   *   t=51  u5.onerror 异步执行 → 若不比对世代，会对 idx 做 ++
+   */
+  private generation = 0;
 
   constructor(cb: TtsCallbacks = {}) {
     this.cb = cb;
@@ -63,7 +73,7 @@ export class TtsEngine {
     if (!this.isAvailable()) return;
     if (segments.length === 0) return;
 
-    // 先停掉现有的（同步），再重置状态
+    this.generation++;
     this.cancelled = true;
     window.speechSynthesis.cancel();
     this.clearProgressTimer();
@@ -74,7 +84,6 @@ export class TtsEngine {
     this.cancelled = false;
     this.nextChangeReason = 'start';
     this.setState('playing');
-    // 同步启动第一段（保留 user gesture）
     this.speakCurrent();
   }
 
@@ -90,11 +99,12 @@ export class TtsEngine {
     if (this.state !== 'paused') return;
     window.speechSynthesis.resume();
     this.segStartTs = Date.now() - this.pausedElapsed;
-    this.startProgressTimer();
+    this.startProgressTimer(this.generation);
     this.setState('playing');
   }
 
   stop() {
+    this.generation++;
     this.cancelled = true;
     window.speechSynthesis.cancel();
     this.clearProgressTimer();
@@ -108,6 +118,7 @@ export class TtsEngine {
   /** 切到指定段（用户点击段落跳转） */
   jumpTo(idx: number, reason: SegChangeReason = 'jump') {
     if (this.state === 'idle') return;
+    this.generation++;
     this.idx = Math.max(0, Math.min(idx, this.segments.length - 1));
     this.cancelled = true;
     window.speechSynthesis.cancel();
@@ -134,6 +145,8 @@ export class TtsEngine {
       this.stop();
       return;
     }
+    // 锁定本次调用的世代号，所有异步回调都用它判断是否过期
+    const myGen = this.generation;
     const el = segs[this.idx];
     const text = (el.textContent || '').trim();
 
@@ -142,7 +155,6 @@ export class TtsEngine {
     const reason = this.nextChangeReason;
     this.nextChangeReason = 'natural';
     this.cb.onSegmentChange?.(this.idx, reason);
-    // 段切换瞬间立刻把绝对进度归零到「该段起点」，避免视觉跳变
     this.cb.onProgress?.((this.idx / Math.max(1, segs.length)) * 100);
 
     if (!text) {
@@ -161,7 +173,6 @@ export class TtsEngine {
     u.rate = this.rate;
     u.lang = isChinese ? 'zh-CN' : 'en-US';
 
-    // 仅在 voiceName 显式指定且能查到时才设置 voice，否则交给浏览器默认（最稳）
     if (this.voiceName) {
       const voices = window.speechSynthesis.getVoices();
       const found = voices.find(v => v.name === this.voiceName);
@@ -169,31 +180,39 @@ export class TtsEngine {
     }
 
     u.onend = () => {
+      // 世代过期 → 这是一个老 utterance 的延迟事件，丢弃
+      if (myGen !== this.generation) return;
       if (this.cancelled) return;
-      this.cb.onProgress?.(100);
+      this.cb.onProgress?.(((this.idx + 1) / Math.max(1, this.segments.length)) * 100);
       this.idx++;
       this.speakCurrent();
     };
     u.onerror = (e) => {
+      if (myGen !== this.generation) return;  // ← 关键：丢弃过期回调
       if (this.cancelled) return;
-      console.warn('[TTS] utterance error', e);
-      this.cb.onError?.(e.error || 'speak failed');
-      // 跳到下一段，避免单段失败卡死
+      // 'interrupted' / 'canceled' 是 cancel() 引发的正常事件，静默忽略
+      const err = e.error || '';
+      if (err === 'interrupted' || err === 'canceled') return;
+      console.warn('[TTS] utterance error', err);
+      this.cb.onError?.(err || 'speak failed');
       this.idx++;
       this.speakCurrent();
     };
 
     this.utterance = u;
-    this.startProgressTimer();
-    // ⚡ 直接同步调用，不要包 rAF/setTimeout，否则会丢 user gesture
+    this.startProgressTimer(myGen);
     window.speechSynthesis.speak(u);
   }
 
-  private startProgressTimer() {
+  private startProgressTimer(myGen: number) {
     this.clearProgressTimer();
-    const total = Math.max(1, this.segments.length);
     const tick = () => {
-      if (this.cancelled || this.state !== 'playing') return;
+      // 世代过期 / 已取消 / 不在 playing → 直接放弃，不再续 tick
+      if (myGen !== this.generation || this.cancelled || this.state !== 'playing') {
+        this.clearProgressTimer();
+        return;
+      }
+      const total = Math.max(1, this.segments.length);
       const elapsed = Date.now() - this.segStartTs;
       const segPct = Math.min(0.99, elapsed / this.segDurationMs);
       const absPct = ((this.idx + segPct) / total) * 100;
@@ -227,40 +246,68 @@ export function collectReadableSegments(root: HTMLElement | null): HTMLElement[]
   ).filter(el => (el.textContent || '').trim().length > 0);
 }
 
-// 精选音色（用 voice.name 精确匹配，匹配不到时返回 null 让浏览器用默认）
-export interface CuratedVoice {
-  key: string;
-  label: string;
-  desc: string;
-  lang: 'zh' | 'en';
-  /** 用于在 voices.name 里子串匹配 */
-  match: string[];
-}
+// 锁定一个稳定可用的中文音色：
+// 浏览器 getVoices() 会返回大量「老 SAPI / 残废」音色（Huihui / Hanhan / Lily 等
+// 全部停止维护，且经常无声）。我们只信微软 Edge Neural（Online Natural）这一档：
+//   - 在 Windows 上由 Edge 浏览器内置（Chrome 也能用）
+//   - 走 Azure Neural TTS 的网络合成，免费无限次
+//   - 单独的 voice.name 形如 "Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)"
+//
+// 解析时按下面的优先级链查找；只要任意一个命中就用它。
+// 如果整条链都查不到（说明用户在非 Windows 平台或 Chrome 没下载 online voice），
+// 我们 fallback 到任意带 'zh' lang 的第一条 voice，让用户「至少能出声」。
 
-export const CURATED_VOICES: CuratedVoice[] = [
-  { key: 'auto',     label: '自动 · 浏览器默认', desc: '让浏览器选最合适的中文语音', lang: 'zh', match: [] },
-  { key: 'xiaoxiao', label: '晓晓 · 女声温柔',   desc: '微软主推，自然亲切',         lang: 'zh', match: ['Xiaoxiao'] },
-  { key: 'yunxi',    label: '云希 · 男声少年感', desc: '清亮少年',                   lang: 'zh', match: ['Yunxi'] },
-  { key: 'yunjian',  label: '云健 · 男声浑厚',   desc: '醇厚低音',                   lang: 'zh', match: ['Yunjian'] },
-  { key: 'xiaoyi',   label: '晓伊 · 女声甜美',   desc: '甜美轻盈',                   lang: 'zh', match: ['Xiaoyi'] },
-  { key: 'yunyang',  label: '云扬 · 男声播音',   desc: '新闻播音腔',                 lang: 'zh', match: ['Yunyang'] },
-  { key: 'yunxia',   label: '云夏 · 男童儿童感', desc: '童声活泼',                   lang: 'zh', match: ['Yunxia'] },
-  { key: 'aria',     label: 'Aria · English',    desc: 'Natural female English',     lang: 'en', match: ['Aria'] },
-  { key: 'guy',      label: 'Guy · English',     desc: 'Natural male English',       lang: 'en', match: ['Guy'] },
+const PREFERRED_VOICE_CHAIN_ZH = [
+  // 第一档：Edge Online Natural（神经语音，最自然）
+  'Xiaoxiao Online',
+  'Yunxi Online',
+  'Yunjian Online',
+  'Xiaoyi Online',
+  // 第二档：旧版本命名（部分系统）
+  'Xiaoxiao',
+  'Yunxi',
+  'Yunjian',
+  'Xiaoyi',
 ];
 
-export const DEFAULT_VOICE_KEY = 'auto';
+const PREFERRED_VOICE_CHAIN_EN = [
+  'Aria Online',
+  'Guy Online',
+  'Aria',
+  'Guy',
+];
 
-/** 把 curated key 解析成 voice.name；'auto' 或匹配不到则返回 null */
-export function resolveVoiceName(
-  key: string,
-  voices: SpeechSynthesisVoice[]
-): string | null {
-  const def = CURATED_VOICES.find(c => c.key === key);
-  if (!def || def.match.length === 0) return null;
-  for (const kw of def.match) {
+export interface ResolvedVoice {
+  name: string;
+  /** 用户友好的展示名 */
+  label: string;
+  /** 是否是神经语音（Online Natural） */
+  isNeural: boolean;
+}
+
+/** 按优先级链查中文 / 英文音色，返回 null 表示一个都没找到 */
+export function pickStableVoice(
+  voices: SpeechSynthesisVoice[],
+  lang: 'zh' | 'en' = 'zh'
+): ResolvedVoice | null {
+  if (voices.length === 0) return null;
+  const chain = lang === 'zh' ? PREFERRED_VOICE_CHAIN_ZH : PREFERRED_VOICE_CHAIN_EN;
+  for (const kw of chain) {
     const found = voices.find(v => v.name.includes(kw));
-    if (found) return found.name;
+    if (found) {
+      return {
+        name: found.name,
+        label: kw.replace(' Online', ''),
+        isNeural: kw.includes('Online'),
+      };
+    }
+  }
+  // 兜底：任意同语种 voice
+  const langPrefix = lang === 'zh' ? 'zh' : 'en';
+  const fallback = voices.find(v => v.lang.toLowerCase().startsWith(langPrefix));
+  if (fallback) {
+    return { name: fallback.name, label: fallback.name, isNeural: false };
   }
   return null;
 }
+

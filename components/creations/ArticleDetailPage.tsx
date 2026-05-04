@@ -21,10 +21,10 @@ import {
   safeFileName
 } from '../../lib/markdown-io';
 import {
-  TtsEngine, collectReadableSegments,
-  CURATED_VOICES, DEFAULT_VOICE_KEY, resolveVoiceName,
+  TtsEngine, collectReadableSegments, pickStableVoice,
   type TtsState as TtsEngineState,
-  type SegChangeReason
+  type SegChangeReason,
+  type ResolvedVoice
 } from '../../lib/tts';
 
 interface Props {
@@ -51,8 +51,8 @@ const WIDTH_PRESETS: Record<WidthMode, { article: number; toc: number; label: st
 
 const WIDTH_STORAGE_KEY = 'lumina:article:width';
 
-// 精选朗读音色清单从 lib/tts 引入（保持单一事实源）
-const VOICE_STORAGE_KEY = 'lumina:tts:voice-key';
+// TTS 音色策略：lib/tts 自动锁定 Edge Online Neural（晓晓优先），
+// 不再让用户在多个不稳定 voice 之间手动切换。
 
 function slugify(text: string, fallbackIdx: number): string {
   const base = text
@@ -98,11 +98,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   });
   const [ttsIdx, setTtsIdx] = useState(0);
   const [ttsTotal, setTtsTotal] = useState(0);
-  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [ttsVoiceKey, setTtsVoiceKey] = useState<string>(() => {
-    if (typeof window === 'undefined') return DEFAULT_VOICE_KEY;
-    return window.localStorage.getItem(VOICE_STORAGE_KEY) || DEFAULT_VOICE_KEY;
-  });
+  const [ttsResolvedVoice, setTtsResolvedVoice] = useState<ResolvedVoice | null>(null);
   const ttsEngineRef = useRef<TtsEngine | null>(null);
   // 进度条和「跳段是否由用户点击触发」走 ref，避免 React 频繁重渲染
   const ttsFillRef = useRef<HTMLDivElement | null>(null);
@@ -212,29 +208,28 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
   const ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
-  // 加载可用语音清单
+  // 加载 voices → 自动锁定最佳中文神经语音
   useEffect(() => {
     if (!ttsAvailable) return;
-    const refresh = () => setTtsVoices(window.speechSynthesis.getVoices());
+    const refresh = () => {
+      const voices = window.speechSynthesis.getVoices();
+      const picked = pickStableVoice(voices, 'zh');
+      setTtsResolvedVoice(picked);
+      const eng = getEngine();
+      eng?.setVoiceName(picked?.name ?? null);
+    };
     refresh();
     window.speechSynthesis.addEventListener('voiceschanged', refresh);
     return () => window.speechSynthesis.removeEventListener('voiceschanged', refresh);
-  }, [ttsAvailable]);
+  }, [ttsAvailable, getEngine]);
 
-  // voice / rate 变化 → 同步到 engine
+  // rate 同步到 engine
   useEffect(() => {
     const eng = getEngine();
     if (!eng) return;
     eng.setRate(ttsRate);
     try { window.localStorage.setItem('lumina:tts:rate', String(ttsRate)); } catch {}
   }, [ttsRate, getEngine]);
-
-  useEffect(() => {
-    const eng = getEngine();
-    if (!eng) return;
-    eng.setVoiceName(resolveVoiceName(ttsVoiceKey, ttsVoices));
-    try { window.localStorage.setItem(VOICE_STORAGE_KEY, ttsVoiceKey); } catch {}
-  }, [ttsVoiceKey, ttsVoices, getEngine]);
 
   const startTts = useCallback(
     (fromIdx: number = 0) => {
@@ -243,13 +238,12 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       const segs = collectReadableSegments(articleRef.current);
       if (segs.length === 0) return;
       setTtsTotal(segs.length);
-      // 先把 voice/rate 同步上去（防止首次启动时还没 set）
       eng.setRate(ttsRate);
-      eng.setVoiceName(resolveVoiceName(ttsVoiceKey, ttsVoices));
-      // ⚡ 同步调用，必须在用户手势栈内（点击事件）
+      eng.setVoiceName(ttsResolvedVoice?.name ?? null);
+      // ⚡ 同步调用，保留 user gesture 上下文
       eng.start(segs, fromIdx);
     },
-    [getEngine, ttsRate, ttsVoiceKey, ttsVoices]
+    [getEngine, ttsRate, ttsResolvedVoice]
   );
 
   const pauseTts = useCallback(() => {
@@ -767,18 +761,21 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                       <option value="2">2x</option>
                     </select>
                   </div>
-                  <div className="article-tts-voice" title="语音">
-                    <select
-                      value={ttsVoiceKey}
-                      onChange={(e) => setTtsVoiceKey(e.target.value)}
-                      aria-label="朗读语音"
-                    >
-                      {CURATED_VOICES.map((c) => (
-                        <option key={c.key} value={c.key}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
+                  <div
+                    className="article-tts-voice-info"
+                    title={ttsResolvedVoice ? `已锁定 ${ttsResolvedVoice.name}` : '未找到 Edge Online 神经语音'}
+                  >
+                    {ttsResolvedVoice ? (
+                      <>
+                        <span className={`article-tts-voice-dot ${ttsResolvedVoice.isNeural ? 'is-neural' : ''}`} />
+                        <span className="article-tts-voice-label">
+                          {ttsResolvedVoice.label}
+                          {ttsResolvedVoice.isNeural ? ' · 神经语音' : ''}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="article-tts-voice-warn">需 Edge 浏览器</span>
+                    )}
                   </div>
                 </div>
               )}
@@ -1719,29 +1716,40 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           border-radius: 2px;
         }
 
-        /* 语音选择 */
-        .article-tts-voice {
+        /* 锁定音色显示（替代下拉，无歧义） */
+        .article-tts-voice-info {
           display: inline-flex;
           align-items: center;
-          padding: 0 8px;
+          gap: 6px;
+          padding: 0 12px;
           height: 36px;
           border: 1px solid var(--rule);
           border-radius: 8px;
           background: rgba(255,255,255,0.6);
           color: var(--ink-muted);
           font-size: 12px;
-          max-width: 200px;
+          max-width: 220px;
+          white-space: nowrap;
         }
-        .article-tts-voice select {
-          background: transparent;
-          border: none;
-          outline: none;
-          font: inherit;
+        .article-tts-voice-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: var(--ink-muted);
+          flex-shrink: 0;
+        }
+        .article-tts-voice-dot.is-neural {
+          background: #2a9d8f;
+          box-shadow: 0 0 0 2px rgba(42,157,143,0.18);
+        }
+        .article-tts-voice-label {
           color: var(--ink);
-          cursor: pointer;
-          padding: 0 4px;
-          max-width: 180px;
+          overflow: hidden;
           text-overflow: ellipsis;
+        }
+        .article-tts-voice-warn {
+          color: #b85b3a;
+          font-weight: 500;
         }
 
         /* TTS 进度条（底部固定） */
