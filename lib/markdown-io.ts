@@ -374,6 +374,63 @@ function reviveMarkdownTables(root: Element): void {
   }
 }
 
+// 把裸 URL 转成 <a>，并给所有 <a> 加 target="_blank" + 安全 rel
+const URL_RE = /https?:\/\/[^\s<>"'）)，。；,;]+[^\s<>"'）)，。；,;.!?:]/g;
+
+function linkifyUrls(root: Element): void {
+  const walker = (root.ownerDocument || document).createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest('a, code, pre, kbd, samp, script, style, .katex')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return URL_RE.test(node.textContent || '')
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    }
+  );
+  const targets: Text[] = [];
+  while (walker.nextNode()) targets.push(walker.currentNode as Text);
+
+  for (const node of targets) {
+    const text = node.textContent || '';
+    URL_RE.lastIndex = 0;
+    let last = 0;
+    const frag = document.createDocumentFragment();
+    let m: RegExpExecArray | null;
+    while ((m = URL_RE.exec(text)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const a = document.createElement('a');
+      a.href = m[0];
+      a.textContent = m[0];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      frag.appendChild(a);
+      last = URL_RE.lastIndex;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    if (frag.childNodes.length > 0) node.replaceWith(frag);
+  }
+}
+
+function decorateLinks(root: Element): void {
+  const anchors = root.querySelectorAll('a[href]');
+  for (const a of Array.from(anchors)) {
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) continue;
+    a.setAttribute('target', '_blank');
+    const rel = (a.getAttribute('rel') || '').split(/\s+/).filter(Boolean);
+    if (!rel.includes('noopener')) rel.push('noopener');
+    if (!rel.includes('noreferrer')) rel.push('noreferrer');
+    a.setAttribute('rel', rel.join(' '));
+  }
+}
+
 function wrapTables(root: Element): void {
   const tables = Array.from(root.querySelectorAll('table'));
   for (const table of tables) {
@@ -394,6 +451,8 @@ export function renderMathInHtml(html: string): string {
   normalizeMathBreaks(root);
   renderSplitDisplayMath(root);
   reviveMarkdownTables(root);
+  linkifyUrls(root);
+  decorateLinks(root);
   wrapTables(root);
 
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
