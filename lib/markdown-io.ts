@@ -257,6 +257,123 @@ function normalizeMathBreaks(root: Element): void {
   }
 }
 
+// TipTap 编辑器不会自动把逐行键入的 markdown 表格转成 <table>，每行都是独立 <p>。
+// 这里在渲染时把"表头段 + |---|---| 分隔段 + 多个数据行段"识别出来拼成真正的 <table>。
+const TABLE_DIVIDER_RE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+function paragraphTextForTable(el: Element): string {
+  // 把 <br> 当换行，把其它内联标签的文本拼起来
+  return (el.innerHTML || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ');
+}
+
+function splitTableRow(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.includes('|')) return null;
+  const stripped = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+  // 用未转义的 | 分隔
+  const cells = stripped.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
+  if (cells.length < 2) return null;
+  return cells;
+}
+
+function buildTableHtml(rows: string[][]): string {
+  const colCount = rows.reduce((max, r) => Math.max(max, r.length), 0);
+  const pad = (cells: string[]) => {
+    const out = cells.slice();
+    while (out.length < colCount) out.push('');
+    return out;
+  };
+  const escape = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const head = '<thead><tr>' + pad(rows[0]).map((c) => `<th>${escape(c)}</th>`).join('') + '</tr></thead>';
+  const body =
+    '<tbody>' +
+    rows
+      .slice(1)
+      .map((r) => '<tr>' + pad(r).map((c) => `<td>${escape(c)}</td>`).join('') + '</tr>')
+      .join('') +
+    '</tbody>';
+  return `<table>${head}${body}</table>`;
+}
+
+function reviveMarkdownTables(root: Element): void {
+  const containers = [root, ...Array.from(root.querySelectorAll('div, blockquote, li'))];
+  for (const container of containers) {
+    if (container.closest('code, pre, kbd, samp, script, style, .katex, table')) continue;
+    const children = Array.from(container.children);
+    let i = 0;
+    while (i < children.length) {
+      const el = children[i];
+      if (el.tagName !== 'P' || !el.isConnected) {
+        i++;
+        continue;
+      }
+      const headerText = paragraphTextForTable(el);
+      const headerLines = headerText.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (headerLines.length < 1) { i++; continue; }
+
+      // 单段内即包含完整表格（用户用 Shift+Enter 输入）
+      if (headerLines.length >= 2) {
+        let dividerIdx = -1;
+        for (let j = 1; j < headerLines.length; j++) {
+          if (TABLE_DIVIDER_RE.test(headerLines[j])) { dividerIdx = j; break; }
+        }
+        if (dividerIdx > 0) {
+          const headerCells = splitTableRow(headerLines[dividerIdx - 1]);
+          if (headerCells) {
+            const rows: string[][] = [headerCells];
+            for (let j = dividerIdx + 1; j < headerLines.length; j++) {
+              const cells = splitTableRow(headerLines[j]);
+              if (!cells) break;
+              rows.push(cells);
+            }
+            if (rows.length >= 2) {
+              const tableHtml = buildTableHtml(rows);
+              const tpl = document.createElement('template');
+              tpl.innerHTML = tableHtml;
+              el.replaceWith(tpl.content);
+              children.splice(i, 1);
+              continue;
+            }
+          }
+        }
+      }
+
+      // 多段：当前段为表头，下一段为分隔线，再后是数据行
+      const headerCells = splitTableRow(headerLines[0]);
+      const next = children[i + 1];
+      if (!headerCells || !next || next.tagName !== 'P') { i++; continue; }
+      const nextText = paragraphTextForTable(next).trim();
+      if (!TABLE_DIVIDER_RE.test(nextText)) { i++; continue; }
+
+      const rows: string[][] = [headerCells];
+      let j = i + 2;
+      while (j < children.length) {
+        const sib = children[j];
+        if (sib.tagName !== 'P') break;
+        const sibText = paragraphTextForTable(sib).trim();
+        if (!sibText) break;
+        const cells = splitTableRow(sibText);
+        if (!cells) break;
+        rows.push(cells);
+        j++;
+      }
+      if (rows.length < 2) { i++; continue; }
+
+      const tableHtml = buildTableHtml(rows);
+      const tpl = document.createElement('template');
+      tpl.innerHTML = tableHtml;
+      el.replaceWith(tpl.content);
+      for (let k = i + 1; k < j; k++) children[k].remove();
+      children.splice(i, j - i);
+      // 不递增 i：当前位置已被新表格替换，继续看后续段
+    }
+  }
+}
+
 function wrapTables(root: Element): void {
   const tables = Array.from(root.querySelectorAll('table'));
   for (const table of tables) {
@@ -276,6 +393,7 @@ export function renderMathInHtml(html: string): string {
 
   normalizeMathBreaks(root);
   renderSplitDisplayMath(root);
+  reviveMarkdownTables(root);
   wrapTables(root);
 
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
