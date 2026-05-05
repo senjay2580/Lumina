@@ -132,6 +132,11 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const preset = WIDTH_PRESETS[widthMode];
   const containerMaxWidth = preset.article + preset.toc + 64;
 
+  // 父组件传入新的 initial（例如保存后回到详情）时立刻同步，避免 useState 初值锁住旧数据导致摘要等字段闪回原状
+  useEffect(() => {
+    if (initial && initial.id === articleId) setArticle(initial);
+  }, [initial, articleId]);
+
   useEffect(() => {
     let active = true;
     (async () => {

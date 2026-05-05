@@ -50,6 +50,48 @@ export function htmlToMarkdown(html: string): string {
     return '\n\n' + inner.split('\n').map((l: string) => '> ' + l.trim()).join('\n') + '\n\n';
   });
 
+  // 表格（GFM）：必须放在通用标签剥离之前
+  md = md.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_, tableHtml) => {
+    const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    const cellRe = /<(t[hd])[^>]*>([\s\S]*?)<\/\1>/gi;
+    const rows: { isHeader: boolean; cells: string[] }[] = [];
+    let rm: RegExpExecArray | null;
+    while ((rm = rowRe.exec(tableHtml)) !== null) {
+      const cells: string[] = [];
+      let isHeader = false;
+      let cm: RegExpExecArray | null;
+      const inner = rm[1];
+      cellRe.lastIndex = 0;
+      while ((cm = cellRe.exec(inner)) !== null) {
+        if (cm[1].toLowerCase() === 'th') isHeader = true;
+        const text = decodeEntities(
+          cm[2]
+            .replace(/<br\s*\/?>/gi, ' ')
+            .replace(/<[^>]+>/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+        ).replace(/\|/g, '\\|');
+        cells.push(text);
+      }
+      if (cells.length > 0) rows.push({ isHeader, cells });
+    }
+    if (rows.length === 0) return '';
+    const colCount = rows.reduce((max, r) => Math.max(max, r.cells.length), 0);
+    const pad = (cells: string[]) => {
+      const out = cells.slice();
+      while (out.length < colCount) out.push('');
+      return out;
+    };
+    const headerIdx = rows.findIndex((r) => r.isHeader);
+    const headerRow = headerIdx >= 0 ? rows[headerIdx] : rows[0];
+    const bodyRows = rows.filter((_, i) => i !== (headerIdx >= 0 ? headerIdx : 0));
+    const lines: string[] = [];
+    lines.push('| ' + pad(headerRow.cells).join(' | ') + ' |');
+    lines.push('| ' + Array(colCount).fill('---').join(' | ') + ' |');
+    for (const r of bodyRows) lines.push('| ' + pad(r.cells).join(' | ') + ' |');
+    return '\n\n' + lines.join('\n') + '\n\n';
+  });
+
   // 列表
   md = md.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, content) => {
     return '\n\n' + content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n').trim() + '\n\n';
@@ -202,6 +244,19 @@ function renderSplitDisplayMath(root: Element): void {
   }
 }
 
+// TipTap 把多行 `$$...$$` 存成 <p>$$<br>formula<br>$$</p> 时，<br> 会把文本拆成多个 text node，
+// 导致 renderMathInText 的正则无法跨节点匹配。这里把含数学标记的段落里的 <br> 折成 \n。
+function normalizeMathBreaks(root: Element): void {
+  const containers = root.querySelectorAll('p, div, li, blockquote, td, th');
+  for (const el of Array.from(containers)) {
+    if (el.closest('code, pre, kbd, samp, script, style, .katex')) continue;
+    if (!el.querySelector('br')) continue;
+    const text = el.textContent || '';
+    if (!/\$\$|\\\[|\\\]|\\\(|\\\)/.test(text) && !/\$[^\s$][\s\S]*?\$/.test(text)) continue;
+    el.innerHTML = el.innerHTML.replace(/<br\s*\/?>/gi, '\n');
+  }
+}
+
 function wrapTables(root: Element): void {
   const tables = Array.from(root.querySelectorAll('table'));
   for (const table of tables) {
@@ -219,6 +274,7 @@ export function renderMathInHtml(html: string): string {
   const root = doc.querySelector('#__math_root');
   if (!root) return html;
 
+  normalizeMathBreaks(root);
   renderSplitDisplayMath(root);
   wrapTables(root);
 
