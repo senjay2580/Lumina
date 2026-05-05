@@ -7,6 +7,10 @@ import Placeholder from '@tiptap/extension-placeholder';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Typography from '@tiptap/extension-typography';
+import { Table } from '@tiptap/extension-table';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import TableRow from '@tiptap/extension-table-row';
 import {
   createArticle,
   updateArticle,
@@ -121,6 +125,10 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
       }),
       Image.configure({ inline: false, allowBase64: false }),
       Link.configure({ openOnClick: false, autolink: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       Typography
     ],
     content: initial?.content || '',
@@ -504,6 +512,9 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
         .article-prose pre code { background: transparent; padding: 0; color: inherit; }
         .article-prose img { max-width: 100%; height: auto; border: 2px solid #111827; margin: 1rem 0; display: block; }
         .article-prose hr { border: none; border-top: 2px solid #111827; margin: 1.5rem 0; }
+        .article-prose table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.95em; }
+        .article-prose th, .article-prose td { border: 1px solid #d1d5db; padding: 0.45rem 0.65rem; vertical-align: top; }
+        .article-prose th { background: #f3f4f6; font-weight: 700; }
         .article-prose p.is-editor-empty:first-child::before {
           color: #d1d5db;
           content: attr(data-placeholder);

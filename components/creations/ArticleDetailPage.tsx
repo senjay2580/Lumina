@@ -1575,13 +1575,19 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           width: 60%;
         }
 
-        .article-prose table {
-          display: block;
+        .article-table-scroll {
           width: 100%;
           max-width: 100%;
           overflow-x: auto;
-          border-collapse: collapse;
           margin: 1.6em 0;
+          overscroll-behavior-x: contain;
+        }
+
+        .article-prose table {
+          width: 100%;
+          max-width: 100%;
+          border-collapse: collapse;
+          margin: 0;
           font-family: var(--sans);
           font-size: 15px;
         }

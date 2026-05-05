@@ -97,7 +97,7 @@ function decodeEntities(s: string): string {
 // Markdown → HTML：编辑器与详情页统一渲染
 export function markdownToHtml(md: string): string {
   if (!md) return '';
-  return marked.parse(md, { async: false }) as string;
+  return marked.parse(md, { async: false, gfm: true, breaks: false }) as string;
 }
 
 function renderMathFormula(source: string, displayMode: boolean): string {
@@ -202,6 +202,17 @@ function renderSplitDisplayMath(root: Element): void {
   }
 }
 
+function wrapTables(root: Element): void {
+  const tables = Array.from(root.querySelectorAll('table'));
+  for (const table of tables) {
+    if (table.parentElement?.classList.contains('article-table-scroll')) continue;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'article-table-scroll';
+    table.replaceWith(wrapper);
+    wrapper.appendChild(table);
+  }
+}
+
 export function renderMathInHtml(html: string): string {
   if (!html || typeof DOMParser === 'undefined' || typeof document === 'undefined') return html;
   const doc = new DOMParser().parseFromString(`<div id="__math_root">${html}</div>`, 'text/html');
@@ -209,6 +220,7 @@ export function renderMathInHtml(html: string): string {
   if (!root) return html;
 
   renderSplitDisplayMath(root);
+  wrapTables(root);
 
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
