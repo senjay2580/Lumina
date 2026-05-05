@@ -144,11 +144,71 @@ function renderMathInText(text: string): Node[] {
   return nodes;
 }
 
+function isMathBoundary(el: Element, marker: '$$' | '\\[' | '\\]'): boolean {
+  if (el.closest('code, pre, kbd, samp, script, style, .katex')) return false;
+  return (el.textContent || '').trim() === marker;
+}
+
+function renderSplitDisplayMath(root: Element): void {
+  const containers = [root, ...Array.from(root.querySelectorAll('*'))];
+
+  for (const container of containers) {
+    if (container.closest('code, pre, kbd, samp, script, style, .katex')) continue;
+
+    let child = container.firstElementChild;
+    while (child) {
+      const endMarker = isMathBoundary(child, '$$')
+        ? '$$'
+        : isMathBoundary(child, '\\[')
+          ? '\\]'
+          : null;
+
+      if (!endMarker) {
+        child = child.nextElementSibling;
+        continue;
+      }
+
+      const start = child;
+      const formulaParts: string[] = [];
+      const between: Element[] = [];
+      let cursor = start.nextElementSibling;
+      let end: Element | null = null;
+
+      while (cursor) {
+        if (isMathBoundary(cursor, endMarker)) {
+          end = cursor;
+          break;
+        }
+        between.push(cursor);
+        formulaParts.push(cursor.textContent || '');
+        cursor = cursor.nextElementSibling;
+      }
+
+      if (!end) {
+        child = start.nextElementSibling;
+        continue;
+      }
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'article-math article-math-display';
+      wrapper.innerHTML = renderMathFormula(formulaParts.join('\n').trim(), true);
+
+      start.replaceWith(wrapper);
+      for (const el of between) el.remove();
+      const next = end.nextElementSibling;
+      end.remove();
+      child = next;
+    }
+  }
+}
+
 export function renderMathInHtml(html: string): string {
   if (!html || typeof DOMParser === 'undefined' || typeof document === 'undefined') return html;
   const doc = new DOMParser().parseFromString(`<div id="__math_root">${html}</div>`, 'text/html');
   const root = doc.querySelector('#__math_root');
   if (!root) return html;
+
+  renderSplitDisplayMath(root);
 
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
