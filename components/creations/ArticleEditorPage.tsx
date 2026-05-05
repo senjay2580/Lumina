@@ -217,7 +217,7 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
 
         const payload = {
           title: title.trim() || undefined,
-          excerpt: excerpt.trim() || undefined,
+          excerpt: excerpt.trim(),
           cover_url: coverUrl,
           content: html,
           tags

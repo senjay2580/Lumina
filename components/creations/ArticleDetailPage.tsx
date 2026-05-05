@@ -1,17 +1,18 @@
 // 文章详情页（博客阅读体验：Anthropic 暖调 + 极光 + 浮动目录 + 进度条 + 导入导出）
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import 'katex/dist/katex.min.css';
 import {
   ArrowLeft, Edit2, Trash2, Calendar, ArrowUp, List, Clock, Tag,
   Download, FileDown, Image as ImageIcon, FileText, ChevronDown, Upload,
   Play, Pause, Square, MessageSquare, Send, Sparkles, Gauge
 } from 'lucide-react';
-import { marked } from 'marked';
 import {
   getArticle, createArticle, getNotes, addNote, deleteNote,
   getRelatedArticles, type Article, type ArticleNote
 } from '../../lib/articles';
 import {
-  pickMarkdownFile, importedMarkdownToContent, extractTitleFromMarkdown
+  pickMarkdownFile, importedMarkdownToContent, extractTitleFromMarkdown,
+  articleContentToHtml
 } from '../../lib/markdown-io';
 import {
   articleContentToMarkdown,
@@ -75,6 +76,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   const [exporting, setExporting] = useState<'png' | 'pdf' | 'md' | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [tocVisible, setTocVisible] = useState(true);
+  const [tocCollapsed, setTocCollapsed] = useState(false);
   const [widthMode, setWidthMode] = useState<WidthMode>(() => {
     if (typeof window === 'undefined') return 'wide';
     const stored = window.localStorage.getItem(WIDTH_STORAGE_KEY) as WidthMode | null;
@@ -396,7 +398,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
   // 解析 HTML 时同步注入 heading id 并生成 TOC，保证 id 在首次渲染就在 DOM 上
   const { html, tocFromHtml } = useMemo(() => {
     if (!article?.content) return { html: '', tocFromHtml: [] as TocItem[] };
-    const raw = marked.parse(article.content, { async: false }) as string;
+    const raw = articleContentToHtml(article.content);
     if (typeof DOMParser === 'undefined') return { html: raw, tocFromHtml: [] };
     const doc = new DOMParser().parseFromString(`<div id="__article_root">${raw}</div>`, 'text/html');
     const root = doc.querySelector('#__article_root');
@@ -1033,28 +1035,40 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             {toc.length > 0 && tocVisible && (
               <aside className="hidden lg:block">
                 <nav className="sticky top-24 article-toc-wrap">
-                  <div className="article-toc-header">
+                  <button
+                    type="button"
+                    className="article-toc-header article-toc-toggle"
+                    onClick={() => setTocCollapsed((v) => !v)}
+                    aria-expanded={!tocCollapsed}
+                    title={tocCollapsed ? '展开目录' : '折叠目录'}
+                  >
                     <span className="article-toc-dot" />
                     <span>目录</span>
-                  </div>
-                  <ul className="article-toc">
-                    {toc.map((item) => (
-                      <li
-                        key={item.id}
-                        style={{ paddingLeft: `${(item.level - 1) * 14}px` }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => scrollToHeading(item.id)}
-                          className={`article-toc-link ${activeId === item.id ? 'is-active' : ''}`}
-                          title={item.text}
-                        >
-                          <span className="article-toc-bar" />
-                          <span className="article-toc-text">{item.text}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                    <span className="article-toc-count">{toc.length}</span>
+                    <ChevronDown className={`article-toc-chevron ${tocCollapsed ? 'is-collapsed' : ''}`} />
+                  </button>
+                  {!tocCollapsed && (
+                    <div className="article-toc-scroll">
+                      <ul className="article-toc">
+                        {toc.map((item) => (
+                          <li
+                            key={item.id}
+                            style={{ paddingLeft: `${(item.level - 1) * 14}px` }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => scrollToHeading(item.id)}
+                              className={`article-toc-link ${activeId === item.id ? 'is-active' : ''}`}
+                              title={item.text}
+                            >
+                              <span className="article-toc-bar" />
+                              <span className="article-toc-text">{item.text}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </nav>
               </aside>
             )}
@@ -1071,24 +1085,35 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             style={{ background: '#FCFBF7' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="article-toc-header mb-4">
+            <button
+              type="button"
+              className="article-toc-header article-toc-toggle mb-4"
+              onClick={() => setTocCollapsed((v) => !v)}
+              aria-expanded={!tocCollapsed}
+            >
               <span className="article-toc-dot" />
               <span>目录</span>
-            </div>
-            <ul className="article-toc">
-              {toc.map((item) => (
-                <li key={item.id} style={{ paddingLeft: `${(item.level - 1) * 14}px` }}>
-                  <button
-                    type="button"
-                    onClick={() => scrollToHeading(item.id)}
-                    className={`article-toc-link ${activeId === item.id ? 'is-active' : ''}`}
-                  >
-                    <span className="article-toc-bar" />
-                    <span className="article-toc-text">{item.text}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+              <span className="article-toc-count">{toc.length}</span>
+              <ChevronDown className={`article-toc-chevron ${tocCollapsed ? 'is-collapsed' : ''}`} />
+            </button>
+            {!tocCollapsed && (
+              <div className="article-toc-scroll">
+                <ul className="article-toc">
+                  {toc.map((item) => (
+                    <li key={item.id} style={{ paddingLeft: `${(item.level - 1) * 14}px` }}>
+                      <button
+                        type="button"
+                        onClick={() => scrollToHeading(item.id)}
+                        className={`article-toc-link ${activeId === item.id ? 'is-active' : ''}`}
+                      >
+                        <span className="article-toc-bar" />
+                        <span className="article-toc-text">{item.text}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1253,7 +1278,13 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             grid-template-columns: minmax(0, var(--article-w, 1040px)) var(--toc-w, 260px);
           }
         }
-        .article-body { transition: max-width 0.3s ease; position: relative; z-index: 1; }
+        .article-body {
+          min-width: 0;
+          max-width: 100%;
+          transition: max-width 0.3s ease;
+          position: relative;
+          z-index: 1;
+        }
 
         /* 按钮 */
         .article-link-btn {
@@ -1422,6 +1453,9 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           letter-spacing: -0.003em;
           color: var(--ink);
           font-feature-settings: "liga","kern","onum";
+          min-width: 0;
+          max-width: 100%;
+          overflow-wrap: break-word;
         }
         .article-prose p { margin: 1.6em 0; }
         .article-prose p:first-child { margin-top: 0; }
@@ -1520,6 +1554,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           overflow-x: auto;
           margin: 1.6em 0;
           border: 1px solid var(--rule);
+          max-width: 100%;
         }
         .article-prose pre code {
           background: transparent; padding: 0; font-size: inherit;
@@ -1541,7 +1576,11 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         }
 
         .article-prose table {
-          width: 100%; border-collapse: collapse;
+          display: block;
+          width: 100%;
+          max-width: 100%;
+          overflow-x: auto;
+          border-collapse: collapse;
           margin: 1.6em 0;
           font-family: var(--sans);
           font-size: 15px;
@@ -1557,10 +1596,32 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         }
         .article-prose tr:hover td { background: var(--bg-alt); }
 
+        .article-math {
+          max-width: 100%;
+        }
+        .article-math-display {
+          display: block;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding: 0.75em 0;
+          margin: 1.2em 0;
+        }
+        .article-math-inline {
+          display: inline-block;
+          max-width: 100%;
+          vertical-align: -0.18em;
+        }
+        .article-math .katex-display {
+          margin: 0;
+        }
+
         /* 浮动目录 */
         .article-toc-wrap {
           font-family: var(--sans);
           padding: 18px 0;
+          max-height: calc(100vh - 132px);
+          display: flex;
+          flex-direction: column;
         }
         .article-toc-header {
           display: flex; align-items: center;
@@ -1573,11 +1634,66 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           margin-bottom: 16px;
           padding-left: 14px;
         }
+        .article-toc-toggle {
+          width: 100%;
+          padding: 6px 8px 6px 14px;
+          border: 0;
+          border-radius: 8px;
+          background: transparent;
+          cursor: pointer;
+          text-align: left;
+          margin-bottom: 10px;
+        }
+        .article-toc-toggle:hover {
+          background: rgba(217,119,87,0.08);
+          color: var(--ink-muted);
+        }
+        .article-toc-count {
+          margin-left: auto;
+          min-width: 20px;
+          height: 20px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          background: var(--accent-soft);
+          color: var(--accent-deep);
+          font-size: 10px;
+          letter-spacing: 0;
+        }
+        .article-toc-chevron {
+          width: 14px;
+          height: 14px;
+          color: var(--ink-faint);
+          transition: transform 0.18s;
+        }
+        .article-toc-chevron.is-collapsed {
+          transform: rotate(-90deg);
+        }
         .article-toc-dot {
           width: 6px; height: 6px;
           border-radius: 50%;
           background: var(--accent);
           box-shadow: 0 0 0 3px rgba(217,119,87,0.2);
+        }
+        .article-toc-scroll {
+          min-height: 0;
+          max-height: calc(100vh - 190px);
+          overflow-y: auto;
+          padding-right: 6px;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(217,119,87,0.45) transparent;
+        }
+        .article-toc-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .article-toc-scroll::-webkit-scrollbar-thumb {
+          background: rgba(217,119,87,0.38);
+          border-radius: 999px;
+        }
+        .article-toc-scroll::-webkit-scrollbar-track {
+          background: transparent;
         }
         .article-toc {
           list-style: none; padding: 0; margin: 0;

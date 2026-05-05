@@ -1,5 +1,6 @@
 // Markdown 导入导出工具
 import { marked } from 'marked';
+import katex from 'katex';
 
 // HTML → Markdown：处理 TipTap 输出的常见标签
 export function htmlToMarkdown(html: string): string {
@@ -97,6 +98,85 @@ function decodeEntities(s: string): string {
 export function markdownToHtml(md: string): string {
   if (!md) return '';
   return marked.parse(md, { async: false }) as string;
+}
+
+function renderMathFormula(source: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(source, {
+      displayMode,
+      throwOnError: false,
+      strict: false,
+      trust: false
+    });
+  } catch {
+    return escapeHtml(source);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderMathInText(text: string): Node[] {
+  const nodes: Node[] = [];
+  const re = /(\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<!\$)\$([^\n$]+?)\$(?!\$))/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) nodes.push(document.createTextNode(text.slice(last, m.index)));
+
+    const displayMode = Boolean(m[2] || m[3]);
+    const formula = (m[2] || m[3] || m[4] || m[5] || '').trim();
+    const wrapper = document.createElement(displayMode ? 'div' : 'span');
+    wrapper.className = displayMode ? 'article-math article-math-display' : 'article-math article-math-inline';
+    wrapper.innerHTML = renderMathFormula(formula, displayMode);
+    nodes.push(wrapper);
+    last = re.lastIndex;
+  }
+
+  if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
+  return nodes;
+}
+
+export function renderMathInHtml(html: string): string {
+  if (!html || typeof DOMParser === 'undefined' || typeof document === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(`<div id="__math_root">${html}</div>`, 'text/html');
+  const root = doc.querySelector('#__math_root');
+  if (!root) return html;
+
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest('code, pre, kbd, samp, script, style, .katex')) return NodeFilter.FILTER_REJECT;
+      return /(\$|\\\(|\\\[)/.test(node.textContent || '')
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    }
+  });
+
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+
+  for (const node of textNodes) {
+    const rendered = renderMathInText(node.textContent || '');
+    if (rendered.length === 1 && rendered[0].nodeType === Node.TEXT_NODE) continue;
+    node.replaceWith(...rendered);
+  }
+
+  return root.innerHTML;
+}
+
+export function articleContentToHtml(content: string): string {
+  if (!content) return '';
+  const html = looksLikeHtml(content) ? content : markdownToHtml(content);
+  return renderMathInHtml(html);
 }
 
 // 内容看起来是 HTML 还是 Markdown
