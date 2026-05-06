@@ -53,6 +53,17 @@ const stripHtml = (html: string): string => {
   return tmp.textContent || tmp.innerText || '';
 };
 
+// 检测内容是否为 HTML（已被 TipTap/marked 处理过）。
+// 通过外部 API/skill 写入的纯 Markdown 在加载到 TipTap 前需要先转 HTML，
+// 否则 #、---、\n\n 等都会被当成纯文本一行展示。
+const looksLikeHtml = (raw: string): boolean => /<\/?(p|h[1-6]|ul|ol|li|pre|code|blockquote|table|div|br|hr|img|a|strong|em|span)\b/i.test(raw);
+
+const normalizeEditorContent = (raw: string): string => {
+  if (!raw) return raw;
+  if (looksLikeHtml(raw)) return raw;
+  return marked.parse(raw, { async: false }) as string;
+};
+
 const getCategoryColors = (color: string): { bg: string; text: string; hex: string } => {
   // 支持 hex 颜色
   if (color.startsWith('#')) {
@@ -403,7 +414,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
             <span>创建于: ${new Date(prompt.created_at).toLocaleDateString('zh-CN')}</span>
           </div>
           <div style="height: 1px; background: #eee; margin: 16px 0;"></div>
-          <div style="font-size: 14px; line-height: 1.8; color: #333; word-break: break-word;">${prompt.content}</div>
+          <div style="font-size: 14px; line-height: 1.8; color: #333; word-break: break-word;">${normalizeEditorContent(prompt.content)}</div>
         </div>
       `).join('<div style="height: 40px;"></div>');
 
@@ -1334,7 +1345,7 @@ const TiptapEditor: React.FC<{
         lowlight,
       }),
     ],
-    content,
+    content: normalizeEditorContent(content),
     onUpdate: ({ editor }) => {
       // 如果是从 props 更新的，不触发 onChange
       if (isUpdatingFromProps.current) {
@@ -1393,9 +1404,11 @@ const TiptapEditor: React.FC<{
 
   // 当外部 content 变化时更新编辑器
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
+    if (!editor) return;
+    const normalized = normalizeEditorContent(content);
+    if (normalized !== editor.getHTML()) {
       isUpdatingFromProps.current = true;
-      editor.commands.setContent(content);
+      editor.commands.setContent(normalized);
       // 使用 requestAnimationFrame 确保在下一帧重置标志
       requestAnimationFrame(() => {
         isUpdatingFromProps.current = false;
