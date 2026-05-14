@@ -6,7 +6,7 @@
 //   - Supabase/API/POST 请求：直通不缓存
 //   - 新版本部署后用户刷新即生效 (skipWaiting + clients.claim)
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE_STATIC = `lumina-static-${VERSION}`;
 const CACHE_HTML = `lumina-html-${VERSION}`;
 const CACHE_FONTS = `lumina-fonts-${VERSION}`;
@@ -16,6 +16,7 @@ const STATIC_PRECACHE = [
   '/index.html',
   '/manifest.webmanifest',
   '/favicon.svg',
+  '/icon.svg',
   '/logo.png',
 ];
 
