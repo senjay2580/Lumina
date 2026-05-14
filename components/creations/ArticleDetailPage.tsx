@@ -734,7 +734,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
               {/* TTS 朗读 */}
               {ttsAvailable && (
-                <div className="article-tts-group" title="朗读">
+                <div className="article-tts-group max-md:hidden" title="朗读">
                   {ttsState === 'idle' ? (
                     <button onClick={() => startTts()} className="article-icon-btn" aria-label="开始朗读">
                       <Play className="w-4 h-4" />
