@@ -30,9 +30,25 @@ type ViewMode =
   | 'article-detail'
   | 'article-editor';
 
+// 跨组件传递「打开 CreationsPage 时直接落到哪个子页」的轻量信号。
+// 在 HomePage 等外部组件点击文章/想法等卡片时调用 setPendingCreationsTab(tab)
+// 再 onNavigate('CREATIONS')，CreationsPage 挂载时把它消费掉。
+let pendingTab: ViewMode | null = null;
+export function setPendingCreationsTab(tab: ViewMode) {
+  pendingTab = tab;
+}
+function consumePendingTab(): ViewMode {
+  if (pendingTab) {
+    const t = pendingTab;
+    pendingTab = null;
+    return t;
+  }
+  return 'home';
+}
+
 export default function CreationsPage({ userId }: Props) {
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<ViewMode>('home');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => consumePendingTab());
   const [selectedResume, setSelectedResume] = useState<Creation | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
 

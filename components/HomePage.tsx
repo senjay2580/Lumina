@@ -5,6 +5,7 @@ import { getStoredUser } from '../lib/auth';
 import * as workflowApi from '../lib/workflows';
 import { ViewType } from './Sidebar';
 import { ContextMenu, useContextMenu, useToast, ToastContainer, Confirm } from '../shared';
+import { setPendingCreationsTab } from './CreationsPage';
 
 // 工作流节点组件 - 带发光效果
 const WorkflowNode: React.FC<{
@@ -766,6 +767,96 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
             </button>
           </motion.div>
         </section>
+
+        {/* 快捷入口 - 4 张可点击卡片 */}
+        <motion.section
+          className="mb-12 max-md:mb-8"
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.55 }}
+        >
+          <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-6 max-md:text-xl max-md:mb-4">快捷入口</h2>
+          <div className="grid grid-cols-4 gap-4 max-md:grid-cols-2 max-md:gap-3">
+            {/* 文章 */}
+            <motion.button
+              type="button"
+              onClick={() => {
+                setPendingCreationsTab('articles');
+                onNavigate('CREATIONS');
+              }}
+              className="group text-left bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 max-md:p-4"
+              whileTap={{ scale: 0.97 }}
+            >
+              <svg className="w-10 h-10 text-indigo-500 shrink-0 max-md:w-8 max-md:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="14" y2="17" />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-base font-bold text-gray-900 tracking-tight max-md:text-sm">文章</p>
+                <p className="text-xs text-gray-500 truncate">长文 · 博客 · 笔记</p>
+              </div>
+            </motion.button>
+
+            {/* 想法 */}
+            <motion.button
+              type="button"
+              onClick={() => {
+                setPendingCreationsTab('ideas');
+                onNavigate('CREATIONS');
+              }}
+              className="group text-left bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 max-md:p-4"
+              whileTap={{ scale: 0.97 }}
+            >
+              <svg className="w-10 h-10 text-amber-500 shrink-0 max-md:w-8 max-md:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18h6" />
+                <path d="M10 22h4" />
+                <path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z" />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-base font-bold text-gray-900 tracking-tight max-md:text-sm">想法</p>
+                <p className="text-xs text-gray-500 truncate">灵感 · 碎片 · 速记</p>
+              </div>
+            </motion.button>
+
+            {/* 资源 */}
+            <motion.button
+              type="button"
+              onClick={() => onNavigate('RESOURCES')}
+              className="group text-left bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 max-md:p-4"
+              whileTap={{ scale: 0.97 }}
+            >
+              <svg className="w-10 h-10 text-emerald-500 shrink-0 max-md:w-8 max-md:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <ellipse cx="12" cy="5" rx="9" ry="3" />
+                <path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                <path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6" />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-base font-bold text-gray-900 tracking-tight max-md:text-sm">资源</p>
+                <p className="text-xs text-gray-500 truncate">链接 · 文件 · 收藏</p>
+              </div>
+            </motion.button>
+
+            {/* RSS */}
+            <motion.button
+              type="button"
+              onClick={() => onNavigate('RSS_SUBSCRIPTIONS')}
+              className="group text-left bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 max-md:p-4"
+              whileTap={{ scale: 0.97 }}
+            >
+              <svg className="w-10 h-10 text-orange-500 shrink-0 max-md:w-8 max-md:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 11a9 9 0 0 1 9 9" />
+                <path d="M4 4a16 16 0 0 1 16 16" />
+                <circle cx="5" cy="19" r="1.5" fill="currentColor" stroke="none" />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-base font-bold text-gray-900 tracking-tight max-md:text-sm">RSS</p>
+                <p className="text-xs text-gray-500 truncate">订阅 · 推送 · 聚合</p>
+              </div>
+            </motion.button>
+          </div>
+        </motion.section>
 
         {/* 工作流列表 - 卡片样式 */}
         <motion.section 
