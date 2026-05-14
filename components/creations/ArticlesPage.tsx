@@ -152,8 +152,8 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
   };
 
   return (
-    <div className="w-full h-full overflow-y-auto bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
+    <div className="w-full h-full overflow-y-auto bg-gray-50 max-md:bg-white">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-5 max-md:py-4">
         <div className="mb-8 max-md:mb-5">
           <button
             onClick={onBack}
@@ -242,17 +242,19 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-md:gap-0 max-md:divide-y max-md:divide-gray-200">
             {articles.map((article) => (
               <motion.div
                 key={article.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-white border-2 border-gray-900 overflow-hidden hover:shadow-[6px_6px_0_0_rgba(0,0,0,0.9)] transition-shadow cursor-pointer flex flex-col"
+                className="bg-white border-2 border-gray-900 overflow-hidden hover:shadow-[6px_6px_0_0_rgba(0,0,0,0.9)] transition-shadow cursor-pointer flex flex-col
+                  max-md:flex-row-reverse max-md:items-start max-md:gap-4 max-md:border-0 max-md:p-0 max-md:py-5 max-md:hover:shadow-none max-md:bg-transparent"
                 onClick={() => onOpenArticle(article)}
               >
                 {article.cover_url ? (
-                  <div className="aspect-[16/9] w-full bg-gray-100 overflow-hidden border-b-2 border-gray-900">
+                  <div className="aspect-[16/9] w-full bg-gray-100 overflow-hidden border-b-2 border-gray-900
+                    max-md:w-[100px] max-md:h-[100px] max-md:aspect-square max-md:border-0 max-md:rounded-sm max-md:shrink-0">
                     <img
                       src={article.cover_url}
                       alt={article.title || ''}
@@ -263,14 +265,17 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
                     />
                   </div>
                 ) : (
-                  <div className="aspect-[16/9] w-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center border-b-2 border-gray-900">
-                    <FileText className="w-12 h-12 text-gray-400" />
+                  <div className="aspect-[16/9] w-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center border-b-2 border-gray-900
+                    max-md:w-[100px] max-md:h-[100px] max-md:aspect-square max-md:border-0 max-md:rounded-sm max-md:shrink-0">
+                    <FileText className="w-12 h-12 text-gray-400 max-md:w-7 max-md:h-7" />
                   </div>
                 )}
 
-                <div className="p-5 flex-1 flex flex-col">
-                  <div className="flex items-start justify-between mb-2 gap-2">
-                    <h3 className="text-lg font-bold text-gray-900 line-clamp-2 flex-1">
+                <div className="p-5 flex-1 flex flex-col max-md:p-0 max-md:min-w-0">
+                  <div className="flex items-start justify-between mb-2 gap-2 max-md:mb-1.5">
+                    <h3 className="text-lg font-bold text-gray-900 line-clamp-2 flex-1
+                      max-md:text-[16px] max-md:font-bold max-md:leading-snug max-md:tracking-tight"
+                      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
                       {article.title || '无标题'}
                     </h3>
                     <button
@@ -278,26 +283,28 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
                         e.stopPropagation();
                         handleDelete(article);
                       }}
-                      className="p-1 hover:bg-red-50 transition-colors shrink-0"
+                      className="p-1 hover:bg-red-50 transition-colors shrink-0 max-md:hidden"
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4 text-red-600" />
                     </button>
                   </div>
 
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-3 flex-1">
+                  <p className="text-gray-600 text-sm mb-4 line-clamp-3 flex-1
+                    max-md:line-clamp-2 max-md:mb-2 max-md:text-[13.5px] max-md:text-[#6B6B6B] max-md:leading-relaxed max-md:flex-none">
                     {buildExcerpt(article)}
                   </p>
 
-                  <div className="flex items-center justify-between text-xs text-gray-500">
+                  <div className="flex items-center justify-between text-xs text-gray-500 max-md:text-[12.5px] max-md:text-[#6B6B6B]">
                     <div className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
+                      <Calendar className="w-3 h-3 max-md:hidden" />
                       {formatDate(article.created_at)}
                     </div>
                     {article.tags && article.tags.length > 0 && (
                       <div className="flex gap-1 max-w-[60%] overflow-hidden">
                         {article.tags.slice(0, 2).map((t) => (
-                          <span key={t} className="px-2 py-0.5 bg-gray-100 text-gray-700 truncate">
+                          <span key={t} className="px-2 py-0.5 bg-gray-100 text-gray-700 truncate
+                            max-md:bg-[#F2F2F2] max-md:text-[#242424] max-md:rounded-full max-md:px-2 max-md:py-px">
                             {t}
                           </span>
                         ))}

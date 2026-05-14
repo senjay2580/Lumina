@@ -2164,6 +2164,286 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           transform: translateY(0);
         }
         .article-back-top:hover { background: var(--accent); }
+
+        /* ============================================================
+           移动端 — Medium 风格覆盖
+           桌面端零变化，仅 ≤767px 生效。
+           设计原则：纯白底 + sans 标题 + serif 正文 + 无装饰 + 单栏 + 大留白
+           ============================================================ */
+        @media (max-width: 767px) {
+          .article-page {
+            background: #FFFFFF;
+            --bg: #FFFFFF;
+            --bg-alt: #FAFAFA;
+            --ink: #242424;
+            --ink-soft: #2E2E2E;
+            --ink-muted: #6B6B6B;
+            --ink-faint: #8A8A8A;
+            --rule: #E6E6E6;
+            --rule-strong: #C7C7C7;
+            --accent: #1A8917;
+            --code-bg: #F2F2F2;
+            --selection: #B4D5FE;
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+          }
+
+          /* 隐藏所有装饰层 */
+          .article-bg-layer,
+          .article-bg-rings,
+          .article-bg-flow,
+          .article-bg-grain,
+          .article-aurora-blob {
+            display: none !important;
+          }
+
+          /* 进度条改纯黑 */
+          .article-progress {
+            background: #242424;
+            height: 2px;
+          }
+
+          /* 顶栏：纯白 + 细灰底线 */
+          .article-topbar {
+            background: rgba(255, 255, 255, 0.96);
+            border-bottom: 1px solid var(--rule);
+            backdrop-filter: blur(8px);
+          }
+
+          /* 容器：缩边距、收窄 */
+          .article-container {
+            padding-left: 20px !important;
+            padding-right: 20px !important;
+            padding-bottom: 64px !important;
+            max-width: 100% !important;
+          }
+
+          /* 标题：sans 大字，weight 800 */
+          .article-title {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            font-weight: 800;
+            font-size: 32px;
+            line-height: 1.16;
+            letter-spacing: -0.022em;
+            color: #242424;
+            margin: 12px 0 18px;
+          }
+
+          /* meta：sans 灰 */
+          .article-meta {
+            font-family: 'Inter', system-ui, sans-serif;
+            font-size: 13.5px;
+            color: var(--ink-muted);
+            letter-spacing: 0;
+          }
+
+          /* tag 标签：浅灰底黑字，无大写 */
+          .article-tag {
+            font-family: 'Inter', system-ui, sans-serif;
+            font-size: 12.5px;
+            font-weight: 500;
+            padding: 4px 10px;
+            color: #242424;
+            background: #F2F2F2;
+            border-radius: 999px;
+            text-transform: none;
+            letter-spacing: 0;
+          }
+
+          /* 封面：直角无阴影，贴边 */
+          .article-cover {
+            margin: 20px -20px 28px;
+          }
+          .article-cover img {
+            border-radius: 0;
+            box-shadow: none;
+          }
+
+          /* lede 引言：去背景框，改为 sans 灰大字 */
+          .article-lede {
+            font-family: 'Inter', system-ui, sans-serif;
+            font-size: 19px;
+            font-weight: 400;
+            font-style: normal;
+            line-height: 1.45;
+            color: var(--ink-muted);
+            padding: 0;
+            margin: 0 0 32px;
+            background: transparent;
+            border-radius: 0;
+            letter-spacing: -0.003em;
+          }
+
+          /* 正文：serif Charter/Georgia */
+          .article-prose {
+            font-family: 'Charter', 'Iowan Old Style', 'Source Serif Pro', 'Georgia', serif;
+            font-size: 18px;
+            line-height: 1.58;
+            letter-spacing: -0.003em;
+            color: #242424;
+          }
+          .article-prose p {
+            margin: 1.4em 0;
+          }
+
+          /* 取消 drop cap —— 移动端窄屏不合适 */
+          .article-prose > p:first-of-type::first-letter {
+            font-size: inherit;
+            font-weight: inherit;
+            float: none;
+            padding: 0;
+            line-height: inherit;
+          }
+
+          /* 内部标题：sans 风格 */
+          .article-prose h1,
+          .article-prose h2,
+          .article-prose h3,
+          .article-prose h4 {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            color: #242424;
+          }
+          .article-prose h1 {
+            font-weight: 700;
+            font-size: 26px;
+            line-height: 1.22;
+            letter-spacing: -0.018em;
+            margin: 2em 0 0.5em;
+          }
+          .article-prose h2 {
+            font-weight: 700;
+            font-size: 22px;
+            line-height: 1.26;
+            letter-spacing: -0.014em;
+            margin: 1.8em 0 0.45em;
+          }
+          .article-prose h3 {
+            font-weight: 700;
+            font-size: 19px;
+            line-height: 1.32;
+            margin: 1.6em 0 0.4em;
+          }
+          .article-prose h4 {
+            font-weight: 600;
+            font-size: 17px;
+            margin: 1.5em 0 0.4em;
+          }
+
+          /* 链接：黑字 + 黑下划线（Medium 经典） */
+          .article-prose a {
+            color: #242424;
+            text-decoration: underline;
+            text-decoration-thickness: 1px;
+            text-underline-offset: 4px;
+          }
+          .article-prose a:hover {
+            color: #242424;
+            text-decoration-thickness: 2px;
+          }
+
+          /* 列表：紧凑 */
+          .article-prose ul,
+          .article-prose ol {
+            margin: 1.2em 0;
+            padding-left: 1.4em;
+          }
+          .article-prose li {
+            margin: 0.4em 0;
+          }
+          .article-prose li::marker {
+            color: var(--ink-muted);
+          }
+
+          /* 引用：左 3px 黑竖条 + serif italic 大字 */
+          .article-prose blockquote {
+            margin: 1.6em 0;
+            padding: 4px 0 4px 20px;
+            border-left: 3px solid #242424;
+            font-family: 'Charter', 'Georgia', serif;
+            font-style: italic;
+            font-size: 21px;
+            line-height: 1.4;
+            color: #242424;
+            background: transparent;
+          }
+
+          /* 行内代码 */
+          .article-prose code {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 0.86em;
+            background: #F2F2F2;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #242424;
+          }
+
+          /* 代码块 */
+          .article-prose pre {
+            background: #F8F8F8;
+            color: #242424;
+            padding: 16px;
+            border-radius: 4px;
+            font-size: 13.5px;
+            line-height: 1.6;
+            margin: 1.5em -20px;
+            border: 0;
+            border-radius: 0;
+          }
+
+          /* 图片：满宽贴边，0 圆角，0 阴影 */
+          .article-prose img {
+            max-width: calc(100% + 40px);
+            margin: 1.8em -20px;
+            border-radius: 0;
+            box-shadow: none;
+          }
+
+          /* 分隔线：Medium 三点风 */
+          .article-prose hr {
+            border: 0;
+            margin: 2.4em auto;
+            width: 100%;
+            height: 24px;
+            background: none;
+            color: #6B6B6B;
+            text-align: center;
+            line-height: 24px;
+            font-size: 24px;
+            letter-spacing: 0.8em;
+          }
+          .article-prose hr::before {
+            content: '· · ·';
+            color: #6B6B6B;
+          }
+
+          /* 表格：横向滚动 + 紧凑 */
+          .article-prose table {
+            font-size: 14px;
+          }
+          .article-prose th,
+          .article-prose td {
+            padding: 8px 10px;
+          }
+
+          /* 二级按钮去掉装饰 */
+          .article-secondary-btn,
+          .article-link-btn {
+            background: transparent;
+            border-color: var(--rule);
+          }
+
+          /* footer flourish 缩小 */
+          .article-footer-flourish svg {
+            width: 60px;
+          }
+
+          /* 回顶按钮往上挪一点避开 iOS 底栏 */
+          .article-back-top {
+            right: 16px;
+            bottom: 20px;
+            width: 42px;
+            height: 42px;
+          }
+        }
       `}</style>
     </div>
   );
