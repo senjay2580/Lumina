@@ -145,9 +145,30 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
     return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
+  // 把文章 content（Tiptap 存的是 HTML）剥成纯文本作为摘要
   const buildExcerpt = (article: Article) => {
     if (article.excerpt && article.excerpt.trim()) return article.excerpt;
-    const plain = article.content.replace(/[#>*`_\-\[\]\(\)]/g, '').replace(/\s+/g, ' ').trim();
+    const raw = article.content || '';
+    let plain = '';
+    if (typeof document !== 'undefined') {
+      // 用浏览器 DOM 解析，HTML 标签 + 实体一次性处理
+      const tmp = document.createElement('div');
+      tmp.innerHTML = raw;
+      plain = tmp.textContent || tmp.innerText || '';
+    } else {
+      // SSR 兜底：正则剥 HTML 标签 + 解码常见实体
+      plain = raw
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+    }
+    plain = plain.replace(/\s+/g, ' ').trim();
     return plain.length > 120 ? plain.slice(0, 120) + '…' : plain;
   };
 
