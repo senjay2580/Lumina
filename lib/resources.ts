@@ -122,14 +122,21 @@ export async function getResources(
   userId: string, 
   type?: ResourceType,
   archived: boolean = false,
-  excludeFolderItems: boolean = true // 默认排除已在文件夹中的资源
+  excludeFolderItems: boolean = true, // 默认排除已在文件夹中的资源
+  options?: { sortBy?: string; sortOrder?: 'asc' | 'desc' }
 ): Promise<Resource[]> {
   let query = supabase
     .from('resources')
     .select('*')
     .eq('user_id', userId)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false });
+    .is('deleted_at', null);
+
+  // 排序逻辑
+  if (options?.sortBy) {
+    query = query.order(options.sortBy, { ascending: options.sortOrder !== 'desc' });
+  } else {
+    query = query.order('created_at', { ascending: false });
+  }
 
   // 排除已在文件夹中的资源（只显示根目录的资源）
   if (excludeFolderItems) {

@@ -56,19 +56,33 @@ export async function getFolders(userId: string): Promise<ResourceFolder[]> {
 }
 
 // 获取文件夹内的资源
-// 获取文件夹资源（支持分页）
+// 获取文件夹资源（支持分页和排序）
 export async function getFolderResources(
   folderId: string | null,
   userId: string,
-  options?: { limit?: number; offset?: number }
+  options?: { 
+    limit?: number; 
+    offset?: number;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }
 ): Promise<Resource[]> {
   let query = supabase
     .from('resources')
     .select('*')
     .eq('user_id', userId)
     .is('deleted_at', null)
-    .is('archived_at', null)
-    .order('position', { ascending: true });
+    .is('archived_at', null);
+
+  // 默认排序逻辑：如果有指定排序字段则使用，否则优先按 position 升序（手动排序），相同 position 下按创建时间降序
+  if (options?.sortBy) {
+    query = query.order(options.sortBy, { ascending: options.sortOrder !== 'desc' });
+  } else {
+    // 关键优化：如果 position 为空，则排在最后，并对所有资源使用创建时间降序作为次要（或无 position 时的主要）排序
+    query = query
+      .order('position', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: false });
+  }
 
   if (folderId) {
     query = query.eq('folder_id', folderId);

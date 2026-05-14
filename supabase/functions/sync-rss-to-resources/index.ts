@@ -2,36 +2,69 @@
 // 每小时执行一次，将开启自动同步的订阅的新文章同步到资源中心
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { XMLParser } from 'https://esm.sh/fast-xml-parser@4.3.2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// RSS2JSON API 解析 RSS
-async function parseFeed(feedUrl: string) {
-  const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feedUrl)}`
-  const response = await fetch(proxyUrl)
-  if (!response.ok) throw new Error('无法获取 RSS 源')
+// 解析 RSS/Atom Feed (Deno 版本)
+async function fetchAndParseFeed(feedUrl: string) {
+  const response = await fetch(feedUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+  })
   
-  const data = await response.json()
-  if (data.status !== 'ok') throw new Error(data.message || '解析 RSS 失败')
+  if (!response.ok) throw new Error(`无法获取 RSS 源: ${response.status}`)
+  
+  const xmlText = await response.text()
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_"
+  })
+  const jsonObj = parser.parse(xmlText)
+  
+  // 判断是 RSS 还是 Atom
+  const isAtom = jsonObj.feed !== undefined
+  const items: any[] = []
+  
+  if (isAtom) {
+    const entries = Array.isArray(jsonObj.feed.entry) ? jsonObj.feed.entry : (jsonObj.feed.entry ? [jsonObj.feed.entry] : [])
+    entries.forEach((entry: any) => {
+      const link = entry.link?.['@_href'] || (Array.isArray(entry.link) ? entry.link.find((l: any) => l['@_rel'] === 'alternate')?.['@_href'] || entry.link[0]?.['@_href'] : entry.link)
+      items.push({
+        guid: entry.id || link,
+        title: typeof entry.title === 'string' ? entry.title : entry.title?.['#text'] || '',
+        link: link,
+        description: entry.summary || entry.content?.['#text'] || '',
+        author: entry.author?.name || '',
+        pubDate: entry.published || entry.updated
+      })
+    })
+  } else {
+    const channel = jsonObj.rss?.channel || jsonObj.channel
+    const rawItems = Array.isArray(channel.item) ? channel.item : (channel.item ? [channel.item] : [])
+    rawItems.forEach((item: any) => {
+      items.push({
+        guid: item.guid?.['#text'] || item.guid || item.link,
+        title: item.title,
+        link: item.link,
+        description: item.description,
+        author: item.author || item['dc:creator'] || '',
+        pubDate: item.pubDate
+      })
+    })
+  }
   
   return {
-    title: data.feed?.title || 'Unknown Feed',
-    items: (data.items || []).map((item: any) => ({
-      guid: item.guid || item.link,
-      title: item.title,
-      link: item.link,
-      description: item.description,
-      content: item.content,
-      author: item.author,
-      pubDate: item.pubDate
-    }))
+    title: isAtom ? jsonObj.feed.title : (jsonObj.rss?.channel?.title || jsonObj.channel?.title || 'Unknown Feed'),
+    items: items
   }
 }
 
-// 查找或创建文章文件夹（按公众号/订阅源名称）
+// 查找或创建文章文件夹
 async function findOrCreateArticleFolder(
   supabase: any,
   userId: string,
@@ -53,61 +86,39 @@ async function findOrCreateArticleFolder(
     return existingFolder.id
   }
 
-  // 检查该来源是否有足够的文章（至少1篇已存在）才创建文件夹
-  const { count } = await supabase
-    .from('resources')
-    .select('id', { count: 'exact', head: true })
+  // 获取当前最大 position
+  const { data: maxData } = await supabase
+    .from('resource_folders')
+    .select('position')
     .eq('user_id', userId)
-    .eq('type', 'article')
-    .eq('metadata->>subscription_title', sourceName)
-    .is('deleted_at', null)
+    .order('position', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  
+  const nextPosition = (maxData?.position || 0) + 1
 
-  // 如果已有1篇，加上新的就是2篇，可以创建文件夹
-  if (count && count >= 1) {
-    // 获取当前最大 position
-    const { data: maxData } = await supabase
-      .from('resource_folders')
-      .select('position')
-      .eq('user_id', userId)
-      .order('position', { ascending: false })
-      .limit(1)
-      .single()
-    
-    const nextPosition = (maxData?.position || 0) + 1
+  const { data: newFolder, error } = await supabase
+    .from('resource_folders')
+    .insert({
+      user_id: userId,
+      name: sourceName,
+      parent_id: null,
+      resource_type: 'article',
+      color: '#f97316',
+      position: nextPosition
+    })
+    .select('id')
+    .single()
 
-    const { data: newFolder, error } = await supabase
-      .from('resource_folders')
-      .insert({
-        user_id: userId,
-        name: sourceName,
-        parent_id: null,
-        resource_type: 'article',
-        color: '#f97316', // 橙色
-        position: nextPosition
-      })
-      .select('id')
-      .single()
-
-    if (!error && newFolder) {
-      // 将已存在的同来源文章也移到新文件夹
-      await supabase
-        .from('resources')
-        .update({ folder_id: newFolder.id })
-        .eq('user_id', userId)
-        .eq('type', 'article')
-        .eq('metadata->>subscription_title', sourceName)
-        .is('folder_id', null)
-        .is('deleted_at', null)
-
-      return newFolder.id
-    }
+  if (error) {
+    console.error('创建文件夹失败:', error)
+    return null
   }
 
-  return null
+  return newFolder.id
 }
 
 Deno.serve(async (req) => {
-  // Handle CORS
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -137,50 +148,82 @@ Deno.serve(async (req) => {
 
     for (const subscription of subscriptions) {
       try {
-        // 1. 拉取最新文章（直接到内存）
-        const feedInfo = await parseFeed(subscription.feed_url)
+        console.log(`正在同步订阅: ${subscription.title}`)
         
-        // 2. 更新订阅的最后获取时间
+        // 1. 对于微信公众号，先尝试获取并刷新 WeWe-RSS
+        if (subscription.source_type === 'wechat' && subscription.mp_id) {
+          try {
+            const feedUrl = new URL(subscription.feed_url)
+            const baseUrl = `${feedUrl.protocol}//${feedUrl.host}`
+            
+            // 获取用户凭证（在边缘函数中直接查库）
+            const { data: cred } = await supabase
+              .from('user_credentials')
+              .select('credential_value')
+              .eq('user_id', subscription.user_id)
+              .eq('service_name', 'wewe-rss')
+              .eq('credential_key', 'auth_code')
+              .maybeSingle()
+            
+            if (cred?.credential_value) {
+              console.log(`触发 WeWe-RSS 刷新: ${subscription.title}`)
+              await fetch(`${baseUrl}/trpc/feed.refreshArticles`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': cred.credential_value,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ mpId: subscription.mp_id })
+              })
+              // 等待一下
+              await new Promise(resolve => setTimeout(resolve, 2000))
+            }
+          } catch (wechatErr) {
+            console.warn(`WeWe-RSS 刷新失败: ${subscription.title}`, wechatErr)
+          }
+        }
+
+        // 2. 拉取最新文章
+        const feedInfo = await fetchAndParseFeed(subscription.feed_url)
+        
+        // 3. 更新订阅状态
         await supabase
           .from('rss_subscriptions')
           .update({
             last_fetched_at: new Date().toISOString(),
-            last_item_date: feedInfo.items[0]?.pubDate,
+            last_item_date: feedInfo.items[0]?.pubDate || subscription.last_item_date,
             updated_at: new Date().toISOString()
           })
           .eq('id', subscription.id)
 
-        // 3. 过滤30天前的文章
+        // 4. 过滤30天前的文章
         const thirtyDaysAgo = new Date()
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
         
-        const recentItems = feedInfo.items.filter(item => {
+        const recentItems = feedInfo.items.filter((item: any) => {
           if (!item.pubDate) return true
           const pubDate = new Date(item.pubDate)
           return pubDate >= thirtyDaysAgo
         })
 
-        // 4. 同步到资源中心
-        let synced = 0
+        // 5. 同步到资源中心
+        let syncedCount = 0
         for (const item of recentItems) {
-          // 检查是否已存在（按 URL）
-          const { data: existingByUrl } = await supabase
+          // 检查重复 (按 URL，忽略删除状态)
+          const { data: existing } = await supabase
             .from('resources')
             .select('id')
             .eq('user_id', subscription.user_id)
             .eq('url', item.link)
-            .is('deleted_at', null)
             .maybeSingle()
 
-          if (existingByUrl) {
-            continue // URL 已存在，跳过
+          if (existing) {
+            console.log(`文章已存在，跳过: ${item.title}`);
+            continue;
           }
 
-          // 创建新资源
-          const sourceName = subscription.title
-          
-          // 查找或创建对应的文件夹
-          const folderId = await findOrCreateArticleFolder(supabase, subscription.user_id, sourceName)
+          // 获取文件夹
+          const folderId = await findOrCreateArticleFolder(supabase, subscription.user_id, subscription.title)
           
           const pubDate = item.pubDate ? new Date(item.pubDate) : null
           const createdAt = pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString()
@@ -193,7 +236,7 @@ Deno.serve(async (req) => {
               title: item.title,
               description: item.description?.replace(/<[^>]*>/g, '').slice(0, 500) || null,
               url: item.link,
-              folder_id: folderId, // 自动归类到文件夹
+              folder_id: folderId,
               created_at: createdAt,
               metadata: {
                 source: 'rss',
@@ -208,12 +251,12 @@ Deno.serve(async (req) => {
             .single()
 
           if (!resError && resource) {
-            synced++
+            syncedCount++
             totalSynced++
           }
         }
 
-        results.push({ subscription: subscription.title, synced })
+        results.push({ subscription: subscription.title, synced: syncedCount })
       } catch (err) {
         console.error(`同步订阅 ${subscription.title} 失败:`, err)
         results.push({ subscription: subscription.title, error: String(err) })

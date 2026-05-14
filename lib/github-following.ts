@@ -1,13 +1,15 @@
 // GitHub 用户关注管理
-// 本地缓存，不落地数据库
+// 关注列表持久化到 Supabase（github_following 表）
+// GitHub API 派生数据（用户详情/Stars/Repos/Events）走 localStorage 缓存（10 分钟过期）
 
+import { supabase } from './supabase';
 import { getGithubToken } from './user-credentials';
 
 // 缓存配置
 const CACHE_DURATION = 10 * 60 * 1000; // 10 分钟
-const FOLLOWING_CACHE_KEY = 'github_following_users';
 const USER_CACHE_PREFIX = 'github_user_';
 const STARS_CACHE_PREFIX = 'github_stars_';
+const REPOS_CACHE_PREFIX = 'github_repos_';
 const EVENTS_CACHE_PREFIX = 'github_events_';
 
 export interface GitHubUser {
@@ -46,6 +48,14 @@ export interface GitHubEvent {
   payload: any;
 }
 
+export interface FollowingRow {
+  username: string;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  bio?: string | null;
+  created_at: string;
+}
+
 interface CacheItem<T> { data: T; timestamp: number; }
 
 // 当前 GitHub Token
@@ -54,6 +64,8 @@ let currentGithubToken: string | null = null;
 export function setGithubToken(token: string | null) {
   currentGithubToken = token;
 }
+
+export { getGithubToken };
 
 // 获取 GitHub API 请求头
 function getGithubHeaders(): Record<string, string> {
@@ -91,38 +103,126 @@ function setCache<T>(key: string, data: T): void {
   }
 }
 
-// 获取关注的用户列表
-export function getFollowingUsers(): string[] {
-  try {
-    const data = localStorage.getItem(FOLLOWING_CACHE_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
+// =========================================================
+// 关注列表 — Supabase 持久化
+// =========================================================
+
+// 获取关注列表（含基础展示信息）
+export async function getFollowingRows(userId: string): Promise<FollowingRow[]> {
+  const { data, error } = await supabase
+    .from('github_following')
+    .select('username, display_name, avatar_url, bio, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('加载关注列表失败:', error);
+    throw error;
   }
+  return data || [];
 }
 
-// 添加关注用户
-export function addFollowingUser(username: string): void {
-  const users = getFollowingUsers();
-  if (!users.includes(username)) {
-    users.push(username);
-    localStorage.setItem(FOLLOWING_CACHE_KEY, JSON.stringify(users));
+// 仅获取用户名列表（兼容旧调用）
+export async function getFollowingUsers(userId: string): Promise<string[]> {
+  const rows = await getFollowingRows(userId);
+  return rows.map(r => r.username);
+}
+
+// 添加关注用户（带基础信息缓存到表内，节省后续请求）
+export async function addFollowingUser(
+  userId: string,
+  user: { login: string; name?: string; avatar_url?: string; bio?: string }
+): Promise<void> {
+  const { error } = await supabase
+    .from('github_following')
+    .upsert({
+      user_id: userId,
+      username: user.login,
+      display_name: user.name || null,
+      avatar_url: user.avatar_url || null,
+      bio: user.bio || null
+    }, { onConflict: 'user_id,username' });
+
+  if (error) {
+    console.error('添加关注失败:', error);
+    throw error;
   }
 }
 
 // 移除关注用户
-export function removeFollowingUser(username: string): void {
-  const users = getFollowingUsers().filter(u => u !== username);
-  localStorage.setItem(FOLLOWING_CACHE_KEY, JSON.stringify(users));
-  // 清除该用户的缓存
-  localStorage.removeItem(USER_CACHE_PREFIX + username);
-  localStorage.removeItem(STARS_CACHE_PREFIX + username);
-  localStorage.removeItem(EVENTS_CACHE_PREFIX + username);
+export async function removeFollowingUser(userId: string, username: string): Promise<void> {
+  const { error } = await supabase
+    .from('github_following')
+    .delete()
+    .eq('user_id', userId)
+    .eq('username', username);
+
+  if (error) {
+    console.error('取消关注失败:', error);
+    throw error;
+  }
+
+  // 清除该用户的派生数据缓存
+  try {
+    localStorage.removeItem(USER_CACHE_PREFIX + username);
+    Object.keys(localStorage).forEach(k => {
+      if (
+        k.startsWith(STARS_CACHE_PREFIX + username) ||
+        k.startsWith(REPOS_CACHE_PREFIX + username) ||
+        k.startsWith(EVENTS_CACHE_PREFIX + username)
+      ) {
+        localStorage.removeItem(k);
+      }
+    });
+  } catch {}
 }
+
+// 批量添加（用于 seed 推荐名单）
+export async function bulkAddFollowingUsers(
+  userId: string,
+  usernames: string[]
+): Promise<{ added: string[]; skipped: string[]; failed: { username: string; reason: string }[] }> {
+  const added: string[] = [];
+  const skipped: string[] = [];
+  const failed: { username: string; reason: string }[] = [];
+
+  // 先拉一遍已有,避免重复网络请求
+  const existing = new Set((await getFollowingUsers(userId)).map(u => u.toLowerCase()));
+
+  for (const raw of usernames) {
+    const username = raw.trim();
+    if (!username) continue;
+    if (existing.has(username.toLowerCase())) {
+      skipped.push(username);
+      continue;
+    }
+    try {
+      const user = await fetchGitHubUser(username);
+      if (!user) {
+        failed.push({ username, reason: '用户不存在' });
+        continue;
+      }
+      await addFollowingUser(userId, {
+        login: user.login,
+        name: user.name,
+        avatar_url: user.avatar_url,
+        bio: user.bio
+      });
+      added.push(username);
+    } catch (e: any) {
+      failed.push({ username, reason: e?.message || '未知错误' });
+    }
+  }
+
+  return { added, skipped, failed };
+}
+
+// =========================================================
+// GitHub API 派生数据 — localStorage 缓存
+// =========================================================
 
 // 获取 GitHub 用户信息
 export async function fetchGitHubUser(username: string): Promise<GitHubUser | null> {
-  // 检查缓存
   const cached = getCache<GitHubUser>(USER_CACHE_PREFIX + username);
   if (cached) return cached;
 
@@ -159,16 +259,46 @@ export async function fetchUserStars(
       { headers: getGithubHeaders() }
     );
     if (!response.ok) throw new Error(`GitHub API 错误: ${response.status}`);
-    
+
     const repos: GitHubRepo[] = await response.json();
     const linkHeader = response.headers.get('Link');
     const hasMore = linkHeader?.includes('rel="next"') || repos.length === perPage;
-    
+
     const result = { repos, hasMore };
     setCache(cacheKey, result);
     return result;
   } catch (e) {
     console.error('获取 Star 列表失败:', e);
+    throw e;
+  }
+}
+
+// 获取用户自己的仓库（按更新时间倒序，分页）
+export async function fetchUserRepos(
+  username: string,
+  page: number = 1,
+  perPage: number = 30
+): Promise<{ repos: GitHubRepo[]; hasMore: boolean }> {
+  const cacheKey = `${REPOS_CACHE_PREFIX}${username}_${page}_${perPage}`;
+  const cached = getCache<{ repos: GitHubRepo[]; hasMore: boolean }>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(
+      `https://api.github.com/users/${username}/repos?sort=updated&direction=desc&page=${page}&per_page=${perPage}`,
+      { headers: getGithubHeaders() }
+    );
+    if (!response.ok) throw new Error(`GitHub API 错误: ${response.status}`);
+
+    const repos: GitHubRepo[] = await response.json();
+    const linkHeader = response.headers.get('Link');
+    const hasMore = linkHeader?.includes('rel="next"') || repos.length === perPage;
+
+    const result = { repos, hasMore };
+    setCache(cacheKey, result);
+    return result;
+  } catch (e) {
+    console.error('获取仓库列表失败:', e);
     throw e;
   }
 }
@@ -189,7 +319,7 @@ export async function fetchUserEvents(
       { headers: getGithubHeaders() }
     );
     if (!response.ok) throw new Error(`GitHub API 错误: ${response.status}`);
-    
+
     const events: GitHubEvent[] = await response.json();
     setCache(cacheKey, events);
     return events;
@@ -253,3 +383,27 @@ export function formatNumber(num: number): string {
   if (num >= 1000) return (num / 1000).toFixed(1) + 'k';
   return num.toString();
 }
+
+// 推荐关注名单（一键填充用）
+export const RECOMMENDED_USERS: Array<{ username: string; reason: string; tag: string }> = [
+  { username: 'sindresorhus', reason: '小工具天花板，开源 OG', tag: 'tools' },
+  { username: 'simonw', reason: 'AI + CLI 创意雷达，LLM 工具狂魔', tag: 'ai' },
+  { username: 'antfu', reason: 'Vue/Vite 工具链 + DX 神器', tag: 'frontend' },
+  { username: 'addyosmani', reason: 'Google，前端性能 + 学习资源', tag: 'learning' },
+  { username: 'kamranahmedse', reason: 'roadmap.sh，学习路径', tag: 'learning' },
+  { username: 'sw-yx', reason: 'AI Engineer 概念提出者，趋势 + 创意', tag: 'ai' },
+  { username: 'steven-tey', reason: 'Dub.co/Novel，SaaS 级开源应用', tag: 'product' },
+  { username: 'sharkdp', reason: 'bat/fd/hyperfine，Rust CLI 党', tag: 'tools' },
+  { username: 'ruanyf', reason: '阮一峰，中文周刊源头', tag: 'chinese' },
+  { username: 'transitive-bullshit', reason: 'AI 副业项目灵感库', tag: 'ai' },
+  { username: 'rasbt', reason: 'Sebastian Raschka，LLM/ML 教科书', tag: 'ai' },
+  { username: 'jph00', reason: 'fast.ai，PyTorch 训练实战', tag: 'ai' },
+  { username: 'donnemartin', reason: 'system-design-primer 作者', tag: 'learning' },
+  { username: 'yangshun', reason: 'Tech Interview Handbook', tag: 'learning' },
+  { username: 'gaearon', reason: 'Dan Abramov，深度技术随笔', tag: 'frontend' },
+  { username: 'shadcn', reason: 'shadcn/ui，UI 设计系统', tag: 'frontend' },
+  { username: 'pacocoursey', reason: 'cmdk/next-themes，交互细节', tag: 'frontend' },
+  { username: 'junegunn', reason: 'fzf 作者，终端效率审美', tag: 'tools' },
+  { username: 'kentcdodds', reason: '教学型博客，React/测试', tag: 'learning' },
+  { username: 'mitchellh', reason: 'HashiCorp/Ghostty，生产力工具', tag: 'tools' }
+];

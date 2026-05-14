@@ -1015,17 +1015,16 @@ export async function syncItemToResource(
     }
   }
   
-  // 检查 URL 是否已存在
+  // 检查 URL 是否已存在（忽略删除状态，确保真正唯一）
   const { data: existingByUrl } = await supabase
     .from('resources')
     .select('id')
     .eq('user_id', subscription.user_id)
     .eq('url', item.link)
-    .is('deleted_at', null)
     .maybeSingle()
   
   if (existingByUrl) {
-    // URL 已存在，跳过
+    // URL 已存在，不管是否被删除过，都跳过
     return { resourceId: existingByUrl.id, isNew: false }
   }
   

@@ -38,6 +38,15 @@ Lumina 是一个现代化的 AI 工作流编排平台，让你通过可视化拖
 - 🗑️ **回收站** — 软删除机制，数据可恢复
 - 📱 **响应式设计** — 适配各种屏幕尺寸
 
+### 🔌 Skills API
+
+新增面向技能调用的 Prompt / Resource 接口（含基础 CRUD）：
+
+- `api/skills/prompts.ts`
+- `api/skills/resources.ts`
+
+接口说明与示例见：`docs/skills-api.md`
+
 ### 🛠️ 技术栈
 
 | 层级 | 技术 |
@@ -184,6 +193,15 @@ Lumina is a modern AI workflow orchestration platform that allows you to build c
 - 📊 **Activity Heatmap** — GitHub-style activity visualization
 - 🗑️ **Trash Bin** — Soft delete with data recovery
 - 📱 **Responsive Design** — Adapts to all screen sizes
+
+### 🔌 Skills API
+
+Prompt and Resource CRUD endpoints for skill integrations:
+
+- `api/skills/prompts.ts`
+- `api/skills/resources.ts`
+
+See `docs/skills-api.md` for contract and examples.
 
 ### 🚀 Quick Start
 
