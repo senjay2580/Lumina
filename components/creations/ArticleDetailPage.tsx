@@ -2425,6 +2425,11 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             border-color: var(--rule);
           }
 
+          /* TTS 朗读控件组 — 移动端隐藏（内嵌 style 优先级胜过 Tailwind .hidden，必须 !important） */
+          .article-tts-group {
+            display: none !important;
+          }
+
           /* footer flourish 缩小 */
           .article-footer-flourish svg {
             width: 60px;
