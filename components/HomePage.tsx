@@ -686,6 +686,87 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
           </motion.div>
         </section>
 
+        {/* 快速访问 - 文章 / 想法 / 资源 / RSS */}
+        <section className="mb-16 max-md:mb-8">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.55 }}
+            className="grid grid-cols-4 gap-4 max-md:grid-cols-2 max-md:gap-3"
+          >
+            {/* 文章 */}
+            <button
+              onClick={() => onNavigate('CREATIONS')}
+              className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 text-left"
+            >
+              <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center shrink-0 group-hover:bg-amber-100 transition-colors">
+                <svg className="w-6 h-6 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900 tracking-tight max-md:text-sm">文章</p>
+                <p className="text-xs text-gray-500 max-md:text-[11px]">长文沉淀</p>
+              </div>
+            </button>
+
+            {/* 想法 */}
+            <button
+              onClick={() => onNavigate('CREATIONS')}
+              className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 text-left"
+            >
+              <div className="w-10 h-10 rounded-xl bg-yellow-50 flex items-center justify-center shrink-0 group-hover:bg-yellow-100 transition-colors">
+                <svg className="w-6 h-6 text-yellow-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18h6" />
+                  <path d="M10 22h4" />
+                  <path d="M12 2a7 7 0 0 0-4 12.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26A7 7 0 0 0 12 2z" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900 tracking-tight max-md:text-sm">想法</p>
+                <p className="text-xs text-gray-500 max-md:text-[11px]">闪念记录</p>
+              </div>
+            </button>
+
+            {/* 资源 */}
+            <button
+              onClick={() => onNavigate('RESOURCES')}
+              className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 text-left"
+            >
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center shrink-0 group-hover:bg-emerald-100 transition-colors">
+                <svg className="w-6 h-6 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 8h18V5.5q0-.625-.437-1.062T19.5 4h-15q-.625 0-1.062.438T3 5.5zm0 6h18v-4H3zm1.5 6h15q.625 0 1.063-.437T21 18.5V16H3v2.5q0 .625.438 1.063T4.5 20M5 7q-.425 0-.712-.288T4 6t.288-.712T5 5t.713.288T6 6t-.288.713T5 7m0 6q-.425 0-.712-.288T4 12t.288-.712T5 11t.713.288T6 12t-.288.713T5 13m0 6q-.425 0-.712-.288T4 18t.288-.712T5 17t.713.288T6 18t-.288.713T5 19"/>
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900 tracking-tight max-md:text-sm">资源中心</p>
+                <p className="text-xs text-gray-500 max-md:text-[11px]">收藏与素材</p>
+              </div>
+            </button>
+
+            {/* RSS */}
+            <button
+              onClick={() => onNavigate('RSS_SUBSCRIPTIONS')}
+              className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-3 text-left"
+            >
+              <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center shrink-0 group-hover:bg-orange-100 transition-colors">
+                <svg className="w-6 h-6 text-orange-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 11a9 9 0 0 1 9 9" />
+                  <path d="M4 4a16 16 0 0 1 16 16" />
+                  <circle cx="5" cy="19" r="1" fill="currentColor" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900 tracking-tight max-md:text-sm">RSS 订阅</p>
+                <p className="text-xs text-gray-500 max-md:text-[11px]">信息流</p>
+              </div>
+            </button>
+          </motion.div>
+        </section>
+
         {/* 工作流列表 - 卡片样式 */}
         <motion.section 
           className="mb-8"
