@@ -1,0 +1,27 @@
+{
+  "name": "Lumina AI - 智能提示词管理与工作流平台",
+  "short_name": "Lumina",
+  "description": "智能提示词管理平台，支持 AI 工作流编排、提示词采集、多模型集成。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FDFCF8",
+  "theme_color": "#FF6B00",
+  "lang": "zh-CN",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

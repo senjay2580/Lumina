@@ -312,7 +312,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
       </motion.div>
       
       {/* Logo text with gradient */}
-      <h1 className="text-4xl font-bold bg-gradient-to-r from-[#FF8C00] via-[#FF6B00] to-[#E85D00] bg-clip-text text-transparent"
+      <h1 className="text-4xl font-bold bg-gradient-to-r from-[#FF8C00] via-[#FF6B00] to-[#E85D00] bg-clip-text text-transparent max-md:text-3xl"
         style={{ fontFamily: "'Quicksand', sans-serif", textShadow: '0 2px 10px rgba(255, 107, 0, 0.2)' }}
       >
         Lumina
@@ -890,7 +890,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
         />
       </div>
 
-      <div className="relative z-10 w-full max-w-md">
+      <div className="relative z-10 w-full max-w-md max-md:max-w-[92vw]">
         {renderLogo()}
 
         {/* Glass Card with 3D effect */}
@@ -905,7 +905,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
           <div className="absolute inset-0 bg-white/80 rounded-3xl translate-y-1 shadow-lg" />
           
           {/* Main card */}
-          <div className="relative backdrop-blur-xl bg-white/95 rounded-3xl p-8 shadow-2xl border border-white/60"
+          <div className="relative backdrop-blur-xl bg-white/95 rounded-3xl p-8 shadow-2xl border border-white/60 max-md:p-5 max-md:rounded-2xl"
             style={{ 
               boxShadow: '0 25px 60px -15px rgba(255, 107, 0, 0.15), 0 10px 30px -10px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255,255,255,0.8)' 
             }}

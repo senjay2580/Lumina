@@ -26,9 +26,13 @@ interface SidebarProps {
   onCollapsedChange?: (collapsed: boolean) => void;
   username?: string;
   onLogout?: () => void;
+  /** 移动端：是否展开抽屉（由 App 控制） */
+  mobileOpen?: boolean;
+  /** 移动端：抽屉关闭回调 */
+  onMobileClose?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, collapsed = false, onCollapsedChange, username, onLogout }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, collapsed = false, onCollapsedChange, username, onLogout, mobileOpen = false, onMobileClose }) => {
   const [isCollapsed, setIsCollapsed] = useState(collapsed);
   const [promptsExpanded, setPromptsExpanded] = useState(true);
   const user = getStoredUser();
@@ -38,6 +42,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
     setIsCollapsed(newState);
     onCollapsedChange?.(newState);
   };
+
+  // 移动端切换视图后自动关闭抽屉
+  const handleNavigate = useCallback((view: ViewType) => {
+    onViewChange(view);
+    onMobileClose?.();
+  }, [onViewChange, onMobileClose]);
 
   // 预加载回收站数据（鼠标悬停时）
   const handleTrashHover = useCallback(() => {
@@ -88,13 +98,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
   ];
 
   return (
-    <aside 
-      className={`relative flex flex-col shrink-0 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-16' : 'w-56'}`}
+    <>
+      {/* 移动端遮罩 */}
+      <div
+        className={`md:hidden fixed inset-0 bg-black/40 z-40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+        onClick={onMobileClose}
+        aria-hidden="true"
+      />
+    <aside
+      className={`flex flex-col shrink-0 transition-all duration-300 ease-in-out
+        md:relative md:translate-x-0 ${isCollapsed ? 'md:w-16' : 'md:w-56'}
+        max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-72 max-md:h-screen max-md:z-50
+        ${mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}`}
       style={{
         background: 'linear-gradient(180deg, rgba(255,107,0,0.03) 0%, rgba(255,255,255,0.8) 30%, rgba(147,197,253,0.05) 100%)',
         backdropFilter: 'blur(20px)',
         borderRight: '1px solid rgba(255,255,255,0.6)',
-        zIndex: 30
       }}
     >
       {/* 弥散光效 */}
@@ -142,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
           return (
             <button 
               key={item.id} 
-              onClick={() => onViewChange(item.id)}
+              onClick={() => handleNavigate(item.id)}
               title={isCollapsed ? item.label : undefined}
               className={`w-full flex items-center gap-3 rounded-xl transition-all ${
                 isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
@@ -173,7 +192,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
           <button 
             onClick={() => {
               if (isCollapsed) {
-                onViewChange('PROMPTS');
+                handleNavigate('PROMPTS');
               } else {
                 setPromptsExpanded(!promptsExpanded);
               }
@@ -229,7 +248,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
                       return (
                         <button 
                           key={item.id} 
-                          onClick={() => onViewChange(item.id)}
+                          onClick={() => handleNavigate(item.id)}
                           className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-all ${
                             isActive 
                               ? 'bg-primary/10 text-primary' 
@@ -250,7 +269,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
 
         {/* 资源中心 */}
         <button 
-          onClick={() => onViewChange('RESOURCES')}
+          onClick={() => handleNavigate('RESOURCES')}
           title={isCollapsed ? '资源中心' : undefined}
           className={`w-full flex items-center gap-3 rounded-xl transition-all ${
             isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
@@ -271,7 +290,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
 
         {/* 我的创作 */}
         <button 
-          onClick={() => onViewChange('CREATIONS')}
+          onClick={() => handleNavigate('CREATIONS')}
           title={isCollapsed ? '我的创作' : undefined}
           className={`w-full flex items-center gap-3 rounded-xl transition-all ${
             isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
@@ -295,7 +314,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
 
         {/* RSS 订阅 */}
         <button 
-          onClick={() => onViewChange('RSS_SUBSCRIPTIONS')}
+          onClick={() => handleNavigate('RSS_SUBSCRIPTIONS')}
           title={isCollapsed ? 'RSS 订阅' : undefined}
           className={`w-full flex items-center gap-3 rounded-xl transition-all ${
             isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
@@ -318,7 +337,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
 
         {/* 回收站 - 放最后，淡红色渐变 */}
         <button 
-          onClick={() => onViewChange('TRASH')}
+          onClick={() => handleNavigate('TRASH')}
           onMouseEnter={handleTrashHover}
           title={isCollapsed ? '回收站' : undefined}
           className={`w-full flex items-center gap-3 rounded-xl transition-all mt-2 ${
@@ -339,10 +358,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
         </button>
       </nav>
 
-      {/* 收缩按钮 */}
+      {/* 收缩按钮（仅桌面端） */}
       <button
         onClick={handleToggle}
-        className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-full shadow-md border border-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:shadow-lg transition-all z-50"
+        className="hidden md:flex absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-full shadow-md border border-gray-200 items-center justify-center text-gray-400 hover:text-gray-600 hover:shadow-lg transition-all z-50"
       >
         <svg 
           className={`w-3.5 h-3.5 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`} 
@@ -359,7 +378,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
       <div className={`border-t border-white/40 relative z-10 ${isCollapsed ? 'px-2 py-3' : 'px-3 py-3'}`}>
         {/* 设置按钮 */}
         <button 
-          onClick={() => onViewChange('SETTINGS')}
+          onClick={() => handleNavigate('SETTINGS')}
           title={isCollapsed ? '设置' : undefined}
           className={`w-full flex items-center gap-3 rounded-xl transition-all mb-3 ${
             isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
@@ -401,5 +420,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
         )}
       </div>
     </aside>
+    </>
   );
 };

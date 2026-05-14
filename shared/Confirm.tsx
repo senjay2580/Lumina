@@ -26,11 +26,11 @@ export const Confirm: React.FC<ConfirmProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 max-md:p-3">
       <div className="absolute inset-0 bg-black/30" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        <div className="p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-md:max-h-[85vh]">
+        <div className="p-6 max-md:p-4">
+          <h3 className="text-lg font-semibold text-gray-900 mb-2 max-md:text-base">{title}</h3>
           <p className="text-gray-500 text-sm">{message}</p>
         </div>
         <div className={`flex border-t border-gray-100 ${showPermanentDelete ? 'flex-col' : ''}`}>

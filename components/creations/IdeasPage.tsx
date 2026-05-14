@@ -165,9 +165,9 @@ export default function IdeasPage({ userId, onBack }: Props) {
 
   return (
     <div className="w-full h-full overflow-y-auto bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
         {/* 头部 */}
-        <div className="mb-8">
+        <div className="mb-8 max-md:mb-5">
           <button
             onClick={onBack}
             className="text-gray-600 hover:text-gray-900 mb-4 flex items-center gap-2"
@@ -176,19 +176,19 @@ export default function IdeasPage({ userId, onBack }: Props) {
             返回创作中心
           </button>
           
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between max-md:flex-col max-md:items-stretch max-md:gap-3">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">想法</h1>
-              <p className="text-gray-600">记录灵感和思考</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2 max-md:text-2xl max-md:mb-1">想法</h1>
+              <p className="text-gray-600 max-md:text-sm">记录灵感和思考</p>
             </div>
-            
+
             <button
               onClick={() => {
                 resetForm();
                 setEditingIdea(null);
                 setShowEditor(true);
               }}
-              className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)]"
+              className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)] max-md:justify-center max-md:px-4 max-md:py-2 max-md:text-sm"
             >
               <Plus className="w-5 h-5" />
               新建想法
@@ -317,13 +317,13 @@ export default function IdeasPage({ userId, onBack }: Props) {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.92, opacity: 0, y: 20 }}
               transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-              className="bg-white border-2 border-gray-900 w-full max-w-4xl max-h-[88vh] shadow-[12px_12px_0px_0px_rgba(17,24,39,1)] flex flex-col overflow-hidden"
+              className="bg-white border-2 border-gray-900 w-full max-w-4xl max-h-[88vh] shadow-[12px_12px_0px_0px_rgba(17,24,39,1)] flex flex-col overflow-hidden max-md:max-h-[92vh] max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               {/* 头部 */}
-              <div className="flex items-start justify-between gap-4 px-8 py-6 border-b-2 border-gray-900 bg-white">
+              <div className="flex items-start justify-between gap-4 px-8 py-6 border-b-2 border-gray-900 bg-white max-md:px-4 max-md:py-3 max-md:flex-col max-md:gap-3">
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-3xl font-bold text-gray-900 leading-tight break-words">
+                  <h2 className="text-3xl font-bold text-gray-900 leading-tight break-words max-md:text-xl">
                     {viewingIdea.title || viewingIdea.content.substring(0, 50) + '...'}
                   </h2>
                   <div className="flex items-center gap-4 mt-3 text-sm text-gray-600">
@@ -381,7 +381,7 @@ export default function IdeasPage({ userId, onBack }: Props) {
               )}
 
               {/* 内容 */}
-              <div className="flex-1 overflow-y-auto px-8 py-6">
+              <div className="flex-1 overflow-y-auto px-8 py-6 max-md:px-4 max-md:py-4">
                 <div className="prose prose-gray max-w-none">
                   <p className="text-gray-800 text-base leading-[1.85] whitespace-pre-wrap break-words">
                     {viewingIdea.content}
@@ -390,7 +390,7 @@ export default function IdeasPage({ userId, onBack }: Props) {
               </div>
 
               {/* 底部 */}
-              <div className="flex items-center justify-between px-8 py-4 border-t-2 border-gray-900 bg-gray-50">
+              <div className="flex items-center justify-between px-8 py-4 border-t-2 border-gray-900 bg-gray-50 max-md:px-4 max-md:py-3 max-md:flex-col max-md:gap-2 max-md:items-stretch">
                 <span className="text-xs text-gray-500">
                   按 Esc 或点击外部关闭
                 </span>
@@ -431,7 +431,7 @@ export default function IdeasPage({ userId, onBack }: Props) {
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-white border-2 border-gray-900 p-6 w-full max-w-3xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto"
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-3xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto max-md:p-4 max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-xl font-bold mb-6">

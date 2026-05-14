@@ -71,7 +71,7 @@ const WarningModal: React.FC<{
   
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" onClick={onClose}>
-      <div className="bg-white rounded-xl w-[400px] shadow-xl" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl w-[400px] shadow-xl max-md:w-[92vw] max-md:max-w-full" onClick={e => e.stopPropagation()}>
         <div className="p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
@@ -177,7 +177,7 @@ const PromptSelector: React.FC<{
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-xl w-[560px] max-h-[75vh] flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl w-[560px] max-h-[75vh] flex flex-col shadow-xl max-md:w-[92vw] max-md:max-w-full max-md:max-h-[85vh]" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h3 className="font-semibold text-gray-900">
             选择{type === 'translate' ? '翻译' : '优化'}提示词
@@ -618,7 +618,7 @@ export const AIEditorSidebar: React.FC<AIEditorSidebarProps> = ({
     <div
       ref={sidebarRef}
       style={{ width }}
-      className="h-full bg-white border-l border-gray-200 flex flex-col relative"
+      className="h-full bg-white border-l border-gray-200 flex flex-col relative max-md:!w-full max-md:border-l-0 max-md:border-t"
     >
       <div
         onMouseDown={handleMouseDown}

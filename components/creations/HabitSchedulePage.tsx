@@ -194,9 +194,9 @@ export default function HabitSchedulePage({ userId, onBack }: Props) {
 
   return (
     <div className="w-full h-full overflow-y-auto bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
         {/* 头部 */}
-        <div className="mb-8">
+        <div className="mb-8 max-md:mb-5">
           <button
             onClick={onBack}
             className="text-gray-600 hover:text-gray-900 mb-4 flex items-center gap-2"
@@ -205,15 +205,15 @@ export default function HabitSchedulePage({ userId, onBack }: Props) {
             返回创作中心
           </button>
           
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between max-md:flex-col max-md:items-stretch max-md:gap-3">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">习惯纠正站</h1>
-              <p className="text-gray-600">配置时间段计划，飞书提前提醒</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2 max-md:text-2xl max-md:mb-1">习惯纠正站</h1>
+              <p className="text-gray-600 max-md:text-sm">配置时间段计划，飞书提前提醒</p>
             </div>
-            
+
             <button
               onClick={() => setShowNewDialog(true)}
-              className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)]"
+              className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)] max-md:justify-center max-md:px-4 max-md:py-2 max-md:text-sm"
             >
               <Plus className="w-5 h-5" />
               新建计划
@@ -244,9 +244,9 @@ export default function HabitSchedulePage({ userId, onBack }: Props) {
                 key={schedule.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-white border-2 border-gray-900 p-6"
+                className="bg-white border-2 border-gray-900 p-6 max-md:p-4"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between max-md:flex-col max-md:gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-xl font-bold text-gray-900">{schedule.title}</h3>
@@ -263,7 +263,7 @@ export default function HabitSchedulePage({ userId, onBack }: Props) {
                       <p className="text-gray-600 text-sm mb-3">{schedule.description}</p>
                     )}
                     
-                    <div className="flex items-center gap-6 text-sm text-gray-600">
+                    <div className="flex items-center gap-6 text-sm text-gray-600 max-md:flex-col max-md:items-start max-md:gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Clock className="w-4 h-4" />
                         {schedule.reminder_times.map((time, idx) => (
@@ -329,7 +329,7 @@ export default function HabitSchedulePage({ userId, onBack }: Props) {
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-white border-2 border-gray-900 p-6 w-full max-w-2xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto"
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-2xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto max-md:p-4 max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-xl font-bold mb-6">

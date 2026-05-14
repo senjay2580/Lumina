@@ -40,7 +40,7 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 max-md:p-3">
       {/* Backdrop */}
       <div
         onClick={onClose}
@@ -55,13 +55,14 @@ export const Modal: React.FC<ModalProps> = ({
         className={`
           relative w-full ${sizeClasses[size]} glass-card rounded-3xl shadow-2xl
           transition-all duration-300 ease-out
+          max-md:max-h-[88vh] max-md:flex max-md:flex-col max-md:rounded-2xl
           ${isVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-4'}
         `}
       >
         {/* Header */}
         {(title || showCloseButton) && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-white/40">
-            {title && <h2 className="text-lg font-semibold text-gray-800">{title}</h2>}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-white/40 max-md:px-4 max-md:py-3 max-md:shrink-0">
+            {title && <h2 className="text-lg font-semibold text-gray-800 max-md:text-base">{title}</h2>}
             {showCloseButton && (
               <button
                 onClick={onClose}
@@ -77,7 +78,7 @@ export const Modal: React.FC<ModalProps> = ({
         )}
 
         {/* Content */}
-        <div className="p-6">{children}</div>
+        <div className="p-6 max-md:p-4 max-md:overflow-y-auto max-md:flex-1">{children}</div>
       </div>
     </div>
   );

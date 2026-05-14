@@ -42,7 +42,9 @@ import {
   Users,
   Eye,
   Activity,
-  UserPlus
+  UserPlus,
+  Box,
+  Wand2
 } from 'lucide-react';
 // @ts-ignore - Github is deprecated but still works
 import { Github } from 'lucide-react';
@@ -94,15 +96,18 @@ import { getDefaultProvider, type AIProvider } from '../lib/ai-providers';
 import { streamAIResponse } from '../lib/ai-prompt-assistant';
 import {
   setGithubToken as setFollowingGithubToken,
-  getFollowingUsers,
+  getFollowingRows,
   addFollowingUser,
   removeFollowingUser,
+  bulkAddFollowingUsers,
   fetchGitHubUser,
   fetchUserStars,
+  fetchUserRepos,
   fetchUserEvents,
   getEventDescription,
   formatRelativeTime,
   formatNumber as formatGitHubNumber,
+  RECOMMENDED_USERS,
   type GitHubUser,
   type GitHubRepo,
   type GitHubEvent
@@ -258,7 +263,10 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
     if (currentFolderId) {
       try {
         const [resourcesData, path] = await Promise.all([
-          getFolderResources(currentFolderId, userId),
+          getFolderResources(currentFolderId, userId, { 
+            sortBy: 'created_at', 
+            sortOrder: 'desc' 
+          }),
           getFolderPath(currentFolderId)
         ]);
         setResources(resourcesData);
@@ -278,7 +286,10 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
         showArchived 
           ? getArchivedFolders(userId)
           : getSubFolders(null, userId),
-        getResources(userId, undefined, showArchived), // 加载所有类型
+        getResources(userId, undefined, showArchived, !showArchived, { 
+          sortBy: 'created_at', 
+          sortOrder: 'desc' 
+        }), // 加载所有类型
         getResourceStats(userId, showArchived),
         getResourceStats(userId, true)
       ]);
@@ -390,14 +401,10 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
       result = result.filter(r => r.title.toLowerCase().includes(query));
     }
     
-    // 按日期排序：文章用 pub_date，其他用 created_at
+    // 按创建日期排序
     return [...result].sort((a, b) => {
-      const dateA = a.type === 'article' && a.metadata?.pub_date 
-        ? new Date(a.metadata.pub_date).getTime() 
-        : new Date(a.created_at).getTime();
-      const dateB = b.type === 'article' && b.metadata?.pub_date 
-        ? new Date(b.metadata.pub_date).getTime() 
-        : new Date(b.created_at).getTime();
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
       return dateB - dateA; // 降序，最新的在前
     });
   }, [resources, searchQuery]);
@@ -669,11 +676,11 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
 
   return (
     <div className="w-full h-full overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-6 md:px-10 py-8">
+      <div className="max-w-6xl mx-auto px-6 md:px-10 py-8 max-md:px-4 max-md:py-4">
         {/* 头部 */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-8 max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:mb-5">
           <div className="flex items-center gap-3">
-            <svg className="w-10 h-10" viewBox="0 0 48 48" fill="none">
+            <svg className="w-10 h-10 shrink-0" viewBox="0 0 48 48" fill="none">
               <path fill="#8fbffa" d="M4.04 9.856C4.04 5.24 12.976 1.5 24 1.5s19.96 3.74 19.96 8.356c0 0 .54 7.355.54 15.71s-.54 12.579-.54 12.579c0 4.614-8.936 8.355-19.96 8.355S4.04 42.76 4.04 38.145c0 0-.54-4.223-.54-12.578s.54-15.711.54-15.711"/>
               <path fill="#2859c5" d="M4.04 9.856C4.04 5.24 12.975 1.5 24 1.5c11.023 0 19.96 3.74 19.96 8.356c0 4.614-8.937 8.355-19.96 8.355S4.04 14.471 4.04 9.856m-.52 18.418a184 184 0 0 1-.002-5.384c.224 1.721 1.933 3.677 5.539 5.316C12.802 29.908 18.08 31 23.992 31s11.19-1.092 14.936-2.794c3.695-1.68 5.398-3.692 5.553-5.444a208 208 0 0 1 0 5.498c-1.205 1.045-2.692 1.94-4.312 2.677C35.952 32.854 30.231 34 23.992 34s-11.96-1.146-16.177-3.063c-1.612-.733-3.093-1.624-4.295-2.663"/>
               <path fill="#2859c5" fillRule="evenodd" d="M8.508 40a2 2 0 1 0 0-4a2 2 0 0 0 0 4" clipRule="evenodd"/>
@@ -682,11 +689,11 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
               <path fill="#2859c5" d="M15.008 26.25a2 2 0 1 0 0-4a2 2 0 0 0 0 4"/>
             </svg>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">资源中心</h1>
-              <p className="text-gray-500 text-sm">管理你的资源库</p>
+              <h1 className="text-2xl font-bold text-gray-900 max-md:text-xl">资源中心</h1>
+              <p className="text-gray-500 text-sm max-md:text-xs">管理你的资源库</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 max-md:flex-wrap max-md:gap-1.5">
             <Tooltip content="GitHub 用户关注">
               <div>
                 <Button
@@ -727,8 +734,8 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
         </div>
 
         {/* 统一添加资源入口 */}
-        <div 
-          className={`mb-8 p-1 rounded-2xl transition-all ${
+        <div
+          className={`mb-8 p-1 rounded-2xl transition-all max-md:mb-5 ${
             isDraggingOnInput 
               ? 'bg-gradient-to-r from-primary/20 via-purple-500/20 to-blue-500/20' 
               : 'bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100'
@@ -737,9 +744,9 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
           onDragLeave={() => setIsDraggingOnInput(false)}
           onDrop={handleFileDrop}
         >
-          <div className="bg-white rounded-xl p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex-1 relative">
+          <div className="bg-white rounded-xl p-4 max-md:p-3">
+            <div className="flex items-center gap-3 max-md:flex-col max-md:items-stretch max-md:gap-2">
+              <div className="flex-1 relative w-full">
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
                   <Plus className={`w-5 h-5 ${isDraggingOnInput ? 'text-primary' : 'text-gray-400'}`} />
                 </div>
@@ -792,7 +799,7 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
                 添加
               </Button>
             </div>
-            <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
+            <div className="flex items-center gap-4 mt-3 text-xs text-gray-400 max-md:flex-wrap max-md:gap-2">
               <button
                 onClick={() => setShowDescInput(!showDescInput)}
                 className="flex items-center gap-1 text-gray-500 hover:text-primary transition-colors"
@@ -843,7 +850,7 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
         </div>
 
         {/* 类型统计卡片 */}
-        <div className="grid grid-cols-6 gap-3 mb-8">
+        <div className="grid grid-cols-6 gap-3 mb-8 max-md:grid-cols-3 max-md:gap-2 max-md:mb-5">
           {(Object.keys(typeConfig) as FilterType[]).map(type => {
             const config = typeConfig[type];
             const Icon = config.icon;
@@ -856,19 +863,19 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
               <button
                 key={type}
                 onClick={() => { setActiveType(type); setCurrentPage(1); }}
-                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
+                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all max-md:p-2 max-md:gap-1 ${
                   isActive
                     ? 'bg-white border-primary shadow-lg shadow-primary/10'
                     : 'bg-white border-transparent hover:border-gray-200 hover:shadow-md'
                 }`}
               >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center max-md:w-9 max-md:h-9 ${
                   isActive ? 'bg-primary/10' : config.bgColor
                 }`}>
                   <Icon className={`w-5 h-5 ${isActive ? 'text-primary' : config.color}`} />
                 </div>
                 <div className="text-center">
-                  <div className={`text-xl font-bold ${isActive ? 'text-primary' : 'text-gray-900'}`}>{displayCount}</div>
+                  <div className={`text-xl font-bold max-md:text-base ${isActive ? 'text-primary' : 'text-gray-900'}`}>{displayCount}</div>
                   <div className="text-xs text-gray-500">{config.label}</div>
                 </div>
               </button>
@@ -877,8 +884,8 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
         </div>
 
         {/* 搜索 */}
-        <div className="flex gap-3 mb-6">
-          <div className="flex-1 relative">
+        <div className="flex gap-3 mb-6 max-md:flex-wrap max-md:gap-2 max-md:mb-4">
+          <div className="flex-1 relative max-md:w-full max-md:basis-full">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
@@ -1286,18 +1293,18 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  <motion.div 
-                    className="bg-white rounded-xl border border-gray-200 overflow-hidden"
+                  <motion.div
+                    className="bg-white rounded-xl border border-gray-200 overflow-hidden max-md:overflow-x-auto"
                     initial={false}
                     animate={{ opacity: isTransitioning ? 0.3 : 1 }}
                     transition={{ duration: 0.15 }}
                   >
                   {/* 列表头部 */}
-                  <div className="grid grid-cols-[auto_1fr_120px_100px_80px] gap-4 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500">
+                  <div className="grid grid-cols-[auto_1fr_120px_100px_80px] gap-4 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 max-md:min-w-[640px]">
                     <div className="w-6" />
                     <div>名称</div>
                     <div>类型</div>
-                    <div>日期</div>
+                    <div>创建时间</div>
                     <div className="text-right">操作</div>
                   </div>
                   {/* 列表内容 */}
@@ -2209,14 +2216,14 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
             {/* 添加时间 */}
             <div className="flex items-center gap-1.5 text-[10px] text-[#6e7681]">
               <Clock className="w-3 h-3" />
-              <span>添加于 {formatDate(resource.created_at)}</span>
+              <span>添加于 {isToday(resource.created_at) ? '今天' : formatDate(resource.created_at)}</span>
             </div>
           </div>
         </div>
       ) : resource.type === 'article' ? (
         /* 文章卡片 - RSS 同步的文章 */
         (() => {
-          const articleDate = resource.metadata?.pub_date || resource.created_at;
+          const articleDate = resource.created_at;
           const isTodayArticle = isToday(articleDate);
           const isThisWeekArticle = isThisWeek(articleDate);
           
@@ -2311,7 +2318,7 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
             )}
             <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-400">
               <Clock className="w-3 h-3" />
-              <span>{formatDate(resource.created_at)}</span>
+              <span>{isToday(resource.created_at) ? '今天' : formatDate(resource.created_at)}</span>
             </div>
           </div>
         </div>
@@ -2349,7 +2356,7 @@ function ResourceCard({ resource, onDelete, onUpdate, onOpenInViewer, onShowToas
               )}
               <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-400">
                 <Clock className="w-3 h-3" />
-                <span>{formatDate(resource.created_at)}</span>
+                <span>{isToday(resource.created_at) ? '今天' : formatDate(resource.created_at)}</span>
               </div>
             </div>
           </div>
@@ -2711,7 +2718,7 @@ function ResourceListRow({
         </div>
         {/* 日期 */}
         <div className="text-sm text-gray-400">
-          {formatDate(folder.created_at)}
+          {isToday(folder.created_at) ? '今天' : formatDate(folder.created_at)}
         </div>
         {/* 操作 */}
         <div className="text-right flex items-center justify-end gap-1">
@@ -3100,7 +3107,7 @@ function ResourceListRow({
         </div>
         {/* 日期 */}
         <div className="text-sm text-gray-400">
-          {formatDate(resource.created_at)}
+          {isToday(resource.created_at) ? '今天' : formatDate(resource.created_at)}
         </div>
         {/* 操作 */}
         <div className="flex items-center justify-end gap-1">
@@ -3816,16 +3823,16 @@ ${resourceList}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         transition={{ duration: 0.2 }}
         onClick={e => e.stopPropagation()}
-        className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+        className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl max-md:w-[95vw] max-md:max-h-[88vh] max-md:rounded-xl"
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+        <div className="flex items-center justify-between p-6 border-b border-gray-100 max-md:p-4 max-md:flex-col max-md:items-stretch max-md:gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center shrink-0">
               <TrendingUp className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-gray-900">推荐资源</h2>
+              <h2 className="text-xl font-bold text-gray-900 max-md:text-lg">推荐资源</h2>
               <p className="text-sm text-gray-500">
                 实时同步自 GitHubDaily · {loading ? '加载中...' : `${resources.length} 个项目`}
               </p>
@@ -4473,7 +4480,7 @@ ${resourceList}
                 top: analyzePosition.y,
                 zIndex: 60
               }}
-              className="w-[320px] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden"
+              className="w-[320px] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden max-md:w-[92vw]"
             >
               {/* 头部 */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-blue-50">
@@ -4611,27 +4618,40 @@ function GitHubFollowingModal({
   const [usersData, setUsersData] = useState<Map<string, GitHubUser>>(new Map());
   const [inputUsername, setInputUsername] = useState('');
   const [loading, setLoading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [seedHint, setSeedHint] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'stars' | 'activity'>('stars');
-  
+  const [activeTab, setActiveTab] = useState<'stars' | 'repos' | 'activity'>('stars');
+
+  // 各 Tab 搜索关键字
+  const [starsSearch, setStarsSearch] = useState('');
+  const [reposSearch, setReposSearch] = useState('');
+  const [eventsSearch, setEventsSearch] = useState('');
+
   // Stars 分页
   const [stars, setStars] = useState<GitHubRepo[]>([]);
   const [starsPage, setStarsPage] = useState(1);
   const [starsHasMore, setStarsHasMore] = useState(true);
   const [loadingStars, setLoadingStars] = useState(false);
-  
+
+  // 用户的仓库分页
+  const [repos, setRepos] = useState<GitHubRepo[]>([]);
+  const [reposPage, setReposPage] = useState(1);
+  const [reposHasMore, setReposHasMore] = useState(true);
+  const [loadingRepos, setLoadingRepos] = useState(false);
+
   // Activity
   const [events, setEvents] = useState<GitHubEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
-  
+
   // 添加资源状态
   const [addingUrl, setAddingUrl] = useState<string | null>(null);
 
   // 初始化
   useEffect(() => {
     if (!isOpen) return;
-    
+
     const initData = async () => {
       // 设置 GitHub Token
       if (userId) {
@@ -4641,72 +4661,152 @@ function GitHubFollowingModal({
         } catch (e) {
           console.warn('获取 GitHub Token 失败:', e);
         }
-      }
-      
-      // 加载关注列表
-      const users = getFollowingUsers();
-      setFollowingUsers(users);
-      
-      // 加载用户数据
-      const dataMap = new Map<string, GitHubUser>();
-      for (const username of users) {
+
+        // 加载关注列表（落库版）
         try {
-          const user = await fetchGitHubUser(username);
-          if (user) dataMap.set(username, user);
+          const rows = await getFollowingRows(userId);
+          setFollowingUsers(rows.map(r => r.username));
+
+          // 用表内缓存的展示信息先点亮列表
+          const dataMap = new Map<string, GitHubUser>();
+          for (const row of rows) {
+            if (row.avatar_url) {
+              dataMap.set(row.username, {
+                login: row.username,
+                id: 0,
+                avatar_url: row.avatar_url,
+                html_url: `https://github.com/${row.username}`,
+                name: row.display_name || undefined,
+                bio: row.bio || undefined,
+                public_repos: 0,
+                followers: 0,
+                following: 0,
+                created_at: row.created_at
+              } as GitHubUser);
+            }
+          }
+          setUsersData(dataMap);
+
+          // 后台异步刷新真实详情（不阻塞 UI）
+          rows.forEach(row => {
+            fetchGitHubUser(row.username)
+              .then(user => {
+                if (user) {
+                  setUsersData(prev => new Map(prev).set(row.username, user));
+                }
+              })
+              .catch(e => console.warn(`刷新用户 ${row.username} 失败:`, e));
+          });
         } catch (e) {
-          console.warn(`加载用户 ${username} 失败:`, e);
+          console.error('加载关注列表失败:', e);
+          setError('加载关注列表失败');
         }
       }
-      setUsersData(dataMap);
     };
-    
+
     initData();
   }, [isOpen, userId]);
 
   // 添加关注
   const handleFollow = async () => {
-    if (!inputUsername.trim()) return;
-    
+    if (!inputUsername.trim() || !userId) return;
+
     const username = inputUsername.trim();
-    if (followingUsers.includes(username)) {
+    if (followingUsers.some(u => u.toLowerCase() === username.toLowerCase())) {
       setError('已关注该用户');
       return;
     }
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
       const user = await fetchGitHubUser(username);
       if (!user) {
         setError('用户不存在');
         return;
       }
-      
-      addFollowingUser(username);
-      setFollowingUsers(prev => [...prev, username]);
-      setUsersData(prev => new Map(prev).set(username, user));
+
+      await addFollowingUser(userId, {
+        login: user.login,
+        name: user.name,
+        avatar_url: user.avatar_url,
+        bio: user.bio
+      });
+      setFollowingUsers(prev => [...prev, user.login]);
+      setUsersData(prev => new Map(prev).set(user.login, user));
       setInputUsername('');
     } catch (e) {
-      setError('获取用户信息失败');
+      setError('添加关注失败');
     } finally {
       setLoading(false);
     }
   };
 
+  // 一键填充推荐名单
+  const handleSeed = async () => {
+    if (!userId) return;
+    setSeeding(true);
+    setSeedHint(null);
+    setError(null);
+    try {
+      const result = await bulkAddFollowingUsers(
+        userId,
+        RECOMMENDED_USERS.map(r => r.username)
+      );
+      // 重新拉一遍最新关注列表
+      const rows = await getFollowingRows(userId);
+      setFollowingUsers(rows.map(r => r.username));
+      setUsersData(prev => {
+        const map = new Map(prev);
+        rows.forEach(r => {
+          if (r.avatar_url && !map.has(r.username)) {
+            map.set(r.username, {
+              login: r.username,
+              id: 0,
+              avatar_url: r.avatar_url,
+              html_url: `https://github.com/${r.username}`,
+              name: r.display_name || undefined,
+              bio: r.bio || undefined,
+              public_repos: 0,
+              followers: 0,
+              following: 0,
+              created_at: r.created_at
+            } as GitHubUser);
+          }
+        });
+        return map;
+      });
+      setSeedHint(
+        `已添加 ${result.added.length}，跳过 ${result.skipped.length}` +
+        (result.failed.length ? `，失败 ${result.failed.length}` : '')
+      );
+    } catch (e) {
+      setError('一键填充失败');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   // 取消关注
-  const handleUnfollow = (username: string) => {
-    removeFollowingUser(username);
-    setFollowingUsers(prev => prev.filter(u => u !== username));
-    setUsersData(prev => {
-      const newMap = new Map(prev);
-      newMap.delete(username);
-      return newMap;
-    });
-    if (selectedUser === username) {
-      setSelectedUser(null);
-      setStars([]);
-      setEvents([]);
+  const handleUnfollow = async (username: string) => {
+    if (!userId) return;
+    try {
+      await removeFollowingUser(userId, username);
+      setFollowingUsers(prev => prev.filter(u => u !== username));
+      setUsersData(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(username);
+        return newMap;
+      });
+      if (selectedUser === username) {
+        setSelectedUser(null);
+        setStars([]);
+        setRepos([]);
+        setEvents([]);
+      }
+    } catch (e) {
+      setError('取消关注失败');
     }
   };
 
@@ -4714,13 +4814,21 @@ function GitHubFollowingModal({
   const handleViewUser = async (username: string) => {
     setSelectedUser(username);
     setStars([]);
+    setRepos([]);
     setEvents([]);
     setStarsPage(1);
+    setReposPage(1);
     setStarsHasMore(true);
+    setReposHasMore(true);
     setActiveTab('stars');
-    
+    setStarsSearch('');
+    setReposSearch('');
+    setEventsSearch('');
+
     // 加载 Stars
     await loadStars(username, 1);
+    // 加载 Repos（仓库）
+    await loadRepos(username, 1);
     // 加载 Activity
     await loadEvents(username);
   };
@@ -4741,6 +4849,25 @@ function GitHubFollowingModal({
       console.error('加载 Stars 失败:', e);
     } finally {
       setLoadingStars(false);
+    }
+  };
+
+  // 加载用户仓库
+  const loadRepos = async (username: string, page: number) => {
+    setLoadingRepos(true);
+    try {
+      const result = await fetchUserRepos(username, page, 30);
+      if (page === 1) {
+        setRepos(result.repos);
+      } else {
+        setRepos(prev => [...prev, ...result.repos]);
+      }
+      setReposHasMore(result.hasMore);
+      setReposPage(page);
+    } catch (e) {
+      console.error('加载仓库失败:', e);
+    } finally {
+      setLoadingRepos(false);
     }
   };
 
@@ -4767,6 +4894,29 @@ function GitHubFollowingModal({
     }
   };
 
+  // 过滤函数
+  const filterRepo = (repo: GitHubRepo, q: string) => {
+    if (!q.trim()) return true;
+    const kw = q.toLowerCase();
+    return (
+      repo.full_name.toLowerCase().includes(kw) ||
+      (repo.description?.toLowerCase().includes(kw) ?? false) ||
+      (repo.language?.toLowerCase().includes(kw) ?? false) ||
+      (repo.topics?.some(t => t.toLowerCase().includes(kw)) ?? false)
+    );
+  };
+
+  const filteredStars = stars.filter(r => filterRepo(r, starsSearch));
+  const filteredRepos = repos.filter(r => filterRepo(r, reposSearch));
+  const filteredEvents = events.filter(ev => {
+    if (!eventsSearch.trim()) return true;
+    const kw = eventsSearch.toLowerCase();
+    return (
+      ev.repo.name.toLowerCase().includes(kw) ||
+      ev.type.toLowerCase().includes(kw)
+    );
+  });
+
   if (!isOpen) return null;
 
   return createPortal(
@@ -4783,7 +4933,7 @@ function GitHubFollowingModal({
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         transition={{ type: 'spring', duration: 0.5 }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-4xl max-h-[85vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+        className="w-full max-w-4xl max-h-[85vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-md:w-[95vw] max-md:max-h-[88vh] max-md:rounded-2xl"
       >
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -4828,8 +4978,24 @@ function GitHubFollowingModal({
                   icon={<UserPlus className="w-4 h-4" />}
                 />
               </div>
+              {/* 一键填充推荐名单 */}
+              <button
+                onClick={handleSeed}
+                disabled={seeding || !userId}
+                className="w-full mt-2 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-gray-900 hover:bg-gray-50 text-xs text-gray-700 font-medium transition-all disabled:opacity-50"
+              >
+                {seeding ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="w-3.5 h-3.5" />
+                )}
+                一键添加 {RECOMMENDED_USERS.length} 位推荐开发者
+              </button>
               {error && (
                 <p className="text-xs text-red-500 mt-2">{error}</p>
+              )}
+              {seedHint && (
+                <p className="text-xs text-emerald-600 mt-2">{seedHint}</p>
               )}
             </div>
 
@@ -4962,6 +5128,17 @@ function GitHubFollowingModal({
                     Stars
                   </button>
                   <button
+                    onClick={() => setActiveTab('repos')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      activeTab === 'repos'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Box className="w-4 h-4" />
+                    仓库
+                  </button>
+                  <button
                     onClick={() => setActiveTab('activity')}
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                       activeTab === 'activity'
@@ -4972,6 +5149,46 @@ function GitHubFollowingModal({
                     <Activity className="w-4 h-4" />
                     动态
                   </button>
+                </div>
+
+                {/* 搜索栏（每个 Tab 独立） */}
+                <div className="px-4 pt-3">
+                  {activeTab === 'stars' && (
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                      <input
+                        type="text"
+                        value={starsSearch}
+                        onChange={e => setStarsSearch(e.target.value)}
+                        placeholder="搜索 Stars 仓库（名字 / 描述 / 语言 / 主题）"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition-all"
+                      />
+                    </div>
+                  )}
+                  {activeTab === 'repos' && (
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                      <input
+                        type="text"
+                        value={reposSearch}
+                        onChange={e => setReposSearch(e.target.value)}
+                        placeholder="搜索仓库（名字 / 描述 / 语言 / 主题）"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition-all"
+                      />
+                    </div>
+                  )}
+                  {activeTab === 'activity' && (
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                      <input
+                        type="text"
+                        value={eventsSearch}
+                        onChange={e => setEventsSearch(e.target.value)}
+                        placeholder="搜索动态（仓库名 / 事件类型）"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition-all"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* 内容区 */}
@@ -4987,9 +5204,14 @@ function GitHubFollowingModal({
                           <Star className="w-8 h-8 mx-auto mb-2 opacity-50" />
                           <p>该用户还没有 Star 任何项目</p>
                         </div>
+                      ) : filteredStars.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400 text-sm">
+                          <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>没有匹配 “{starsSearch}” 的 Stars</p>
+                        </div>
                       ) : (
                         <>
-                          {stars.map(repo => (
+                          {filteredStars.map(repo => (
                             <div
                               key={repo.id}
                               className="group p-3 rounded-xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/30 transition-all"
@@ -5047,15 +5269,109 @@ function GitHubFollowingModal({
                               </div>
                             </div>
                           ))}
-                          
+
                           {/* 加载更多 */}
-                          {starsHasMore && (
+                          {starsHasMore && !starsSearch && (
                             <div className="flex justify-center pt-2">
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => loadStars(selectedUser, starsPage + 1)}
+                                onClick={() => loadStars(selectedUser!, starsPage + 1)}
                                 loading={loadingStars}
+                              >
+                                加载更多
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {activeTab === 'repos' && (
+                    <div className="space-y-2">
+                      {loadingRepos && repos.length === 0 ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+                        </div>
+                      ) : repos.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400 text-sm">
+                          <Box className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>该用户暂无公开仓库</p>
+                        </div>
+                      ) : filteredRepos.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400 text-sm">
+                          <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>没有匹配 “{reposSearch}” 的仓库</p>
+                        </div>
+                      ) : (
+                        <>
+                          {filteredRepos.map(repo => (
+                            <div
+                              key={repo.id}
+                              className="group p-3 rounded-xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/30 transition-all"
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0">
+                                  <Box className="w-4 h-4 text-gray-700" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <a
+                                      href={repo.html_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-gray-900 hover:text-purple-600 transition-colors truncate"
+                                    >
+                                      {repo.name}
+                                    </a>
+                                    <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                                      <Star className="w-3 h-3 fill-current" />
+                                      {formatGitHubNumber(repo.stargazers_count)}
+                                    </span>
+                                  </div>
+                                  {repo.description && (
+                                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                                      {repo.description}
+                                    </p>
+                                  )}
+                                  <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                                    {repo.language && (
+                                      <span className="flex items-center gap-1 text-gray-500">
+                                        <span className="w-2 h-2 rounded-full bg-purple-400" />
+                                        {repo.language}
+                                      </span>
+                                    )}
+                                    <span className="flex items-center gap-1">
+                                      <GitFork className="w-3 h-3" />
+                                      {formatGitHubNumber(repo.forks_count)}
+                                    </span>
+                                    <span>更新于 {formatRelativeTime(repo.updated_at)}</span>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => handleAddToResources(repo.html_url)}
+                                  disabled={addingUrl === repo.html_url}
+                                  className="opacity-0 group-hover:opacity-100 px-2.5 py-1.5 rounded-lg bg-purple-100 text-purple-600 text-xs font-medium hover:bg-purple-200 transition-all disabled:opacity-50"
+                                >
+                                  {addingUrl === repo.html_url ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Plus className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* 加载更多 */}
+                          {reposHasMore && !reposSearch && (
+                            <div className="flex justify-center pt-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => loadRepos(selectedUser!, reposPage + 1)}
+                                loading={loadingRepos}
                               >
                                 加载更多
                               </Button>
@@ -5077,11 +5393,16 @@ function GitHubFollowingModal({
                           <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
                           <p>暂无最近动态</p>
                         </div>
+                      ) : filteredEvents.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400 text-sm">
+                          <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>没有匹配 “{eventsSearch}” 的动态</p>
+                        </div>
                       ) : (
-                        events.map(event => {
+                        filteredEvents.map(event => {
                           const { action, icon, color } = getEventDescription(event);
                           const repoUrl = `https://github.com/${event.repo.name}`;
-                          
+
                           return (
                             <div
                               key={event.id}

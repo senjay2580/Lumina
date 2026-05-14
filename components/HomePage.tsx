@@ -322,11 +322,11 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
         </defs>
       </svg>
 
-      <div className="max-w-6xl mx-auto px-8 pt-20 pb-12">
+      <div className="max-w-6xl mx-auto px-8 pt-20 pb-12 max-md:px-4 max-md:pt-6 max-md:pb-8">
         {/* Hero 区域 - 带神经网络背景 */}
-        <section className="mb-20 relative">
+        <section className="mb-20 relative max-md:mb-10">
           {/* 神经网络背景 */}
-          <div className="absolute inset-0 -top-12 -left-8 -right-8 h-[320px] overflow-hidden opacity-40 pointer-events-none">
+          <div className="absolute inset-0 -top-12 -left-8 -right-8 h-[320px] overflow-hidden opacity-40 pointer-events-none max-md:hidden">
             <svg className="w-full h-full" preserveAspectRatio="xMidYMid slice" viewBox="0 0 1200 320">
               <defs>
                 <linearGradient id="neuralGrad1" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -374,21 +374,21 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
             </svg>
           </div>
           
-          <div className="flex items-center justify-between relative z-10">
+          <div className="flex items-center justify-between relative z-10 max-md:flex-col max-md:items-stretch max-md:gap-6">
             <div className="max-w-2xl">
-              <h1 className="text-6xl font-black text-gray-900 mb-6 tracking-tighter leading-tight uppercase">
+              <h1 className="text-6xl font-black text-gray-900 mb-6 tracking-tighter leading-tight uppercase max-md:text-3xl max-md:mb-3">
                 欢迎回来，<br/><span className="bg-gradient-to-r from-primary to-orange-400 bg-clip-text text-transparent">{username}</span>
               </h1>
-              <p className="text-xl text-gray-400 font-medium tracking-wide mb-8">构建智能工作流，释放 AI 潜能</p>
-              <button onClick={() => onNavigate('WORKFLOW')} 
-                className="px-8 py-4 bg-primary text-white text-lg font-medium rounded-2xl shadow-xl shadow-primary/30 hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 flex items-center gap-3">
+              <p className="text-xl text-gray-400 font-medium tracking-wide mb-8 max-md:text-base max-md:mb-4">构建智能工作流，释放 AI 潜能</p>
+              <button onClick={() => onNavigate('WORKFLOW')}
+                className="px-8 py-4 bg-primary text-white text-lg font-medium rounded-2xl shadow-xl shadow-primary/30 hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 flex items-center gap-3 max-md:px-5 max-md:py-3 max-md:text-base max-md:w-full max-md:justify-center">
                 <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
                 创建工作流
               </button>
             </div>
 
             {/* 工作流 SVG */}
-            <div className="relative w-[580px] h-[260px] mt-8">
+            <div className="relative w-[580px] h-[260px] mt-8 max-md:hidden">
               <svg viewBox="0 0 560 260" className="w-full h-full overflow-visible">
                 <defs>
                   {/* 节点阴影 */}
@@ -589,15 +589,15 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
         </section>
 
         {/* 统计卡片 + 热力图 */}
-        <section className="mb-16">
-          <motion.div 
-            className="flex gap-6"
+        <section className="mb-16 max-md:mb-8">
+          <motion.div
+            className="flex gap-6 max-md:flex-col max-md:gap-4"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
           >
             {/* 左侧：纵向统计卡片 */}
-            <div className="flex flex-col gap-4 w-48 shrink-0">
+            <div className="flex flex-col gap-4 w-48 shrink-0 max-md:w-full max-md:flex-row max-md:gap-3">
               <motion.div 
                 className="group bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 flex-1 flex items-center"
                 initial={{ opacity: 0, x: -20 }}
@@ -650,8 +650,8 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
             </div>
             
             {/* 右侧：热力图 */}
-            <motion.div 
-              className="flex-1 bg-white rounded-2xl p-5 shadow-sm border border-gray-100 overflow-hidden"
+            <motion.div
+              className="flex-1 bg-white rounded-2xl p-5 shadow-sm border border-gray-100 overflow-hidden max-md:overflow-x-auto"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5, delay: 0.5 }}
@@ -693,8 +693,8 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.6 }}
         >
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-gray-900 tracking-tight">我的工作流</h2>
+          <div className="flex items-center justify-between mb-6 max-md:mb-4">
+            <h2 className="text-2xl font-bold text-gray-900 tracking-tight max-md:text-xl">我的工作流</h2>
             <button onClick={() => onNavigate('WORKFLOW')} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:shadow-lg transition-all flex items-center gap-2">
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
               新建
@@ -750,9 +750,9 @@ export const HomePage: React.FC<HomePageProps> = ({ username, onNavigate, onOpen
                     </p>
                   </div>
                   {/* 操作按钮 */}
-                  <button 
+                  <button
                     onClick={(e) => { e.stopPropagation(); contextMenu.open(e, workflow.id); }}
-                    className="w-8 h-8 rounded-lg hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                    className="w-8 h-8 rounded-lg hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all shrink-0 max-md:opacity-100"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                       <circle cx="12" cy="6" r="2" />

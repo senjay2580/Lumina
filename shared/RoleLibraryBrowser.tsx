@@ -373,9 +373,9 @@ export const RoleLibraryContent: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex max-md:flex-col">
       {/* 左侧分类 */}
-      <div className="w-48 bg-gray-50 border-r border-gray-200 flex flex-col">
+      <div className="w-48 bg-gray-50 border-r border-gray-200 flex flex-col max-md:w-full max-md:max-h-32 max-md:border-r-0 max-md:border-b">
         <div className="p-3 border-b border-gray-200 relative">
           <button
             onClick={() => setShowCreateMenu(!showCreateMenu)}
@@ -494,7 +494,7 @@ export const RoleLibraryContent: React.FC = () => {
       </div>
 
       {/* 中间列表 */}
-      <div className="w-64 border-r border-gray-200 flex flex-col bg-white">
+      <div className="w-64 border-r border-gray-200 flex flex-col bg-white max-md:w-full max-md:max-h-48 max-md:border-r-0 max-md:border-b">
         <div className="p-3 border-b border-gray-200 text-sm font-medium text-gray-700">
           {selectedCategoryId === 'ALL' ? '全部角色' : categories.find(c => c.id === selectedCategoryId)?.name || '角色列表'}
         </div>
@@ -534,7 +534,7 @@ export const RoleLibraryContent: React.FC = () => {
       </div>
 
       {/* 右侧详情 */}
-      <div className="flex-1 flex flex-col bg-white">
+      <div className="flex-1 flex flex-col bg-white max-md:min-h-[40vh]">
         {isCreating ? (
           /* 新建模式 */
           <>
@@ -809,8 +809,8 @@ export const RoleLibraryContent: React.FC = () => {
       
       {/* 分类编辑弹窗 */}
       {showCategoryModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]" onClick={() => setShowCategoryModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-[380px] overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100] max-md:p-3" onClick={() => setShowCategoryModal(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-[380px] overflow-hidden max-md:w-full max-md:max-w-full max-md:max-h-[85vh] max-md:overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">{editingCategory ? '编辑分类' : '新建分类'}</h3>
               <button onClick={() => setShowCategoryModal(false)} className="p-1 rounded hover:bg-gray-100">
@@ -1190,7 +1190,7 @@ export const RoleLibraryBrowser: React.FC<RoleLibraryBrowserProps> = ({
           ...getAnimationStyles(),
           transition: 'opacity 0.3s ease, transform 0.3s ease',
         }}
-        className="bg-white shadow-2xl overflow-hidden flex flex-col"
+        className="bg-white shadow-2xl overflow-hidden flex flex-col max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-screen max-md:!rounded-none"
       >
         {/* 标题栏 */}
         <div
@@ -1216,9 +1216,9 @@ export const RoleLibraryBrowser: React.FC<RoleLibraryBrowserProps> = ({
         </div>
 
         {/* 内容区域 */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden max-md:flex-col">
           {/* 左侧分类列表 */}
-          <div className="w-56 bg-gray-50 border-r border-gray-200 flex flex-col">
+          <div className="w-56 bg-gray-50 border-r border-gray-200 flex flex-col max-md:w-full max-md:max-h-32 max-md:border-r-0 max-md:border-b">
             <div className="p-3 border-b border-gray-200">
               <button
                 onClick={handleCreate}
@@ -1270,7 +1270,7 @@ export const RoleLibraryBrowser: React.FC<RoleLibraryBrowserProps> = ({
           </div>
 
           {/* 中间模板列表 */}
-          <div className="w-72 border-r border-gray-200 flex flex-col">
+          <div className="w-72 border-r border-gray-200 flex flex-col max-md:w-full max-md:max-h-48 max-md:border-r-0 max-md:border-b">
             <div className="p-3 border-b border-gray-200">
               <div className="text-sm font-medium text-gray-700">
                 {selectedCategoryId === 'ALL' 
@@ -1329,7 +1329,7 @@ export const RoleLibraryBrowser: React.FC<RoleLibraryBrowserProps> = ({
           </div>
 
           {/* 右侧详情/编辑区 */}
-          <div className="flex-1 flex flex-col bg-white">
+          <div className="flex-1 flex flex-col bg-white max-md:min-h-[40vh]">
             {selectedTemplate ? (
               <>
                 {/* 头部 */}

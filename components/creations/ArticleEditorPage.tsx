@@ -36,6 +36,21 @@ const AUTOSAVE_DEBOUNCE_MS = 3000;
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
+function hasMarkdownTable(text: string): boolean {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length - 1; i++) {
+    const header = lines[i];
+    const divider = lines[i + 1];
+    if (!header.includes('|') || !divider.includes('|')) continue;
+    const cells = header.split('|').filter((cell) => cell.trim().length > 0);
+    if (cells.length < 2) continue;
+    if (/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(divider)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function uploadInlineImage(userId: string, file: File): Promise<string> {
   const ext = (file.name.split('.').pop() || 'png').toLowerCase();
   const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
@@ -141,6 +156,15 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
       handlePaste: (view, event) => {
         const items = event.clipboardData?.items;
         if (!items || items.length === 0) return false;
+
+        const plainText = event.clipboardData?.getData('text/plain') || '';
+        if (hasMarkdownTable(plainText)) {
+          event.preventDefault();
+          const editorAny = (view as any).editor;
+          editorAny?.commands.insertContent(importedMarkdownToContent(plainText));
+          return true;
+        }
+
         const files: File[] = [];
         for (let i = 0; i < items.length; i++) {
           const it = items[i];
@@ -225,7 +249,7 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
 
         const payload = {
           title: title.trim() || undefined,
-          excerpt: excerpt.trim(),
+          excerpt: excerpt.trim() || null,
           cover_url: coverUrl,
           content: html,
           tags
@@ -397,7 +421,7 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
   return (
     <div className="w-full h-full flex flex-col bg-white">
       <div className="border-b-2 border-gray-900 bg-white sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between gap-4 max-md:px-3 max-md:py-2 max-md:gap-2">
           <button
             onClick={handleBackClick}
             className="text-gray-600 hover:text-gray-900 flex items-center gap-2"
@@ -406,11 +430,11 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
             返回
           </button>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 max-md:gap-1.5 max-md:overflow-x-auto max-md:flex-nowrap">
             {renderStatus()}
             <button
               onClick={handleImportMarkdown}
-              className="flex items-center gap-2 px-3 py-2 border-2 border-gray-300 hover:bg-gray-100 transition-colors text-sm"
+              className="flex items-center gap-2 px-3 py-2 border-2 border-gray-300 hover:bg-gray-100 transition-colors text-sm max-md:px-2 max-md:gap-1 max-md:shrink-0"
               title="导入 Markdown 文件（替换当前内容）"
             >
               <Upload className="w-4 h-4" />
@@ -419,7 +443,7 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
             <button
               onClick={handleManualSave}
               disabled={status === 'saving'}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors max-md:px-3 max-md:gap-1 max-md:text-sm max-md:shrink-0"
             >
               <Save className="w-4 h-4" />
               {status === 'saving' ? '保存中...' : articleId ? '保存' : '发布'}
@@ -429,13 +453,13 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 md:px-8 py-10">
+        <div className="max-w-3xl mx-auto px-6 md:px-8 py-10 max-md:px-4 max-md:py-5">
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="文章标题…"
-            className="w-full text-4xl md:text-5xl font-bold border-none outline-none placeholder:text-gray-300 mb-4"
+            className="w-full text-4xl md:text-5xl font-bold border-none outline-none placeholder:text-gray-300 mb-4 max-md:text-2xl max-md:mb-3"
           />
 
           <div className="flex items-center gap-2 mb-4">

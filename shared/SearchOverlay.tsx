@@ -283,9 +283,9 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: position === 'top' ? -20 : 20 }}
           transition={{ duration: 0.15 }}
-          className={`fixed ${position === 'top' ? 'top-4' : 'bottom-4'} right-4 z-50 ${className}`}
+          className={`fixed ${position === 'top' ? 'top-4' : 'bottom-4'} right-4 z-50 max-md:left-3 max-md:right-3 ${className}`}
         >
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden w-80">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden w-80 max-md:w-full">
             {/* 搜索输入 */}
             <div className="flex items-center gap-2 p-3 border-b border-gray-100">
               <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />

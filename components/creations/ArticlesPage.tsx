@@ -153,8 +153,8 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
 
   return (
     <div className="w-full h-full overflow-y-auto bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="mb-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
+        <div className="mb-8 max-md:mb-5">
           <button
             onClick={onBack}
             className="text-gray-600 hover:text-gray-900 mb-4 flex items-center gap-2"
@@ -163,26 +163,26 @@ export default function ArticlesPage({ userId, onBack, onOpenArticle, onCreateAr
             返回创作中心
           </button>
 
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between max-md:flex-col max-md:items-stretch max-md:gap-3">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">文章</h1>
-              <p className="text-gray-600">沉淀长文与博客内容</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2 max-md:text-2xl max-md:mb-1">文章</h1>
+              <p className="text-gray-600 max-md:text-sm">沉淀长文与博客内容</p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 max-md:w-full">
               <button
                 onClick={handleImport}
                 disabled={importing}
-                className="flex items-center gap-2 px-4 py-3 border-2 border-gray-900 hover:bg-gray-100 disabled:opacity-60 transition-colors"
+                className="flex items-center gap-2 px-4 py-3 border-2 border-gray-900 hover:bg-gray-100 disabled:opacity-60 transition-colors max-md:flex-1 max-md:justify-center max-md:px-3 max-md:py-2 max-md:text-sm"
               >
-                <Upload className="w-5 h-5" />
+                <Upload className="w-5 h-5 max-md:w-4 max-md:h-4" />
                 {importing ? '导入中…' : '导入 MD'}
               </button>
               <button
                 onClick={onCreateArticle}
-                className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)]"
+                className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)] max-md:flex-1 max-md:justify-center max-md:px-3 max-md:py-2 max-md:text-sm"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-5 h-5 max-md:w-4 max-md:h-4" />
                 新建文章
               </button>
             </div>

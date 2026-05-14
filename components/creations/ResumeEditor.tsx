@@ -395,7 +395,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-6 space-y-4 max-md:p-3">
       {/* 简历类型选择 */}
       <div className="border-2 border-gray-900 bg-gray-50 p-4 mb-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -433,7 +433,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
       <div className="border-2 border-gray-200">
         <SectionHeader icon={User} title="基本信息" section="personalInfo" />
         {expandedSections.has('personalInfo') && (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 max-md:p-3 max-md:space-y-3">
             {/* 照片上传 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -472,7 +472,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1 max-md:gap-3">
               <input
                 type="text"
                 placeholder="姓名 *"
@@ -489,7 +489,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1 max-md:gap-3">
               <input
                 type="email"
                 placeholder="邮箱 *"
@@ -527,7 +527,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
       <div className="border-2 border-gray-200">
         <SectionHeader icon={GraduationCap} title="教育背景" section="education" />
         {expandedSections.has('education') && (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 max-md:p-3 max-md:space-y-3">
             {data.education.map((edu, index) => (
               <div key={edu.id} className="p-4 border-2 border-gray-200 space-y-3">
                 <div className="flex items-center justify-between mb-2">
@@ -548,7 +548,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                   className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
                 />
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
                   <input
                     type="text"
                     placeholder="学位 *"
@@ -566,7 +566,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                 </div>
 
                 <div className="space-y-3">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-3 gap-3 max-md:grid-cols-2">
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">开始时间</label>
                       <DatePicker
@@ -659,7 +659,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
           section="experience" 
         />
         {expandedSections.has('experience') && (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 max-md:p-3 max-md:space-y-3">
             {data.experience.map((exp, index) => (
               <div key={exp.id} className="p-4 border-2 border-gray-200 space-y-3">
                 <div className="flex items-center justify-between mb-2">
@@ -680,7 +680,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                   className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
                 />
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
                   <input
                     type="text"
                     placeholder="职位 *"
@@ -697,7 +697,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">开始时间</label>
                     <DatePicker
@@ -767,7 +767,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
       <div className="border-2 border-gray-200">
         <SectionHeader icon={FolderGit2} title="项目经历" section="projects" />
         {expandedSections.has('projects') && (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 max-md:p-3 max-md:space-y-3">
             {data.projects.map((proj, index) => (
               <div key={proj.id} className="p-4 border-2 border-gray-200 space-y-3">
                 <div className="flex items-center justify-between mb-2">
@@ -788,7 +788,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                   className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
                 />
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
                   <input
                     type="text"
                     placeholder="角色（如：前端开发）"
@@ -805,7 +805,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">开始时间（可选）</label>
                     <DatePicker
@@ -878,7 +878,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
       <div className="border-2 border-gray-200">
         <SectionHeader icon={Award} title="专业技能" section="skills" />
         {expandedSections.has('skills') && (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 max-md:p-3 max-md:space-y-3">
             {data.skills.map((skill, index) => (
               <div key={skill.id} className="p-4 border-2 border-gray-200 space-y-3">
                 <div className="flex items-center justify-between mb-2">
@@ -930,7 +930,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
         <div className="border-2 border-gray-200">
           <SectionHeader icon={Users} title="校园经历（可选）" section="campusExperience" optional={true} />
           {expandedSections.has('campusExperience') && (
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 max-md:p-3 max-md:space-y-3">
               {(data.campusExperience || []).map((exp, index) => (
                 <div key={exp.id} className="p-4 border-2 border-gray-200 space-y-3">
                   <div className="flex items-center justify-between mb-2">
@@ -959,7 +959,7 @@ export default function ResumeEditor({ data, photoData, onChange, onPhotoChange 
                     className="w-full px-3 py-2 border-2 border-gray-300 focus:border-gray-900 outline-none"
                   />
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">开始时间</label>
                       <DatePicker

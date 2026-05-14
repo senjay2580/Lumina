@@ -635,19 +635,19 @@ export default function RSSSubscriptionPage({ userId }: Props) {
 
   return (
     <div className="w-full h-full overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-6 md:px-10 py-8">
+      <div className="max-w-6xl mx-auto px-6 md:px-10 py-8 max-md:px-4 max-md:py-4">
         {/* 页面头部 */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 max-md:flex-col max-md:items-stretch max-md:gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center shadow-lg shadow-orange-500/20">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center shadow-lg shadow-orange-500/20 max-md:w-10 max-md:h-10 max-md:rounded-xl shrink-0">
               <Rss className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">RSS 订阅</h1>
-              <p className="text-sm text-gray-500">订阅博客、公众号，自动同步到资源中心</p>
+              <h1 className="text-2xl font-bold text-gray-900 max-md:text-xl">RSS 订阅</h1>
+              <p className="text-sm text-gray-500 max-md:text-xs">订阅博客、公众号，自动同步到资源中心</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 max-md:flex-wrap max-md:gap-1.5">
             {/* 刷新所有按钮 */}
             {subscriptions.length > 0 && (
               <Tooltip content="刷新所有订阅">
@@ -766,13 +766,13 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                 key={sub.id}
                 className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-md transition-all"
               >
-                <div 
-                  className="p-4 cursor-pointer group"
+                <div
+                  className="p-4 cursor-pointer group max-md:p-3"
                   onClick={() => handleToggleArticles(sub.id)}
                 >
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-start gap-4 max-md:gap-3 max-md:flex-wrap">
                     {/* 图标 */}
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 max-md:w-10 max-md:h-10 ${
                       sub.source_type === 'wechat' ? 'bg-green-100' : 'bg-orange-100'
                     }`}>
                       {sub.icon_url ? (
@@ -824,15 +824,15 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                     </div>
                     
                     {/* 展开箭头和操作按钮 */}
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 max-md:w-full max-md:justify-end max-md:flex-wrap">
                       {/* 自动同步开关 */}
                       <Tooltip content={sub.auto_sync ? '关闭自动同步' : '开启自动同步到资源中心'}>
                         <button
                           onClick={(e) => handleToggleAutoSync(sub, e)}
                           className={`p-2 rounded-lg transition-colors ${
-                            sub.auto_sync 
-                              ? 'bg-blue-100 text-blue-600 hover:bg-blue-200' 
-                              : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100'
+                            sub.auto_sync
+                              ? 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                              : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 max-md:opacity-100'
                           }`}
                         >
                           <Download className="w-4 h-4" />
@@ -843,7 +843,7 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                         <button
                           onClick={(e) => handleSyncToResources(sub.id, e)}
                           disabled={syncingSubId === sub.id}
-                          className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-500 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                          className="p-2 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-500 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100 max-md:opacity-100"
                         >
                           {syncingSubId === sub.id ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -859,7 +859,7 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                             handleRefreshAndLoad(sub.id)
                           }}
                           disabled={refreshingId === sub.id}
-                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100 max-md:opacity-100"
                         >
                           <RefreshCw className={`w-4 h-4 ${refreshingId === sub.id ? 'animate-spin' : ''}`} />
                         </button>
@@ -871,7 +871,7 @@ export default function RSSSubscriptionPage({ userId }: Props) {
                             setDeleteConfirm({ open: true, id: sub.id })
                           }}
                           disabled={deletingId === sub.id}
-                          className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                          className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100 max-md:opacity-100"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

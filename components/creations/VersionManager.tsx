@@ -287,7 +287,7 @@ export default function VersionManager({
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-md:p-4 max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-xl font-bold mb-4">创建新版本</h3>
@@ -367,7 +367,7 @@ export default function VersionManager({
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-md:p-4 max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-xl font-bold mb-4">编辑版本信息</h3>

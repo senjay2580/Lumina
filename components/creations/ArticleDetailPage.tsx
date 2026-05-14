@@ -709,14 +709,14 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         {/* 顶部操作栏 */}
         <div className="article-topbar">
           <div
-            className="mx-auto px-6 md:px-10 py-4 flex items-center justify-between"
+            className="mx-auto px-6 md:px-10 py-4 flex items-center justify-between max-md:px-3 max-md:py-2 max-md:gap-2 max-md:overflow-x-auto max-md:flex-nowrap"
             style={{ maxWidth: `${containerMaxWidth}px` }}
           >
             <button onClick={onBack} className="article-link-btn flex items-center gap-2">
               <ArrowLeft className="w-4 h-4" />
               返回列表
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 max-md:gap-1 max-md:shrink-0">
               <button
                 onClick={() => {
                   if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
@@ -846,7 +846,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
         {/* 文章正文 */}
         <div
-          className="article-container mx-auto px-6 md:px-10 pb-32 relative"
+          className="article-container mx-auto px-6 md:px-10 pb-32 relative max-md:px-4 max-md:pb-16"
           style={{ maxWidth: `${containerMaxWidth}px` }}
         >
           <div
@@ -860,7 +860,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           >
             <article ref={articleBodyRef} className="article-body min-w-0">
               {/* 标题区 */}
-              <header className="mb-12 pt-12 relative">
+              <header className="mb-12 pt-12 relative max-md:mb-6 max-md:pt-6">
                 {article.tags && article.tags.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-5">
                     {article.tags.map((t) => (

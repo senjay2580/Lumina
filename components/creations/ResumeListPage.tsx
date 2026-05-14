@@ -125,9 +125,9 @@ export default function ResumeListPage({ userId, onSelectResume, onOpenApplicati
 
   return (
     <div className="w-full h-full overflow-y-auto bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
         {/* 头部 */}
-        <div className="mb-8">
+        <div className="mb-8 max-md:mb-5">
           <button
             onClick={onBack}
             className="text-gray-600 hover:text-gray-900 mb-4 flex items-center gap-2"
@@ -135,23 +135,23 @@ export default function ResumeListPage({ userId, onSelectResume, onOpenApplicati
             ← 返回创作中心
           </button>
           
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between max-md:flex-col max-md:items-stretch max-md:gap-3">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">我的简历</h1>
-              <p className="text-gray-600">管理你的简历项目和版本</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2 max-md:text-2xl max-md:mb-1">我的简历</h1>
+              <p className="text-gray-600 max-md:text-sm">管理你的简历项目和版本</p>
             </div>
-            
-            <div className="flex gap-3">
+
+            <div className="flex gap-3 max-md:w-full max-md:gap-2">
               <button
                 onClick={onOpenApplications}
-                className="flex items-center gap-2 px-6 py-3 border-2 border-gray-900 hover:bg-gray-50 transition-colors"
+                className="flex items-center gap-2 px-6 py-3 border-2 border-gray-900 hover:bg-gray-50 transition-colors max-md:flex-1 max-md:justify-center max-md:px-3 max-md:py-2 max-md:text-sm"
               >
                 <Briefcase className="w-5 h-5" />
                 投递记录
               </button>
               <button
                 onClick={() => setShowNewDialog(true)}
-                className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)]"
+                className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-[4px_4px_0px_0px_rgba(0,0,0,0.3)] max-md:flex-1 max-md:justify-center max-md:px-3 max-md:py-2 max-md:text-sm"
               >
                 <Plus className="w-5 h-5" />
                 新建简历
@@ -265,7 +265,7 @@ export default function ResumeListPage({ userId, onSelectResume, onOpenApplicati
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-md:p-4 max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-xl font-bold mb-4">新建简历项目</h3>
@@ -321,7 +321,7 @@ export default function ResumeListPage({ userId, onSelectResume, onOpenApplicati
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"
+              className="bg-white border-2 border-gray-900 p-6 w-full max-w-md shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-md:p-4 max-md:w-[94vw]"
               onClick={(e) => e.stopPropagation()}
             >
               <h3 className="text-xl font-bold mb-4">编辑项目信息</h3>

@@ -84,7 +84,7 @@ export function HoverCard({
                 transform: 'translate(-50%, -100%)',
                 zIndex: 10000,
               }}
-              className="pointer-events-none"
+              className="pointer-events-none max-md:hidden"
             >
               <div className="bg-gray-800 text-white text-sm px-4 py-3 rounded-lg shadow-xl max-w-xs">
                 <p className="leading-relaxed">{content}</p>

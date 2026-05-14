@@ -234,9 +234,9 @@ export const TrashPage: React.FC = () => {
         onCancel={() => setConfirmState({ open: false, type: 'empty' })}
       />
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
         {/* 标题 */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 max-md:flex-wrap max-md:gap-3">
           <div className="flex items-center gap-3">
             <svg className="w-10 h-10" viewBox="0 0 14 14" fill="none">
               <g fillRule="evenodd" clipRule="evenodd">
@@ -260,7 +260,7 @@ export const TrashPage: React.FC = () => {
         </div>
 
         {/* 标签切换 */}
-        <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit mb-6">
+        <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit mb-6 max-md:w-full max-md:overflow-x-auto max-md:flex-nowrap">
           <button
             onClick={() => setActiveTab('workflows')}
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
@@ -291,7 +291,7 @@ export const TrashPage: React.FC = () => {
         {loading ? (
           <LoadingSpinner text="正在加载回收站..." />
         ) : isEmpty ? (
-          <div className="bg-white rounded-2xl p-10 border border-gray-100 text-center">
+          <div className="bg-white rounded-2xl p-10 border border-gray-100 text-center max-md:p-6">
             <svg className="w-16 h-16 mx-auto mb-4 text-gray-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
               <line x1="10" y1="11" x2="10" y2="17" />

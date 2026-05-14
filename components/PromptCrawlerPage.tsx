@@ -350,18 +350,18 @@ export default function PromptCrawlerPage({ userId }: Props) {
   if (loading) return <LoadingSpinner text="加载中..." />;
 
   return (
-    <div className="w-full h-full p-6 md:p-10 overflow-y-auto">
+    <div className="w-full h-full p-6 md:p-10 overflow-y-auto max-md:p-4">
       <div className="max-w-6xl mx-auto">
         {/* 头部 */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 max-md:gap-3 max-md:mb-5">
           <div className="flex items-center gap-3">
-            <CrawlerIcon className="w-12 h-12" />
+            <CrawlerIcon className="w-12 h-12 max-md:w-10 max-md:h-10 shrink-0" />
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">项目采集</h2>
-              <p className="text-gray-500 text-sm">从 Reddit、GitHub 自动发现优质 AI 项目和资源</p>
+              <h2 className="text-2xl font-bold text-gray-900 max-md:text-xl">项目采集</h2>
+              <p className="text-gray-500 text-sm max-md:text-xs">从 Reddit、GitHub 自动发现优质 AI 项目和资源</p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 max-md:flex-wrap">
             <button onClick={handleCrawlReddit} disabled={redditCrawling}
               className="px-4 py-2.5 rounded-xl bg-[#FF4500] text-white font-medium hover:bg-[#FF5722] transition-all flex items-center gap-2 disabled:opacity-50">
               {redditCrawling ? <Loader2 className="w-4 h-4 animate-spin" /> : <RedditIcon className="w-4 h-4" />}
@@ -382,33 +382,33 @@ export default function PromptCrawlerPage({ userId }: Props) {
 
         {/* 统计 */}
         {stats && (
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="bg-white rounded-2xl p-5 border border-gray-100">
-              <div className="flex items-center gap-3 mb-2">
+          <div className="grid grid-cols-3 gap-4 mb-6 max-md:gap-2 max-md:mb-4">
+            <div className="bg-white rounded-2xl p-5 border border-gray-100 max-md:p-3">
+              <div className="flex items-center gap-3 mb-2 max-md:gap-2">
                 <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center">
                   <Database className="w-5 h-5 text-purple-600" />
                 </div>
                 <span className="text-sm text-gray-500">总项目</span>
               </div>
-              <div className="text-3xl font-bold text-gray-900">{stats.totalPrompts}</div>
+              <div className="text-3xl font-bold text-gray-900 max-md:text-xl">{stats.totalPrompts}</div>
             </div>
-            <div className="bg-white rounded-2xl p-5 border border-gray-100">
-              <div className="flex items-center gap-3 mb-2">
+            <div className="bg-white rounded-2xl p-5 border border-gray-100 max-md:p-3">
+              <div className="flex items-center gap-3 mb-2 max-md:gap-2">
                 <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
                   <RedditIcon className="w-5 h-5 text-orange-600" />
                 </div>
                 <span className="text-sm text-gray-500">Reddit</span>
               </div>
-              <div className="text-3xl font-bold text-gray-900">{stats.redditPrompts}</div>
+              <div className="text-3xl font-bold text-gray-900 max-md:text-xl">{stats.redditPrompts}</div>
             </div>
-            <div className="bg-white rounded-2xl p-5 border border-gray-100">
-              <div className="flex items-center gap-3 mb-2">
+            <div className="bg-white rounded-2xl p-5 border border-gray-100 max-md:p-3">
+              <div className="flex items-center gap-3 mb-2 max-md:gap-2">
                 <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
                   <Github className="w-5 h-5 text-gray-700" />
                 </div>
                 <span className="text-sm text-gray-500">GitHub</span>
               </div>
-              <div className="text-3xl font-bold text-gray-900">{stats.githubPrompts}</div>
+              <div className="text-3xl font-bold text-gray-900 max-md:text-xl">{stats.githubPrompts}</div>
             </div>
           </div>
         )}
@@ -558,8 +558,8 @@ export default function PromptCrawlerPage({ userId }: Props) {
         </AnimatePresence>
 
         {/* 标签页 */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex gap-2">
+        <div className="flex items-center justify-between mb-6 max-md:flex-wrap max-md:gap-2 max-md:mb-4">
+          <div className="flex gap-2 max-md:flex-wrap">
             {tabs.filter(t => t.key !== 'config').map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.key;
@@ -989,11 +989,11 @@ function PromptList({
 
           return (
             <motion.div key={prompt.id} layout
-              className={`group bg-white rounded-2xl p-5 border transition-all hover:shadow-md ${
+              className={`group bg-white rounded-2xl p-5 border transition-all hover:shadow-md max-md:p-3 ${
                 isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-gray-100'
               }`}
               style={{ minHeight: '140px' }}>
-              <div className="flex items-start gap-4 h-full">
+              <div className="flex items-start gap-4 h-full max-md:gap-2">
                 {/* 选择框 */}
                 {selectMode && (
                   <button onClick={() => onToggleSelect(prompt.id)}
@@ -1128,7 +1128,7 @@ function PromptList({
                   {/* 删除按钮 */}
                   {!selectMode && (
                     <button onClick={() => onDelete(prompt.id)}
-                      className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all">
+                      className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all max-md:opacity-100">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}
@@ -1141,7 +1141,7 @@ function PromptList({
 
       {/* 分页 */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-6 p-4 bg-white rounded-xl border border-gray-100">
+        <div className="flex items-center justify-between mt-6 p-4 bg-white rounded-xl border border-gray-100 max-md:flex-col max-md:gap-3 max-md:p-3">
           <div className="text-sm text-gray-500">
             共 {filteredPrompts.length} 条，第 {currentPage}/{totalPages} 页
           </div>
@@ -1754,10 +1754,10 @@ function ConfigPanel({
       </div>
 
       {/* 模板管理区域 */}
-      <div className="bg-white rounded-2xl border border-gray-100 p-5">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-2xl border border-gray-100 p-5 max-md:p-3">
+        <div className="flex items-center justify-between mb-4 max-md:flex-col max-md:items-stretch max-md:gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center shrink-0">
               <Tag className="w-5 h-5 text-purple-600" />
             </div>
             <div>
@@ -1765,7 +1765,7 @@ function ConfigPanel({
               <p className="text-xs text-gray-400">快速应用预设或自定义模板</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 max-md:flex-wrap">
             <input
               ref={templateFileInputRef}
               type="file"
@@ -2208,7 +2208,7 @@ function ConfigPanel({
           </div>
           <span className="font-medium text-gray-900">筛选阈值</span>
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-4 max-md:grid-cols-1 max-md:gap-2">
           {numberItems.map(item => {
             const Icon = item.icon;
             return (
@@ -2288,7 +2288,7 @@ function ConfigPanel({
       {/* 编辑模板弹窗 */}
       {editingTemplate && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4" onClick={handleCloseEditTemplate}>
-          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden max-md:rounded-2xl max-md:max-h-[88vh]" onClick={(e) => e.stopPropagation()}>
             {/* 头部 */}
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
               <div>

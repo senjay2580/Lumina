@@ -66,6 +66,7 @@ export const Toast: React.FC<ToastProps> = ({ id, type, message, duration = 4000
       className={`
         flex items-center gap-3 px-4 py-3 rounded-2xl border shadow-lg backdrop-blur-sm
         transition-all duration-300 ease-out min-w-[280px] max-w-[400px]
+        max-md:min-w-0 max-md:w-full max-md:max-w-full
         ${style.bg} ${style.border}
         ${isVisible && !isLeaving ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}
       `}
@@ -100,7 +101,7 @@ interface ToastContainerProps {
 
 export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove }) => {
   return (
-    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2">
+    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 max-md:left-3 max-md:right-3 max-md:top-3">
       {toasts.map((toast) => (
         <Toast key={toast.id} {...toast} onClose={onRemove} />
       ))}

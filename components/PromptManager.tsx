@@ -533,9 +533,9 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
   if (error) return <div className="w-full h-full flex items-center justify-center"><div className="text-center"><p className="text-red-500 mb-4">{error}</p><button onClick={loadData} className="px-4 py-2 bg-primary text-white rounded-lg">重试</button></div></div>;
 
   return (
-    <div className="w-full h-full p-6 md:p-10 overflow-y-auto">
+    <div className="w-full h-full p-6 md:p-10 overflow-y-auto max-md:p-4">
       <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 max-md:gap-4 max-md:mb-6">
                     <div className="flex items-center gap-3">
             <svg className="w-10 h-10" viewBox="0 0 14 14">
               <g fill="none" fillRule="evenodd" clipRule="evenodd">
@@ -543,9 +543,9 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
                 <path fill="#2859c5" d="M3.08 7.797a.625.625 0 1 0-.883.884L3.255 9.74l-1.058 1.058a.625.625 0 0 0 .884.884l1.5-1.5a.625.625 0 0 0 0-.884l-1.5-1.5Zm2.559 2.817a.625.625 0 1 0 0 1.25h1.5a.625.625 0 0 0 0-1.25zm.396-8.107c-.653 1.073-.204 2.73 1.344 3c.318.055.598.22.8.454H.028V4.21c0-.941.764-1.704 1.705-1.704h4.3ZM11.233.721C11.04-.13 9.825-.125 9.638.728l-.007.035l-.015.068A2.53 2.53 0 0 1 7.58 2.772c-.887.154-.887 1.428 0 1.582a2.53 2.53 0 0 1 2.038 1.952l.02.093c.187.852 1.401.858 1.595.007l.025-.108a2.55 2.55 0 0 1 2.046-1.942c.889-.155.889-1.43 0-1.585A2.55 2.55 0 0 1 11.26.844l-.018-.082l-.01-.041Z"/>
               </g>
             </svg>
-            <div><h2 className="text-3xl font-bold text-gray-900 mb-1">提示词库</h2><p className="text-gray-500">管理和组织你的 AI 提示词模板</p></div>
+            <div><h2 className="text-3xl font-bold text-gray-900 mb-1 max-md:text-2xl">提示词库</h2><p className="text-gray-500 max-md:text-sm">管理和组织你的 AI 提示词模板</p></div>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 max-md:flex-wrap max-md:gap-2">
             {/* Tab 切换 */}
             <div className="flex bg-gray-100 rounded-xl p-1">
               <button
@@ -589,9 +589,9 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
             </button>
             {/* 新建下拉菜单 */}
             <div className="relative" ref={createMenuRef}>
-              <button 
-                onClick={() => setShowCreateMenu(!showCreateMenu)} 
-                className={`px-6 py-2.5 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all flex items-center gap-2 ${showCreateMenu ? 'shadow-lg shadow-primary/20' : ''}`}
+              <button
+                onClick={() => setShowCreateMenu(!showCreateMenu)}
+                className={`px-6 py-2.5 rounded-xl bg-primary text-white font-medium hover:shadow-lg hover:shadow-primary/20 transition-all flex items-center gap-2 max-md:px-4 max-md:py-2 max-md:text-sm ${showCreateMenu ? 'shadow-lg shadow-primary/20' : ''}`}
               >
                 <PlusIcon className="w-4 h-4" />
                 新建
@@ -670,7 +670,7 @@ export const PromptManager: React.FC<PromptManagerProps> = ({ promptBrowser }) =
         {/* 根据 activeTab 显示不同内容 */}
         {activeTab === 'prompts' ? (
           <>
-            <div className="flex flex-col md:flex-row gap-4 mb-8">
+            <div className="flex flex-col md:flex-row gap-4 mb-8 max-md:mb-5">
               <div className="relative flex-1">
                 <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input type="text" placeholder="搜索提示词..." className="w-full pl-10 pr-4 py-3 rounded-xl bg-white border border-gray-200 outline-none focus:ring-2 ring-primary/20 placeholder-gray-400 transition-all" value={search} onChange={(e) => setSearch(e.target.value)} />

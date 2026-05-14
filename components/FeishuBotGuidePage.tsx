@@ -259,7 +259,7 @@ export function FeishuBotGuidePage({ onBack }: FeishuBotGuidePageProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6 max-md:p-4">
         <div className="max-w-3xl mx-auto space-y-4">
           {/* 简介 */}
           <div className="bg-zinc-800/50 rounded-lg p-4 mb-6">

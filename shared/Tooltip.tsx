@@ -138,7 +138,7 @@ export function Tooltip({
                 transformOrigin: getTransformOrigin(),
                 zIndex: 9999,
               }}
-              className="pointer-events-none"
+              className="pointer-events-none max-md:hidden"
             >
               <div className="px-2.5 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg shadow-lg max-w-xs">
                 {content}

@@ -548,9 +548,9 @@ export const ResourceViewerWindow: React.FC<Props> = ({
         height: size.height,
         zIndex: 1000,
       }}
-      className={`flex flex-col rounded-xl shadow-2xl overflow-hidden ${
-        isDark 
-          ? 'bg-[#1e1e1e] border border-[#3c3c3c]' 
+      className={`flex flex-col rounded-xl shadow-2xl overflow-hidden max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-screen max-md:!rounded-none ${
+        isDark
+          ? 'bg-[#1e1e1e] border border-[#3c3c3c]'
           : 'bg-white border border-gray-200'
       }`}
     >
@@ -565,7 +565,7 @@ export const ResourceViewerWindow: React.FC<Props> = ({
         onDoubleClick={toggleMaximize}
       >
         {/* 标签页 */}
-        <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-hide">
+        <div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-hide min-w-0">
           {tabs.map(tab => (
             <div
               key={tab.id}

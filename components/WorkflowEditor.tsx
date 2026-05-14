@@ -1626,8 +1626,51 @@ const WorkflowEditorInner: React.FC<WorkflowEditorProps> = ({ onBack, workflowId
   );
 };
 
+// 移动端兜底页 —— 工作流画布交互不适合小屏触屏，引导到桌面端
+const WorkflowMobileFallback: React.FC<{ onBack: () => void }> = ({ onBack }) => (
+  <div className="h-full w-full flex flex-col items-center justify-center px-6 text-center bg-gradient-to-br from-background to-primary-light/30">
+    <div className="w-20 h-20 rounded-2xl bg-white/80 backdrop-blur-md shadow-lg flex items-center justify-center mb-5">
+      <svg className="w-10 h-10 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <line x1="8" y1="21" x2="16" y2="21" />
+        <line x1="12" y1="17" x2="12" y2="21" />
+      </svg>
+    </div>
+    <h2 className="text-lg font-semibold text-gray-900 mb-2">工作流编辑器需要桌面端</h2>
+    <p className="text-sm text-gray-500 leading-relaxed max-w-xs mb-6">
+      画布的节点拖拽、连线、缩放在小屏触控设备上体验受限，请在电脑或平板上打开本页面。
+    </p>
+    <button
+      onClick={onBack}
+      className="px-5 py-2.5 rounded-xl bg-primary text-white font-medium shadow-sm hover:bg-primary/90 active:scale-95 transition-all"
+    >
+      返回主页
+    </button>
+  </div>
+);
+
 // 包装组件，提供 ReactFlowProvider
 export const WorkflowEditor: React.FC<WorkflowEditorProps> = (props) => {
+  const [isMobile, setIsMobile] = React.useState<boolean>(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+  );
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia('(max-width: 767px)');
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    if (mql.addEventListener) {
+      mql.addEventListener('change', handler);
+      return () => mql.removeEventListener('change', handler);
+    } else {
+      mql.addListener(handler);
+      return () => mql.removeListener(handler);
+    }
+  }, []);
+
+  if (isMobile) {
+    return <WorkflowMobileFallback onBack={props.onBack} />;
+  }
+
   return (
     <ReactFlowProvider>
       <WorkflowEditorInner {...props} />

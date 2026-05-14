@@ -2,141 +2,56 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <title>Lumina AI - 智能提示词管理与工作流平台</title>
-    
+
     <!-- SEO Meta Tags -->
     <meta name="description" content="Lumina AI 是一个智能提示词管理平台，支持 AI 工作流编排、提示词采集、多模型集成。帮助你高效管理和使用 AI 提示词。" />
     <meta name="keywords" content="AI, 提示词, Prompt, ChatGPT, 工作流, AI工具, 提示词管理, Lumina" />
     <meta name="author" content="Lumina AI" />
     <meta name="robots" content="index, follow" />
-    
+
+    <!-- PWA -->
+    <meta name="theme-color" content="#FF6B00" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Lumina" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://luminaio.dpdns.org/" />
     <meta property="og:title" content="Lumina AI - 智能提示词管理与工作流平台" />
     <meta property="og:description" content="智能提示词管理平台，支持 AI 工作流编排、提示词采集、多模型集成。" />
     <meta property="og:image" content="https://luminaio.dpdns.org/logo.png" />
-    
+
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content="https://luminaio.dpdns.org/" />
     <meta property="twitter:title" content="Lumina AI - 智能提示词管理与工作流平台" />
     <meta property="twitter:description" content="智能提示词管理平台，支持 AI 工作流编排、提示词采集、多模型集成。" />
     <meta property="twitter:image" content="https://luminaio.dpdns.org/logo.png" />
-    
+
     <!-- Canonical URL -->
     <link rel="canonical" href="https://luminaio.dpdns.org/" />
-    
+
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700&family=Roboto:wght@300;400;500&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'Poppins', 'sans-serif'],
-              mono: ['Roboto', 'monospace'],
-            },
-            colors: {
-              background: '#FDFCF8',
-              surface: '#FFFFFF',
-              text: '#1A1A1A',
-              subtext: '#666666',
-              primary: '#FF6B00',
-              'primary-light': '#FFF0E5',
-              glass: 'rgba(255, 255, 255, 0.65)',
-            },
-            animation: {
-              'breathe': 'breathe 3s ease-in-out infinite',
-              'dash': 'dash 20s linear infinite',
-              'slideIn': 'slideIn 0.3s ease-out',
-              'float': 'float 6s ease-in-out infinite',
-              'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
-              'bounce-subtle': 'bounce-subtle 1s ease-in-out infinite',
-            },
-            keyframes: {
-              breathe: {
-                '0%, 100%': { transform: 'scale(1)', filter: 'brightness(1)' },
-                '50%': { transform: 'scale(1.02)', filter: 'brightness(1.05)' },
-              },
-              dash: {
-                'to': { strokeDashoffset: '1000' },
-              },
-              float: {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-10px)' },
-              },
-              slideIn: {
-                'from': { transform: 'translateX(100%)', opacity: '0' },
-                'to': { transform: 'translateX(0)', opacity: '1' },
-              },
-              'pulse-subtle': {
-                '0%, 100%': { boxShadow: '0 0 0 0 rgba(255, 107, 0, 0.2)' },
-                '50%': { boxShadow: '0 0 0 8px rgba(255, 107, 0, 0)' },
-              },
-              'bounce-subtle': {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-2px)' },
-              }
-            }
-          }
-        }
+
+    <script type="importmap">
+    {
+      "imports": {
+        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+        "react/": "https://esm.sh/react@^19.2.3/",
+        "react": "https://esm.sh/react@^19.2.3"
       }
+    }
     </script>
-    <style>
-      body {
-        background-color: #FDFCF8;
-        color: #1A1A1A;
-        overflow: hidden; /* App handles scrolling */
-      }
-      .glass-panel {
-        background: rgba(255, 255, 255, 0.4);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.5);
-      }
-      .glass-card {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(16px);
-        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
-        border: 1px solid rgba(255, 255, 255, 0.6);
-      }
-      /* Hide scrollbar for clean UI */
-      ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #e5e5e5;
-        border-radius: 3px;
-      }
-      /* React Flow 边选中样式 */
-      .react-flow__edge.selected .react-flow__edge-path {
-        stroke: #FF6B00 !important;
-        stroke-width: 4px !important;
-      }
-      .react-flow__edge.selected {
-        filter: drop-shadow(0 0 6px rgba(255, 107, 0, 0.5));
-      }
-      .react-flow__edge:hover .react-flow__edge-path {
-        stroke-width: 3px;
-      }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+  </head>
   <body>
     <div id="root"></div>
 
@@ -163,10 +78,11 @@
         <line x1="12" y1="5" x2="12" y2="19"></line>
         <line x1="5" y1="12" x2="19" y2="12"></line>
       </symbol>
-       <symbol id="icon-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <symbol id="icon-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
       </symbol>
     </svg>
-  <script type="module" src="/index.tsx"></script>
-</body>
+
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>

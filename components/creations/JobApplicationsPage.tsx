@@ -214,8 +214,8 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
   return (
     <div className="w-full h-full flex flex-col bg-gray-50">
       {/* 头部 */}
-      <div className="flex-shrink-0 bg-white px-6 py-4">
-        <div className="flex items-center justify-between mb-4">
+      <div className="flex-shrink-0 bg-white px-6 py-4 max-md:px-4">
+        <div className="flex items-center justify-between mb-4 max-md:flex-col max-md:items-stretch max-md:gap-3">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
@@ -224,14 +224,14 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
               ← 返回
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">投递记录</h1>
-              <p className="text-sm text-gray-600">管理你的求职投递和面试进度</p>
+              <h1 className="text-2xl font-bold text-gray-900 max-md:text-xl">投递记录</h1>
+              <p className="text-sm text-gray-600 max-md:text-xs">管理你的求职投递和面试进度</p>
             </div>
           </div>
-          
+
           <button
             onClick={() => setShowAddDialog(true)}
-            className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors"
+            className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white hover:bg-gray-800 transition-colors max-md:justify-center max-md:px-4 max-md:py-2 max-md:text-sm"
           >
             <Plus className="w-5 h-5" />
             新增投递
@@ -241,7 +241,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
         {/* 统计卡片 */}
         {stats && (
           <>
-            <div className="grid grid-cols-5 gap-4 mb-4">
+            <div className="grid grid-cols-5 gap-4 mb-4 max-md:grid-cols-2 max-md:gap-2">
               {/* 总投递 - 深色背景 */}
               <div className="bg-gray-900 border-2 border-gray-900 p-4">
                 <div className="flex items-center justify-between mb-2">
@@ -345,8 +345,8 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
       </div>
 
       {/* 工具栏 */}
-      <div className="flex-shrink-0 bg-white px-6 py-4">
-        <div className="flex items-center gap-4">
+      <div className="flex-shrink-0 bg-white px-6 py-4 max-md:px-4 max-md:py-3">
+        <div className="flex items-center gap-4 max-md:flex-col max-md:items-stretch max-md:gap-2">
           {/* 搜索 */}
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -376,7 +376,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
       </div>
 
       {/* 表格 */}
-      <div className="flex-1 overflow-auto px-6 pb-6">
+      <div className="flex-1 overflow-auto px-6 pb-6 max-md:px-4 max-md:pb-4">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
@@ -392,7 +392,8 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
             </p>
           </div>
         ) : (
-          <div className="bg-white border-2 border-gray-900 rounded-lg overflow-hidden shadow-sm">
+          <div className="bg-white border-2 border-gray-900 rounded-lg overflow-hidden shadow-sm max-md:overflow-x-auto">
+            <div className="max-md:min-w-[800px]">
             {/* 表头 */}
             <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-900 font-semibold text-sm text-gray-700">
               <div className="col-span-2">投递日期</div>
@@ -456,6 +457,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
                 </div>
               </div>
             ))}
+            </div>
           </div>
         )}
       </div>
@@ -469,7 +471,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white border-2 border-gray-900 p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]"
+            className="bg-white border-2 border-gray-900 p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-md:p-4 max-md:w-[94vw] max-md:max-h-[88vh]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-6">
@@ -486,7 +488,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
 
             <div className="space-y-4">
               {/* 简历选择 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1 max-md:gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     使用简历 *
@@ -523,7 +525,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
               </div>
 
               {/* 公司和职位 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1 max-md:gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     公司名称 *
@@ -580,7 +582,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
               </div>
 
               {/* 投递日期和状态 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1 max-md:gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     投递日期 *
@@ -609,7 +611,7 @@ export default function JobApplicationsPage({ userId, onBack }: Props) {
               </div>
 
               {/* 当前阶段和薪资 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1 max-md:gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     当前阶段

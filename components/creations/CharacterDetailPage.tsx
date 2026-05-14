@@ -145,7 +145,7 @@ export default function CharacterDetailPage({ character, onBack }: Props) {
 
   return (
     <div className="w-full h-full overflow-y-auto bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 max-md:px-4 max-md:py-5">
         {/* 头部导航 */}
         <div className="mb-6">
           <button
@@ -158,10 +158,10 @@ export default function CharacterDetailPage({ character, onBack }: Props) {
         </div>
 
         {/* 主内容区域 */}
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-3 gap-6 max-md:grid-cols-1 max-md:gap-4">
           {/* 左侧：角色信息卡片 */}
-          <div className="col-span-1">
-            <div className="bg-white border-2 border-gray-900 p-6 sticky top-6">
+          <div className="col-span-1 max-md:col-span-1">
+            <div className="bg-white border-2 border-gray-900 p-6 sticky top-6 max-md:p-4 max-md:static">
               {/* 头像 */}
               <div className="flex justify-center mb-4">
                 <div className="w-32 h-32 border-2 border-gray-900 bg-gray-100 flex items-center justify-center">
@@ -243,12 +243,12 @@ export default function CharacterDetailPage({ character, onBack }: Props) {
           </div>
 
           {/* 右侧：事件时间线 */}
-          <div className="col-span-2">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">经历的事件</h2>
+          <div className="col-span-2 max-md:col-span-1">
+            <div className="flex items-center justify-between mb-6 max-md:mb-4 max-md:flex-col max-md:items-stretch max-md:gap-2">
+              <h2 className="text-2xl font-bold text-gray-900 max-md:text-xl">经历的事件</h2>
               <button
                 onClick={() => setShowNewEvent(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white hover:bg-gray-800 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white hover:bg-gray-800 transition-colors max-md:justify-center max-md:text-sm"
               >
                 <Plus className="w-4 h-4" />
                 添加事件

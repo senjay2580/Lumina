@@ -194,9 +194,9 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
   return (
     <div className="w-full h-full flex flex-col bg-gray-50">
       {/* 顶部工具栏 */}
-      <div className="flex-shrink-0 bg-white border-b-2 border-gray-900 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      <div className="flex-shrink-0 bg-white border-b-2 border-gray-900 px-6 py-4 max-md:px-3 max-md:py-2">
+        <div className="flex items-center justify-between max-md:flex-col max-md:items-stretch max-md:gap-2">
+          <div className="flex items-center gap-4 max-md:gap-2">
             <button
               onClick={() => {
                 if (hasUnsavedChanges) {
@@ -215,8 +215,8 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             
             <div className="h-6 w-px bg-gray-300" />
             
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">{creation.title}</h1>
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-gray-900 max-md:text-base max-md:truncate">{creation.title}</h1>
               {currentVersion && (
                 <p className="text-sm text-gray-500">
                   {currentVersion.title} (v{currentVersion.version_number})
@@ -226,11 +226,11 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 max-md:gap-1.5 max-md:overflow-x-auto max-md:flex-nowrap">
             {/* 预览切换 */}
             <button
               onClick={() => setShowPreview(!showPreview)}
-              className="flex items-center gap-2 px-4 py-2 border-2 border-gray-300 hover:bg-gray-50 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 border-2 border-gray-300 hover:bg-gray-50 transition-colors max-md:px-2 max-md:py-1.5 max-md:text-xs max-md:shrink-0"
               title={showPreview ? '隐藏预览' : '显示预览'}
             >
               {showPreview ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -240,7 +240,7 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             {/* 版本管理 */}
             <button
               onClick={() => setShowVersionManager(true)}
-              className="flex items-center gap-2 px-4 py-2 border-2 border-gray-300 hover:bg-gray-50 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 border-2 border-gray-300 hover:bg-gray-50 transition-colors max-md:px-2 max-md:py-1.5 max-md:text-xs max-md:shrink-0"
             >
               <GitBranch className="w-4 h-4" />
               版本
@@ -250,7 +250,7 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             <button
               onClick={handleSave}
               disabled={!hasUnsavedChanges || saving}
-              className="flex items-center gap-2 px-6 py-2 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-2 px-6 py-2 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors max-md:px-3 max-md:py-1.5 max-md:text-xs max-md:shrink-0"
             >
               <Save className="w-4 h-4" />
               {saving ? '保存中...' : '保存'}
@@ -260,7 +260,7 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             <button
               onClick={handleExport}
               disabled={exporting}
-              className="flex items-center gap-2 px-4 py-2 border-2 border-gray-900 hover:bg-gray-900 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="flex items-center gap-2 px-4 py-2 border-2 border-gray-900 hover:bg-gray-900 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors max-md:px-2 max-md:py-1.5 max-md:text-xs max-md:shrink-0"
               title="导出为 HTML 文件，可在浏览器中打印为 PDF"
             >
               {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
@@ -271,9 +271,9 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
       </div>
 
       {/* 主内容区 */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden max-md:flex-col">
         {/* 左侧：编辑器 */}
-        <div className={`${showPreview ? 'w-1/2' : 'w-full'} overflow-y-auto border-r-2 border-gray-900 bg-white transition-all`}>
+        <div className={`${showPreview ? 'w-1/2' : 'w-full'} overflow-y-auto border-r-2 border-gray-900 bg-white transition-all max-md:w-full max-md:border-r-0 ${showPreview ? 'max-md:hidden' : ''}`}>
           <ResumeEditor
             data={resumeData}
             photoData={photoData}
@@ -284,7 +284,7 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
 
         {/* 右侧：预览（可缩放拖拽） */}
         {showPreview && (
-          <div className="w-1/2 bg-gray-100 relative">
+          <div className="w-1/2 bg-gray-100 relative max-md:w-full max-md:flex-1">
             <ResumePreviewCanvas
               data={resumeData}
               photoData={photoData}
@@ -310,7 +310,7 @@ export default function ResumeEditorPage({ creation, userId, onBack }: Props) {
             initial={{ x: 400 }}
             animate={{ x: 0 }}
             exit={{ x: 400 }}
-            className="w-full max-w-md h-full bg-white border-l-2 border-gray-900 p-6 overflow-y-auto"
+            className="w-full max-w-md h-full bg-white border-l-2 border-gray-900 p-6 overflow-y-auto max-md:p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-6">

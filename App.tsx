@@ -17,6 +17,8 @@ import { usePreloadData } from './lib/usePreloadData';
 import { clearUserCache } from './lib/cache';
 import { usePromptBrowser } from './lib/usePromptBrowser';
 import { useResourceViewer } from './lib/useResourceViewer';
+import { useMobile } from './lib/useMobile';
+import { applyServiceWorkerUpdate } from './lib/pwa';
 import { ResourceViewerWindow } from './shared/ResourceViewerWindow';
 import { Confirm, Modal, ToastContainer, useToast } from './shared';
 import * as promptApi from './lib/prompts';
@@ -82,6 +84,27 @@ const App: React.FC = () => {
   // 全局资源预览器状态
   const resourceViewer = useResourceViewer();
   const toast = useToast();
+
+  // 移动端：抽屉开关 + SW 更新提示
+  const isMobile = useMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [swUpdateAvailable, setSwUpdateAvailable] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setSwUpdateAvailable(true);
+    window.addEventListener('lumina:sw-update', handler);
+    return () => window.removeEventListener('lumina:sw-update', handler);
+  }, []);
+
+  // 切换页面后自动关闭移动端抽屉（兜底）
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [currentView]);
+
+  // 切回桌面端时强制关闭抽屉
+  useEffect(() => {
+    if (!isMobile) setMobileNavOpen(false);
+  }, [isMobile]);
 
   // 监听打开角色库事件
   useEffect(() => {
@@ -222,15 +245,34 @@ const App: React.FC = () => {
       <div className="absolute top-[30%] right-[-5%] w-[500px] h-[500px] bg-gradient-to-bl from-blue-400/6 to-purple-300/4 rounded-full blur-[100px] pointer-events-none" />
       <div className="absolute bottom-[-10%] left-[20%] w-[400px] h-[400px] bg-gradient-to-tr from-green-300/5 to-cyan-300/3 rounded-full blur-[80px] pointer-events-none" />
 
-      <Sidebar 
-        currentView={currentView} 
-        onViewChange={handleNavigate} 
+      <Sidebar
+        currentView={currentView}
+        onViewChange={handleNavigate}
         username={user.username}
         onLogout={() => setShowLogoutConfirm(true)}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
       />
 
-      <main className="flex-1 relative flex flex-col h-full overflow-hidden">
-        <div className="flex-1 overflow-hidden">
+      <main className="flex-1 relative flex flex-col h-full md:overflow-hidden min-w-0">
+        {/* 移动端顶栏 */}
+        <header className="md:hidden h-12 flex items-center justify-between px-3 border-b border-white/40 bg-white/60 backdrop-blur-md relative z-20 shrink-0">
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="打开菜单"
+            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-white/70 active:bg-white/90"
+          >
+            <svg className="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+          <span className="text-base font-semibold text-primary" style={{ fontFamily: "'Quicksand', sans-serif" }}>Lumina</span>
+          <div className="w-9 h-9" />
+        </header>
+
+        <div className="flex-1 overflow-hidden min-h-0">
           {currentView === 'HOME' && <HomePage username={user.username} onNavigate={handleNavigate} onOpenWorkflow={handleOpenWorkflow} />}
           {currentView === 'WORKFLOW' && <WorkflowEditor onBack={() => handleNavigate('HOME')} workflowId={selectedWorkflowId} onUnsavedChange={setWorkflowHasUnsaved} />}
           {currentView === 'PROMPTS' && <PromptManager promptBrowser={promptBrowser} />}
@@ -441,6 +483,37 @@ const App: React.FC = () => {
       </Modal>
 
       <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+
+      {/* PWA 新版本提示 */}
+      <AnimatePresence>
+        {swUpdateAvailable && (
+          <motion.div
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            className="fixed left-1/2 -translate-x-1/2 bottom-4 md:bottom-6 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-900/95 backdrop-blur text-white shadow-2xl border border-gray-700 max-w-[92vw]"
+          >
+            <svg className="w-5 h-5 text-primary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12a9 9 0 11-3-6.7L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+            <span className="text-sm">新版本已就绪</span>
+            <button
+              onClick={() => { setSwUpdateAvailable(false); applyServiceWorkerUpdate(); }}
+              className="ml-1 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-white text-sm font-medium transition-colors"
+            >
+              刷新
+            </button>
+            <button
+              onClick={() => setSwUpdateAvailable(false)}
+              className="text-gray-400 hover:text-white text-sm"
+              aria-label="稍后"
+            >
+              稍后
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Confirm
         isOpen={showLogoutConfirm}

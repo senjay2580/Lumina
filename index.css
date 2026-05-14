@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== Global base ===== */
+html, body, #root {
+  height: 100%;
+}
+body {
+  background-color: #FDFCF8;
+  color: #1A1A1A;
+  /* App handles scrolling on desktop; mobile allows native scroll */
+  overflow: hidden;
+}
+
+/* 移动端解锁滚动（App 容器内部自己控制） */
+@media (max-width: 767px) {
+  body {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: none;
+  }
+  /* PWA 安全区适配 */
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ===== Glass panels ===== */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #e5e5e5;
+  border-radius: 3px;
+}
+/* 触屏设备隐藏滚动条 */
+@media (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+/* ===== React Flow ===== */
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #FF6B00 !important;
+  stroke-width: 4px !important;
+}
+.react-flow__edge.selected {
+  filter: drop-shadow(0 0 6px rgba(255, 107, 0, 0.5));
+}
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3px;
+}
+
+/* ===== 移动端可点击区域最小 44x44 ===== */
+@media (max-width: 767px) {
+  button, a, [role="button"] {
+    min-height: 36px;
+  }
+}
+
+/* ===== iOS input zoom 防抖 ===== */
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px;
+  }
+}

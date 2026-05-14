@@ -52,6 +52,19 @@ import { HoverCard } from './HoverCard';
 import { ResourceItemMenu, ContextMenu, menuItemGenerators, MenuItem } from './ResourceItemMenu';
 
 
+// 格式化日期
+const formatDate = (dateStr: string) => {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+};
+
+// 判断日期是否是今天
+const isToday = (dateStr: string) => {
+  const date = new Date(dateStr);
+  const today = new Date();
+  return date.toDateString() === today.toDateString();
+};
+
 interface FolderViewProps {
   isOpen: boolean;
   onClose: () => void;
@@ -165,7 +178,7 @@ function SubFolderRow({
           )}
         </div>
         <div className="text-xs text-gray-400">
-          {new Date(folder.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+          {isToday(folder.created_at) ? '今天' : formatDate(folder.created_at)}
         </div>
         <div className="text-right" onClick={e => e.stopPropagation()}>
           <button 
@@ -423,7 +436,12 @@ export function FolderView({
       const [path, folders, items, count] = await Promise.all([
         getFolderPath(folderId),
         getSubFolders(folderId, userId),
-        getFolderResources(folderId, userId, { limit: PAGE_SIZE, offset: 0 }),
+        getFolderResources(folderId, userId, { 
+          limit: PAGE_SIZE, 
+          offset: 0,
+          sortBy: 'created_at',
+          sortOrder: sortAscending ? 'asc' : 'desc'
+        }),
         getFolderResourceCount(folderId, userId)
       ]);
       
@@ -453,7 +471,9 @@ export function FolderView({
       const offset = resources.length;
       const items = await getFolderResources(currentFolder.id, userId, { 
         limit: PAGE_SIZE, 
-        offset 
+        offset,
+        sortBy: 'created_at',
+        sortOrder: sortAscending ? 'asc' : 'desc'
       });
       
       setResources(prev => [...prev, ...items]);
@@ -463,7 +483,7 @@ export function FolderView({
     } finally {
       setIsLoadingMore(false);
     }
-  }, [currentFolder.id, userId, resources.length, totalResourceCount, hasNextPage, isLoadingMore]);
+  }, [currentFolder.id, userId, resources.length, totalResourceCount, hasNextPage, isLoadingMore, sortAscending]);
 
   // 监听滚动，实现无限加载
   useEffect(() => {
@@ -791,13 +811,8 @@ export function FolderView({
   });
   
   const sortedResources = [...resources].sort((a, b) => {
-    // 文章用 pub_date，其他用 created_at
-    const dateA = a.type === 'article' && a.metadata?.pub_date 
-      ? new Date(a.metadata.pub_date).getTime() 
-      : new Date(a.created_at).getTime();
-    const dateB = b.type === 'article' && b.metadata?.pub_date 
-      ? new Date(b.metadata.pub_date).getTime() 
-      : new Date(b.created_at).getTime();
+    const dateA = new Date(a.created_at).getTime();
+    const dateB = new Date(b.created_at).getTime();
     return sortAscending ? dateA - dateB : dateB - dateA;
   });
 
@@ -830,7 +845,7 @@ export function FolderView({
               willChange: isDragging || isResizing ? 'transform' : 'auto',
               transform: 'translate3d(0, 0, 0)', // 启用硬件加速
             }}
-            className={`flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200 ${
+            className={`flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200 max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-screen max-md:!rounded-none ${
               isDragging ? 'cursor-move' : ''
             }`}
           >
@@ -1024,7 +1039,7 @@ export function FolderView({
                   {/* 列表头部 */}
                   <div className="grid grid-cols-[1fr_100px_80px] gap-4 px-4 py-2 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 sticky top-0 z-10">
                     <div>名称</div>
-                    <div>日期</div>
+                    <div>创建时间</div>
                     <div className="text-right">操作</div>
                   </div>
                   {/* 列表内容 */}
@@ -1110,7 +1125,7 @@ export function FolderView({
                           )}
                         </div>
                         <div className="text-xs text-gray-400">
-                          {new Date(resource.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                          {isToday(resource.created_at) ? '今天' : formatDate(resource.created_at)}
                         </div>
                         <div className="flex items-center justify-end">
                           <ResourceItemMenu items={getResourceMenuItems(resource)} />
@@ -1135,7 +1150,7 @@ export function FolderView({
                 </div>
               ) : (
                 /* 网格视图 */
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 p-4">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 p-4 max-md:grid-cols-2 max-sm:grid-cols-2">
                   {/* 子文件夹 */}
                   {sortedSubFolders.map(sub => (
                     <SubFolderGridItem
