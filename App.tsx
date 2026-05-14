@@ -205,7 +205,7 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen w-full bg-background flex items-center justify-center">
+      <div className="min-h-screen max-md:min-h-[100dvh] w-full bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-14 h-14 animate-pulse">
             <svg className="w-full h-full" viewBox="0 0 24 24">
@@ -235,7 +235,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen w-full text-text overflow-hidden font-sans selection:bg-primary selection:text-white"
+    <div className="flex h-screen max-md:h-[100dvh] w-full text-text overflow-hidden font-sans selection:bg-primary selection:text-white"
       style={{
         background: 'linear-gradient(135deg, #FDFCF8 0%, #FFF9F5 25%, #FDFCF8 50%, #F8FAFF 75%, #FDFCF8 100%)'
       }}

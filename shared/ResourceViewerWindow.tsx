@@ -548,7 +548,7 @@ export const ResourceViewerWindow: React.FC<Props> = ({
         height: size.height,
         zIndex: 1000,
       }}
-      className={`flex flex-col rounded-xl shadow-2xl overflow-hidden max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-screen max-md:!rounded-none ${
+      className={`flex flex-col rounded-xl shadow-2xl overflow-hidden max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-[100dvh] max-md:!rounded-none ${
         isDark
           ? 'bg-[#1e1e1e] border border-[#3c3c3c]'
           : 'bg-white border border-gray-200'

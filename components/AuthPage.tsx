@@ -813,7 +813,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 relative overflow-hidden font-sans"
+    <div className="min-h-screen max-md:min-h-[100dvh] w-full flex items-center justify-center p-4 relative overflow-hidden font-sans"
       style={{
         background: 'linear-gradient(135deg, #FFF8F0 0%, #FFF5EB 25%, #FFFAF5 50%, #FFF0E5 75%, #FFFAF5 100%)'
       }}

@@ -9,21 +9,14 @@ html, body, #root {
 body {
   background-color: #FDFCF8;
   color: #1A1A1A;
-  /* App handles scrolling on desktop; mobile allows native scroll */
+  /* App 自己处理滚动（桌面 + 移动一致） */
   overflow: hidden;
 }
 
-/* 移动端解锁滚动（App 容器内部自己控制） */
+/* 移动端：禁止 body 滚动（防止双滚动条），由 App 内部容器滚动 */
 @media (max-width: 767px) {
   body {
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: none;
-  }
-  /* PWA 安全区适配 */
-  body {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 

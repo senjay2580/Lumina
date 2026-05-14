@@ -1190,7 +1190,7 @@ export const RoleLibraryBrowser: React.FC<RoleLibraryBrowserProps> = ({
           ...getAnimationStyles(),
           transition: 'opacity 0.3s ease, transform 0.3s ease',
         }}
-        className="bg-white shadow-2xl overflow-hidden flex flex-col max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-screen max-md:!rounded-none"
+        className="bg-white shadow-2xl overflow-hidden flex flex-col max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-[100dvh] max-md:!rounded-none"
       >
         {/* 标题栏 */}
         <div

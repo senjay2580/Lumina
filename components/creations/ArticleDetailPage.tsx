@@ -2397,22 +2397,16 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             box-shadow: none;
           }
 
-          /* 分隔线：Medium 三点风 */
+          /* 分隔线：与 PC 一致的细灰横线 */
           .article-prose hr {
             border: 0;
+            height: 1px;
+            background: var(--rule);
             margin: 2.4em auto;
-            width: 100%;
-            height: 24px;
-            background: none;
-            color: #6B6B6B;
-            text-align: center;
-            line-height: 24px;
-            font-size: 24px;
-            letter-spacing: 0.8em;
+            width: 60%;
           }
           .article-prose hr::before {
-            content: '· · ·';
-            color: #6B6B6B;
+            content: none;
           }
 
           /* 表格：横向滚动 + 紧凑 */

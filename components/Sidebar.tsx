@@ -108,7 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
     <aside
       className={`flex flex-col shrink-0 transition-all duration-300 ease-in-out
         md:relative md:translate-x-0 ${isCollapsed ? 'md:w-16' : 'md:w-56'}
-        max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-72 max-md:h-screen max-md:z-50
+        max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-72 max-md:h-[100dvh] max-md:z-50
         ${mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}`}
       style={{
         background: 'linear-gradient(180deg, rgba(255,107,0,0.03) 0%, rgba(255,255,255,0.8) 30%, rgba(147,197,253,0.05) 100%)',

@@ -845,7 +845,7 @@ export function FolderView({
               willChange: isDragging || isResizing ? 'transform' : 'auto',
               transform: 'translate3d(0, 0, 0)', // 启用硬件加速
             }}
-            className={`flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200 max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-screen max-md:!rounded-none ${
+            className={`flex flex-col rounded-xl shadow-2xl overflow-hidden bg-white border border-gray-200 max-md:!left-0 max-md:!top-0 max-md:!w-screen max-md:!h-[100dvh] max-md:!rounded-none ${
               isDragging ? 'cursor-move' : ''
             }`}
           >
