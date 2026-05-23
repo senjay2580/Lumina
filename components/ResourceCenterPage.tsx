@@ -4623,6 +4623,18 @@ function GitHubFollowingModal({
   const [seedHint, setSeedHint] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'stars' | 'repos' | 'activity'>('stars');
+  // 移动端：左栏折叠（仅显示头像）。选中用户时自动折叠让出空间给右侧详情。
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isMobile = window.matchMedia('(max-width: 767px)').matches;
+    if (!isMobile) {
+      setLeftCollapsed(false);
+      return;
+    }
+    setLeftCollapsed(!!selectedUser);
+  }, [selectedUser]);
 
   // 各 Tab 搜索关键字
   const [starsSearch, setStarsSearch] = useState('');
@@ -4957,9 +4969,10 @@ function GitHubFollowingModal({
         {/* 内容区 */}
         <div className="flex-1 flex overflow-hidden">
           {/* 左侧：关注列表 */}
-          <div className="w-72 border-r border-gray-100 flex flex-col">
-            {/* 添加用户 */}
-            <div className="p-4 border-b border-gray-100">
+          <div className={`md:w-72 border-r border-gray-100 flex flex-col transition-[width] duration-200
+            ${leftCollapsed ? 'max-md:w-[68px]' : 'max-md:flex-1 max-md:w-full'}`}>
+            {/* 添加用户 — 折叠时隐藏 */}
+            <div className={`p-4 border-b border-gray-100 ${leftCollapsed ? 'max-md:hidden' : ''}`}>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -4999,10 +5012,21 @@ function GitHubFollowingModal({
               )}
             </div>
 
+            {/* 折叠模式顶部：展开按钮（仅移动端折叠时显示） */}
+            {leftCollapsed && (
+              <button
+                onClick={() => setLeftCollapsed(false)}
+                className="hidden max-md:flex h-12 w-full items-center justify-center border-b border-gray-100 hover:bg-gray-50 text-gray-400 hover:text-gray-700 transition-colors shrink-0"
+                aria-label="展开关注列表"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            )}
+
             {/* 用户列表 */}
-            <div className="flex-1 overflow-y-auto p-2">
+            <div className={`flex-1 overflow-y-auto ${leftCollapsed ? 'max-md:p-1.5' : 'p-2'}`}>
               {followingUsers.length === 0 ? (
-                <div className="text-center py-8 text-gray-400 text-sm">
+                <div className={`text-center py-8 text-gray-400 text-sm ${leftCollapsed ? 'max-md:hidden' : ''}`}>
                   <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
                   <p>还没有关注任何用户</p>
                   <p className="text-xs mt-1">输入用户名开始关注</p>
@@ -5012,35 +5036,37 @@ function GitHubFollowingModal({
                   {followingUsers.map(username => {
                     const user = usersData.get(username);
                     const isSelected = selectedUser === username;
-                    
+
                     return (
                       <div
                         key={username}
-                        className={`group flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all ${
-                          isSelected 
-                            ? 'bg-purple-50 border border-purple-200' 
-                            : 'hover:bg-gray-50 border border-transparent'
-                        }`}
+                        className={`group flex items-center gap-3 rounded-xl cursor-pointer transition-all
+                          ${leftCollapsed ? 'max-md:p-1 max-md:justify-center max-md:gap-0 p-2.5' : 'p-2.5'}
+                          ${isSelected
+                            ? 'bg-purple-50 border border-purple-200'
+                            : 'hover:bg-gray-50 border border-transparent'}`}
                         onClick={() => handleViewUser(username)}
+                        title={leftCollapsed ? `${user?.name || username} (@${username})` : undefined}
                       >
                         {user ? (
                           <img
                             src={user.avatar_url}
                             alt={username}
-                            className="w-10 h-10 rounded-full"
+                            className="w-10 h-10 rounded-full shrink-0"
                           />
                         ) : (
-                          <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                          <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
                             <Github className="w-5 h-5 text-gray-400" />
                           </div>
                         )}
-                        <div className="flex-1 min-w-0">
+                        <div className={`flex-1 min-w-0 ${leftCollapsed ? 'max-md:hidden' : ''}`}>
                           <div className="font-medium text-gray-900 text-sm truncate">
                             {user?.name || username}
                           </div>
                           <div className="text-xs text-gray-500 truncate">@{username}</div>
                         </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className={`items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex max-md:opacity-100
+                          ${leftCollapsed ? 'max-md:hidden' : ''}`}>
                           <Tooltip content="查看详情">
                             <button
                               onClick={e => { e.stopPropagation(); handleViewUser(username); }}
@@ -5066,8 +5092,9 @@ function GitHubFollowingModal({
             </div>
           </div>
 
-          {/* 右侧：用户详情 */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          {/* 右侧：用户详情 — 移动端仅在左栏折叠（选中用户）时显示 */}
+          <div className={`flex-1 flex flex-col overflow-hidden
+            ${leftCollapsed ? 'max-md:flex' : 'max-md:hidden'}`}>
             {selectedUser ? (
               <>
                 {/* 用户信息卡片 */}
@@ -5077,11 +5104,11 @@ function GitHubFollowingModal({
                       <img
                         src={usersData.get(selectedUser)!.avatar_url}
                         alt={selectedUser}
-                        className="w-16 h-16 rounded-2xl shadow-md"
+                        className="w-16 h-16 rounded-2xl shadow-md max-md:w-12 max-md:h-12"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-lg font-semibold text-gray-900">
+                          <h3 className="text-lg font-semibold text-gray-900 max-md:text-base">
                             {usersData.get(selectedUser)!.name || selectedUser}
                           </h3>
                           <a
