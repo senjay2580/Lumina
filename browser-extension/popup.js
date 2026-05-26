@@ -279,10 +279,12 @@ function showDetailPage(prompt) {
     tagsContainer.innerHTML = '';
   }
   
-  // 渲染内容（支持 MD）
-  const content = stripHtml(prompt.content);
-  document.getElementById('detail-content').innerHTML = renderMarkdown(content);
-  
+  // 渲染内容：主站 Tiptap 存的是 HTML，直接显示保留格式；
+  // 若是纯文本（无标签），转义后用 markdown 解析以保留换行/列表/粗体
+  const raw = prompt.content || '';
+  const html = looksLikeHtml(raw) ? raw : renderMarkdown(raw);
+  document.getElementById('detail-content').innerHTML = html;
+
   loginPage.classList.add('hidden');
   mainPage.classList.add('hidden');
   detailPage.classList.remove('hidden');
@@ -624,6 +626,11 @@ function stripHtml(html) {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
   return tmp.textContent || tmp.innerText || '';
+}
+
+// 判断是否为 HTML（含至少一个标签）
+function looksLikeHtml(s) {
+  return typeof s === 'string' && /<[a-z][\s\S]*>/i.test(s);
 }
 
 function escapeHtml(str) {

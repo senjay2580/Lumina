@@ -630,14 +630,9 @@ body {
 
 /* ============================================
    编辑 / 新建页
+   （根容器 .page 已提供 flex column，不要再用 #edit-page，
+    否则 ID 优先级会盖掉 .page.hidden 的 display:none）
    ============================================ */
-#edit-page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
 .edit-mode-label {
   font-size: 14px;
   font-weight: 600;
