@@ -12,6 +12,8 @@ let prompts = [];
 let categories = [];
 let selectedCategory = 'ALL';
 let currentPrompt = null;
+// 编辑/新建：null = 不在编辑态；'new' = 新建；prompt 对象 = 编辑现有
+let editingPrompt = null;
 
 // DOM 元素
 const loginPage = document.getElementById('login-page');
@@ -137,32 +139,46 @@ async function checkAuth() {
 function setupEventListeners() {
   // 登录表单
   loginForm.addEventListener('submit', handleLogin);
-  
+
   // 退出登录
   document.getElementById('logout-btn').addEventListener('click', handleLogout);
-  
+
   // 搜索
   searchInput.addEventListener('input', renderPrompts);
-  
+
+  // 新建按钮
+  document.getElementById('new-btn').addEventListener('click', () => showEditPage(null));
+
   // 返回按钮
   document.getElementById('back-btn').addEventListener('click', () => {
     showMainPage();
   });
-  
+
+  // 详情页编辑按钮
+  document.getElementById('detail-edit-btn').addEventListener('click', () => {
+    if (currentPrompt) showEditPage(currentPrompt);
+  });
+
   // 详情页复制按钮
   document.getElementById('detail-copy-btn').addEventListener('click', async () => {
     if (!currentPrompt) return;
     const content = stripHtml(currentPrompt.content);
     await navigator.clipboard.writeText(content);
-    
+
     const btn = document.getElementById('detail-copy-btn');
+    const originalText = btn.textContent;
     btn.textContent = '已复制';
     btn.classList.add('copied');
     setTimeout(() => {
-      btn.textContent = '复制';
+      btn.textContent = originalText;
       btn.classList.remove('copied');
     }, 1500);
   });
+
+  // 编辑页：返回 / 取消 / 保存
+  document.getElementById('edit-back-btn').addEventListener('click', cancelEdit);
+  document.getElementById('edit-cancel-btn').addEventListener('click', cancelEdit);
+  document.getElementById('edit-save-btn').addEventListener('click', saveEdit);
 }
 
 // 处理登录
@@ -356,7 +372,14 @@ function renderPrompts() {
       <div class="prompt-card" data-id="${prompt.id}">
         <div class="prompt-card-header">
           <span class="prompt-category cat-${categoryColor}">${categoryName}</span>
-          <button class="prompt-copy-btn" data-content="${escapeHtml(content)}">复制</button>
+          <div class="prompt-card-actions">
+            <button class="prompt-edit-btn" data-id="${prompt.id}" title="编辑">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+            </button>
+            <button class="prompt-copy-btn" data-content="${escapeHtml(content)}">复制</button>
+          </div>
         </div>
         <div class="prompt-title">${escapeHtml(prompt.title)}</div>
         <div class="prompt-content">${escapeHtml(content)}</div>
@@ -368,14 +391,14 @@ function renderPrompts() {
       </div>
     `;
   }).join('');
-  
+
   // 复制按钮事件
   promptsList.querySelectorAll('.prompt-copy-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const content = btn.dataset.content;
       await navigator.clipboard.writeText(content);
-      
+
       btn.textContent = '已复制';
       btn.classList.add('copied');
       setTimeout(() => {
@@ -384,7 +407,17 @@ function renderPrompts() {
       }, 1500);
     });
   });
-  
+
+  // 编辑按钮事件
+  promptsList.querySelectorAll('.prompt-edit-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const promptId = btn.dataset.id;
+      const prompt = prompts.find(p => p.id === promptId);
+      if (prompt) showEditPage(prompt);
+    });
+  });
+
   // 卡片点击 - 打开详情页
   promptsList.querySelectorAll('.prompt-card').forEach(card => {
     card.addEventListener('click', () => {
@@ -395,6 +428,195 @@ function renderPrompts() {
       }
     });
   });
+}
+
+// ============================================
+// 编辑 / 新建
+// ============================================
+function showEditPage(promptOrNull) {
+  editingPrompt = promptOrNull || 'new';
+
+  const titleInput = document.getElementById('edit-title');
+  const categorySelect = document.getElementById('edit-category');
+  const contentArea = document.getElementById('edit-content');
+  const modeLabel = document.getElementById('edit-mode-label');
+  const errorEl = document.getElementById('edit-error');
+  errorEl.textContent = '';
+
+  // 填充分类下拉（含"未分类"）
+  categorySelect.innerHTML =
+    '<option value="">未分类</option>' +
+    categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+
+  if (promptOrNull && typeof promptOrNull === 'object') {
+    modeLabel.textContent = '编辑提示词';
+    titleInput.value = promptOrNull.title || '';
+    categorySelect.value = promptOrNull.category_id || '';
+    contentArea.value = htmlToMarkdownLite(promptOrNull.content || '');
+  } else {
+    modeLabel.textContent = '新建提示词';
+    titleInput.value = '';
+    categorySelect.value = '';
+    contentArea.value = '';
+  }
+
+  loginPage.classList.add('hidden');
+  mainPage.classList.add('hidden');
+  detailPage.classList.add('hidden');
+  document.getElementById('edit-page').classList.remove('hidden');
+
+  setTimeout(() => titleInput.focus(), 50);
+}
+
+function cancelEdit() {
+  document.getElementById('edit-page').classList.add('hidden');
+  if (editingPrompt && typeof editingPrompt === 'object') {
+    showDetailPage(editingPrompt);
+  } else {
+    showMainPage();
+  }
+  editingPrompt = null;
+}
+
+async function saveEdit() {
+  const titleInput = document.getElementById('edit-title');
+  const categorySelect = document.getElementById('edit-category');
+  const contentArea = document.getElementById('edit-content');
+  const errorEl = document.getElementById('edit-error');
+  const saveBtn = document.getElementById('edit-save-btn');
+
+  const title = titleInput.value.trim();
+  const mdContent = contentArea.value;
+  const categoryId = categorySelect.value || null;
+
+  if (!title) { errorEl.textContent = '标题不能为空'; titleInput.focus(); return; }
+  if (!mdContent.trim()) { errorEl.textContent = '内容不能为空'; contentArea.focus(); return; }
+  errorEl.textContent = '';
+
+  saveBtn.disabled = true;
+  saveBtn.querySelector('span').textContent = '保存中...';
+  saveBtn.querySelector('.spinner').classList.remove('hidden');
+
+  try {
+    const htmlContent = renderMarkdown(mdContent);
+    const isEditing = editingPrompt && typeof editingPrompt === 'object';
+    let saved;
+    if (isEditing) {
+      saved = await updatePromptApi(editingPrompt.id, {
+        title, content: htmlContent, category_id: categoryId
+      });
+    } else {
+      saved = await createPromptApi({
+        title, content: htmlContent, category_id: categoryId
+      });
+    }
+
+    // 刷新内存列表
+    if (isEditing) {
+      const idx = prompts.findIndex(p => p.id === editingPrompt.id);
+      if (idx >= 0) prompts[idx] = { ...prompts[idx], ...saved };
+    } else if (saved) {
+      prompts.unshift(saved);
+    }
+
+    document.getElementById('edit-page').classList.add('hidden');
+    if (isEditing && saved) {
+      showDetailPage(saved);
+    } else {
+      showMainPage();
+      renderPrompts();
+    }
+    editingPrompt = null;
+  } catch (err) {
+    console.error('[Lumina] 保存失败:', err);
+    errorEl.textContent = (err && err.message) || '保存失败，请稍后再试';
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.querySelector('span').textContent = '保存';
+    saveBtn.querySelector('.spinner').classList.add('hidden');
+  }
+}
+
+// ============================================
+// Supabase CRUD（写入）
+// ============================================
+async function createPromptApi(fields) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/prompts`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify({
+      user_id: currentUser.id,
+      title: fields.title,
+      content: fields.content,
+      category_id: fields.category_id || null,
+      tags: []
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`创建失败 (${res.status}) ${text.slice(0, 120)}`);
+  }
+  const arr = await res.json();
+  return Array.isArray(arr) ? arr[0] : arr;
+}
+
+async function updatePromptApi(id, fields) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/prompts?id=eq.${id}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify({
+      title: fields.title,
+      content: fields.content,
+      category_id: fields.category_id || null,
+      updated_at: new Date().toISOString()
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`更新失败 (${res.status}) ${text.slice(0, 120)}`);
+  }
+  const arr = await res.json();
+  return Array.isArray(arr) ? arr[0] : arr;
+}
+
+// HTML → 极简 markdown 反向（编辑回填用，尽量保留标记可读性）
+function htmlToMarkdownLite(html) {
+  if (!html) return '';
+  if (!/<[a-z]/i.test(html)) return html;
+  let s = html;
+  s = s.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
+  s = s.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
+  s = s.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
+  s = s.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
+  s = s.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, inner) =>
+    '\n' + inner.replace(/<[^>]+>/g, '').split(/\n/).map(l => l.trim() ? '> ' + l.trim() : '').join('\n') + '\n');
+  s = s.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '\n```\n$1\n```\n');
+  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
+  s = s.replace(/<hr\s*\/?>/gi, '\n---\n');
+  s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
+  s = s.replace(/<\/?(ul|ol)[^>]*>/gi, '\n');
+  s = s.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
+  s = s.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
+  s = s.replace(/<a [^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+  s = s.replace(/<\/p>\s*<p[^>]*>/gi, '\n\n');
+  s = s.replace(/<\/?p[^>]*>/gi, '');
+  s = s.replace(/<[^>]+>/g, '');
+  const tmp = document.createElement('textarea');
+  tmp.innerHTML = s;
+  s = tmp.value;
+  s = s.replace(/\n{3,}/g, '\n\n').trim();
+  return s;
 }
 
 // 工具函数

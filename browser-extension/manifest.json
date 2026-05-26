@@ -34,16 +34,5 @@
   ],
   "background": {
     "service_worker": "background.js"
-  },
-  "commands": {
-    "toggle-panel": {
-      "suggested_key": {
-        "default": "Alt+Shift+L",
-        "windows": "Alt+Shift+L",
-        "mac": "Alt+Shift+L",
-        "linux": "Alt+Shift+L"
-      },
-      "description": "打开/关闭提示词面板"
-    }
   }
 }

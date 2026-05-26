@@ -179,6 +179,37 @@ body {
   width: 100%;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  padding: 0;
+}
+.btn-icon:hover {
+  background: #fff0e5;
+  color: #ff6b00;
+}
+
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 #user-name {
   font-weight: 600;
   font-size: 14px;
@@ -310,6 +341,31 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.prompt-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prompt-edit-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: #f1f5f9;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  transition: all 0.15s;
+}
+.prompt-edit-btn:hover {
+  background: #fff0e5;
+  color: #ff6b00;
 }
 
 .prompt-category {
@@ -570,4 +626,135 @@ body {
   border: none;
   border-top: 1px solid #e2e8f0;
   margin: 1em 0;
+}
+
+/* ============================================
+   编辑 / 新建页
+   ============================================ */
+#edit-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.edit-mode-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-left: 4px;
+}
+
+.edit-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 8px;
+  min-height: 0;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.edit-field-grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.edit-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.edit-hint {
+  font-size: 10px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+
+.edit-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+.edit-input:focus {
+  border-color: #ff6b00;
+  box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.12);
+}
+
+select.edit-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  padding-right: 28px;
+}
+
+.edit-textarea {
+  width: 100%;
+  flex: 1;
+  min-height: 180px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+  resize: none;
+  font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+.edit-textarea:focus {
+  border-color: #ff6b00;
+  box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.12);
+}
+
+.edit-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+  margin-top: 4px;
+}
+
+.btn-secondary {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
