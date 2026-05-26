@@ -17,6 +17,8 @@
   let searchQuery = '';
   let currentPrompt = null;
   let isResizing = false;
+  // 编辑/新建：null = 列表/详情态；'new' = 新建空表单；prompt 对象 = 编辑现有
+  let editingPrompt = null;
 
   // 监听来自 popup 和 background 的消息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -142,7 +144,14 @@
             </svg>
             <span>Lumina 提示词</span>
           </div>
-          <button class="lumina-panel-close" id="lumina-close-btn">×</button>
+          <div class="lumina-panel-header-actions">
+            <button class="lumina-panel-new" id="lumina-new-btn" title="新建提示词">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+            <button class="lumina-panel-close" id="lumina-close-btn">×</button>
+          </div>
         </div>
         <div class="lumina-panel-search">
           <svg class="lumina-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -179,6 +188,47 @@
             </svg>
             插入
           </button>
+          <button class="lumina-detail-btn icon-only" id="lumina-detail-edit" title="编辑">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 编辑 / 新建视图 -->
+      <div class="lumina-edit-view" id="lumina-edit-view">
+        <div class="lumina-detail-header">
+          <button class="lumina-back-btn" id="lumina-edit-back">←</button>
+          <div class="lumina-detail-title-wrap">
+            <div class="lumina-detail-title" id="lumina-edit-mode-label">新建提示词</div>
+          </div>
+        </div>
+        <div class="lumina-edit-body">
+          <div class="lumina-edit-field">
+            <label class="lumina-edit-label">标题</label>
+            <input type="text" class="lumina-edit-input" id="lumina-edit-title" placeholder="给提示词起个名字" maxlength="120"/>
+          </div>
+          <div class="lumina-edit-field">
+            <label class="lumina-edit-label">分类</label>
+            <select class="lumina-edit-input" id="lumina-edit-category"></select>
+          </div>
+          <div class="lumina-edit-field lumina-edit-field-grow">
+            <label class="lumina-edit-label">
+              内容 <span class="lumina-edit-hint">支持 Markdown，保存时自动转富文本</span>
+            </label>
+            <textarea class="lumina-edit-textarea" id="lumina-edit-content" placeholder="# 提示词正文&#10;&#10;支持 **粗体**、*斜体*、\`代码\`、列表、引用、链接..."></textarea>
+          </div>
+          <div class="lumina-edit-error" id="lumina-edit-error"></div>
+        </div>
+        <div class="lumina-detail-footer">
+          <button class="lumina-detail-btn secondary" id="lumina-edit-cancel">取消</button>
+          <button class="lumina-detail-btn primary" id="lumina-edit-save">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+            </svg>
+            保存
+          </button>
         </div>
       </div>
     `;
@@ -187,6 +237,7 @@
 
     // 事件绑定
     document.getElementById('lumina-close-btn').addEventListener('click', closePanel);
+    document.getElementById('lumina-new-btn').addEventListener('click', () => showEditView(null));
     document.getElementById('lumina-search').addEventListener('input', (e) => {
       searchQuery = e.target.value.toLowerCase();
       renderPromptsList();
@@ -194,6 +245,12 @@
     document.getElementById('lumina-back-btn').addEventListener('click', showListView);
     document.getElementById('lumina-detail-copy').addEventListener('click', copyCurrentPrompt);
     document.getElementById('lumina-detail-insert').addEventListener('click', insertCurrentPrompt);
+    document.getElementById('lumina-detail-edit').addEventListener('click', () => {
+      if (currentPrompt) showEditView(currentPrompt);
+    });
+    document.getElementById('lumina-edit-back').addEventListener('click', cancelEdit);
+    document.getElementById('lumina-edit-cancel').addEventListener('click', cancelEdit);
+    document.getElementById('lumina-edit-save').addEventListener('click', saveEdit);
 
     // 拖拽调整宽度
     setupResize();
@@ -238,7 +295,9 @@
   function showListView() {
     document.getElementById('lumina-list-view').classList.remove('hidden');
     document.getElementById('lumina-detail-view').classList.remove('active');
+    document.getElementById('lumina-edit-view').classList.remove('active');
     currentPrompt = null;
+    editingPrompt = null;
   }
 
   // 显示详情视图
@@ -328,6 +387,11 @@
           <div class="lumina-prompt-header">
             <span class="lumina-prompt-cat lumina-cat-${categoryColor}">${escapeHtml(categoryName)}</span>
             <div class="lumina-prompt-actions">
+              <button class="lumina-btn-edit" data-id="${prompt.id}" title="编辑">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                </svg>
+              </button>
               <button class="lumina-btn-copy" data-content="${escapeHtml(content)}" title="复制">📋</button>
             </div>
           </div>
@@ -350,11 +414,229 @@
         showNotification('已复制到剪贴板');
       });
 
+      // 编辑按钮
+      item.querySelector('.lumina-btn-edit').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (prompt) showEditView(prompt);
+      });
+
       // 点击卡片打开详情
       item.addEventListener('click', () => {
         if (prompt) showDetailView(prompt);
       });
     });
+  }
+
+  // ============================================================
+  // 编辑 / 新建
+  // ============================================================
+
+  // 进入编辑视图。promptOrNull = null 表示新建；传 prompt 表示编辑现有
+  function showEditView(promptOrNull) {
+    editingPrompt = promptOrNull || 'new';
+
+    document.getElementById('lumina-list-view').classList.add('hidden');
+    document.getElementById('lumina-detail-view').classList.remove('active');
+    document.getElementById('lumina-edit-view').classList.add('active');
+
+    const titleInput = document.getElementById('lumina-edit-title');
+    const categorySelect = document.getElementById('lumina-edit-category');
+    const contentArea = document.getElementById('lumina-edit-content');
+    const modeLabel = document.getElementById('lumina-edit-mode-label');
+    const errorEl = document.getElementById('lumina-edit-error');
+    errorEl.textContent = '';
+
+    // 填充分类下拉（含「未分类」）
+    categorySelect.innerHTML =
+      '<option value="">未分类</option>' +
+      categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+
+    if (promptOrNull && typeof promptOrNull === 'object') {
+      // 编辑现有
+      modeLabel.textContent = '编辑提示词';
+      titleInput.value = promptOrNull.title || '';
+      categorySelect.value = promptOrNull.category_id || '';
+      // HTML → 极简 markdown 反向（粗体/斜体/代码/标题/列表/链接），保留可读性
+      contentArea.value = htmlToMarkdownLite(promptOrNull.content || '');
+    } else {
+      // 新建
+      modeLabel.textContent = '新建提示词';
+      titleInput.value = '';
+      categorySelect.value = '';
+      contentArea.value = '';
+    }
+
+    setTimeout(() => titleInput.focus(), 50);
+  }
+
+  function cancelEdit() {
+    if (editingPrompt && typeof editingPrompt === 'object') {
+      // 编辑现有 → 回详情
+      showDetailView(editingPrompt);
+    } else {
+      // 新建 → 回列表
+      showListView();
+    }
+    editingPrompt = null;
+  }
+
+  async function saveEdit() {
+    const titleInput = document.getElementById('lumina-edit-title');
+    const categorySelect = document.getElementById('lumina-edit-category');
+    const contentArea = document.getElementById('lumina-edit-content');
+    const errorEl = document.getElementById('lumina-edit-error');
+    const saveBtn = document.getElementById('lumina-edit-save');
+
+    const title = titleInput.value.trim();
+    const mdContent = contentArea.value;
+    const categoryId = categorySelect.value || null;
+
+    if (!title) {
+      errorEl.textContent = '标题不能为空';
+      titleInput.focus();
+      return;
+    }
+    if (!mdContent.trim()) {
+      errorEl.textContent = '内容不能为空';
+      contentArea.focus();
+      return;
+    }
+    errorEl.textContent = '';
+    saveBtn.disabled = true;
+    saveBtn.classList.add('is-loading');
+
+    try {
+      const htmlContent = renderMarkdown(mdContent);
+      const isEditing = editingPrompt && typeof editingPrompt === 'object';
+      let saved;
+      if (isEditing) {
+        saved = await updatePromptApi(editingPrompt.id, {
+          title,
+          content: htmlContent,
+          category_id: categoryId
+        });
+      } else {
+        saved = await createPromptApi({
+          title,
+          content: htmlContent,
+          category_id: categoryId
+        });
+      }
+
+      // 刷新内存列表（不重新拉网络）
+      if (isEditing) {
+        const idx = prompts.findIndex(p => p.id === editingPrompt.id);
+        if (idx >= 0) prompts[idx] = { ...prompts[idx], ...saved };
+      } else if (saved) {
+        prompts.unshift(saved);
+      }
+
+      showNotification(isEditing ? '已保存修改' : '已创建提示词');
+      editingPrompt = null;
+
+      if (isEditing && saved) {
+        showDetailView(saved);
+      } else {
+        showListView();
+        renderPromptsList();
+      }
+    } catch (err) {
+      console.error('[Lumina] 保存失败:', err);
+      errorEl.textContent = (err && err.message) || '保存失败，请稍后再试';
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('is-loading');
+    }
+  }
+
+  // ---- Supabase REST API: prompts CRUD ----
+  async function createPromptApi(fields) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/prompts`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify({
+        user_id: currentUser.id,
+        title: fields.title,
+        content: fields.content,
+        category_id: fields.category_id || null,
+        tags: []
+      })
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`创建失败 (${res.status}) ${text.slice(0, 120)}`);
+    }
+    const arr = await res.json();
+    return Array.isArray(arr) ? arr[0] : arr;
+  }
+
+  async function updatePromptApi(id, fields) {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/prompts?id=eq.${id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify({
+          title: fields.title,
+          content: fields.content,
+          category_id: fields.category_id || null,
+          updated_at: new Date().toISOString()
+        })
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`更新失败 (${res.status}) ${text.slice(0, 120)}`);
+    }
+    const arr = await res.json();
+    return Array.isArray(arr) ? arr[0] : arr;
+  }
+
+  // HTML → 极简 markdown 反向（仅用于编辑回填，尽量保留可读结构）
+  function htmlToMarkdownLite(html) {
+    if (!html) return '';
+    // 不含标签 → 当作纯文本直接返回
+    if (!/<[a-z]/i.test(html)) return html;
+    let s = html;
+    // 块级元素先转换
+    s = s.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
+    s = s.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
+    s = s.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
+    s = s.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
+    s = s.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, inner) =>
+      '\n' + inner.replace(/<[^>]+>/g, '').split(/\n/).map(l => l.trim() ? '> ' + l.trim() : '').join('\n') + '\n');
+    s = s.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '\n```\n$1\n```\n');
+    s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
+    s = s.replace(/<hr\s*\/?>/gi, '\n---\n');
+    // 列表
+    s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
+    s = s.replace(/<\/?(ul|ol)[^>]*>/gi, '\n');
+    // 行内
+    s = s.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
+    s = s.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
+    s = s.replace(/<a [^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+    s = s.replace(/<br\s*\/?>/gi, '\n');
+    s = s.replace(/<\/p>\s*<p[^>]*>/gi, '\n\n');
+    s = s.replace(/<\/?p[^>]*>/gi, '');
+    // 清掉其他标签
+    s = s.replace(/<[^>]+>/g, '');
+    // 实体解码（与 stripHtml 同理用浏览器解一遍）
+    const tmp = document.createElement('textarea');
+    tmp.innerHTML = s;
+    s = tmp.value;
+    // 压缩连续空行
+    s = s.replace(/\n{3,}/g, '\n\n').trim();
+    return s;
   }
 
   // Markdown 渲染
