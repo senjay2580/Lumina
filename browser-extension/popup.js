@@ -237,7 +237,11 @@ async function hashPassword(password) {
 
 // 退出登录
 async function handleLogout() {
+  const key = cacheKey();
   currentUser = null;
+  try {
+    if (key) await chrome.storage.local.remove(key);
+  } catch (_) {}
   await chrome.storage.local.remove('user');
   showLoginPage();
 }
@@ -290,29 +294,81 @@ function showDetailPage(prompt) {
   detailPage.classList.remove('hidden');
 }
 
-// 加载数据
+// 缓存键：按用户隔离，避免切换账号串数据
+function cacheKey() {
+  return currentUser ? `cache_${currentUser.id}` : null;
+}
+
+// 写入本地缓存（失败不影响功能）
+async function saveCache() {
+  const key = cacheKey();
+  if (!key) return;
+  try {
+    await chrome.storage.local.set({ [key]: { categories, prompts } });
+  } catch (_) {
+    // 配额/序列化等异常时静默忽略
+  }
+}
+
+// 加载数据（stale-while-revalidate：先用缓存秒开，再后台拉最新覆盖）
 async function loadData() {
   if (!currentUser) return;
-  
-  promptsList.innerHTML = '<div class="loading">加载中...</div>';
-  
+
+  // 1) 命中缓存则立即渲染，避免每次打开都白屏等网络
+  let hasCache = false;
+  const key = cacheKey();
+  if (key) {
+    try {
+      const stored = (await chrome.storage.local.get(key))[key];
+      if (stored && Array.isArray(stored.categories) && Array.isArray(stored.prompts)) {
+        categories = stored.categories;
+        prompts = stored.prompts;
+        renderCategories();
+        renderPrompts();
+        hasCache = true;
+      }
+    } catch (_) {
+      // 读缓存失败则按无缓存处理
+    }
+  }
+
+  if (!hasCache) {
+    promptsList.innerHTML = '<div class="loading">加载中...</div>';
+  }
+
+  // 2) 后台拉最新数据（两个请求并行，减少一半等待）
   try {
-    categories = await supabaseQuery('prompt_categories', {
-      select: '*',
-      eq: { user_id: currentUser.id },
-      order: 'created_at.asc'
-    }) || [];
-    
-    prompts = await supabaseQuery('prompts', {
-      select: '*',
-      eq: { user_id: currentUser.id },
-      is: { deleted_at: 'null' },
-      order: 'updated_at.desc'
-    }) || [];
-    
-    renderCategories();
-    renderPrompts();
-    
+    const [freshCategories, freshPrompts] = await Promise.all([
+      supabaseQuery('prompt_categories', {
+        select: '*',
+        eq: { user_id: currentUser.id },
+        order: 'created_at.asc'
+      }),
+      supabaseQuery('prompts', {
+        select: '*',
+        eq: { user_id: currentUser.id },
+        is: { deleted_at: 'null' },
+        order: 'updated_at.desc'
+      })
+    ]);
+
+    const nextCategories = freshCategories || [];
+    const nextPrompts = freshPrompts || [];
+
+    // 数据无变化时跳过重渲染，避免闪烁、丢失搜索输入与滚动位置
+    const changed =
+      JSON.stringify(nextCategories) !== JSON.stringify(categories) ||
+      JSON.stringify(nextPrompts) !== JSON.stringify(prompts);
+
+    categories = nextCategories;
+    prompts = nextPrompts;
+
+    if (changed || !hasCache) {
+      renderCategories();
+      renderPrompts();
+    }
+    await saveCache();
+
     // 同步到 content script
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
@@ -322,10 +378,13 @@ async function loadData() {
         }).catch(() => {});
       }
     });
-    
+
   } catch (err) {
     console.error('Load data error:', err);
-    promptsList.innerHTML = '<div class="empty-state">加载失败，请重试</div>';
+    // 有缓存时静默保留旧数据，仅在无缓存时提示失败
+    if (!hasCache) {
+      promptsList.innerHTML = '<div class="empty-state">加载失败，请重试</div>';
+    }
   }
 }
 
@@ -520,6 +579,7 @@ async function saveEdit() {
     } else if (saved) {
       prompts.unshift(saved);
     }
+    await saveCache();
 
     document.getElementById('edit-page').classList.add('hidden');
     if (isEditing && saved) {
