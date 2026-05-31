@@ -114,6 +114,15 @@ import {
 } from '../lib/github-following';
 
 import { ResourceViewerHook } from '../lib/useResourceViewer';
+import { getCached, setCache, CACHE_KEYS } from '../lib/cache';
+
+// 资源中心整页快照类型（SWR 秒开占位）
+interface ResourceSnapshot {
+  allFolders: ResourceFolder[];
+  allResources: Resource[];
+  stats: ResourceStats;
+  archivedCount: number;
+}
 
 // 类型配置
 type FilterType = 'all' | ResourceType;
@@ -279,7 +288,28 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
       }
       return;
     }
-    
+
+    // SWR：先用整页快照秒开（仅占位），下方网络请求始终执行并覆盖，保证新鲜度
+    const snapKey = `${CACHE_KEYS.RESOURCE_SNAPSHOT}_${showArchived ? 'arc' : 'act'}`;
+    if (!forceReload) {
+      const snap = getCached<ResourceSnapshot>(snapKey, userId, 24 * 60 * 60 * 1000);
+      if (snap) {
+        setAllFolders(snap.allFolders);
+        setAllResources(snap.allResources);
+        setStats(snap.stats);
+        setArchivedCount(snap.archivedCount);
+        setFolderPath([]);
+        if (activeType === 'all') {
+          setFolders(snap.allFolders);
+          setResources(snap.allResources);
+        } else {
+          setFolders(snap.allFolders.filter(f => f.resource_type === activeType));
+          setResources(snap.allResources.filter(r => r.type === activeType));
+        }
+        setLoading(false); // 已有内容可展示，去掉首屏 loading 转圈
+      }
+    }
+
     try {
       // 加载所有数据（不按类型过滤）
       const [foldersData, resourcesData, statsData, archivedStatsData] = await Promise.all([
@@ -355,6 +385,14 @@ export default function ResourceCenterPage({ userId, resourceViewer }: Props) {
       });
     }
   }, [userId, showArchived, currentFolderId]);
+
+  // 持续把"当前展示的根目录数据集"写回快照，供下次进入页面秒开。
+  // 覆盖初次加载与乐观增删，无需在每个写操作里单独维护缓存。
+  useEffect(() => {
+    if (!userId || currentFolderId || loading) return;
+    const snapKey = `${CACHE_KEYS.RESOURCE_SNAPSHOT}_${showArchived ? 'arc' : 'act'}`;
+    setCache<ResourceSnapshot>(snapKey, userId, { allFolders, allResources, stats, archivedCount });
+  }, [userId, currentFolderId, showArchived, loading, allFolders, allResources, stats, archivedCount]);
 
   // 导航到文件夹
   const navigateToFolder = useCallback((folderId: string | null) => {

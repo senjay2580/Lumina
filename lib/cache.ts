@@ -171,6 +171,7 @@ export const CACHE_KEYS = {
   USER_PROVIDERS: 'user_providers',
   NODE_TEMPLATES: 'node_templates',
   WORKFLOW_DETAIL: 'workflow_detail', // 单个工作流详情
+  RESOURCE_SNAPSHOT: 'resource_snapshot', // 资源中心整页快照（SWR 秒开占位用）
 } as const;
 
 // 初始化时清理旧版本缓存
