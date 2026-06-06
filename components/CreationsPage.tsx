@@ -159,6 +159,7 @@ export default function CreationsPage({ userId }: Props) {
         onBack={handleBackFromArticles}
         onOpenArticle={handleOpenArticle}
         onCreateArticle={handleCreateArticle}
+        onEditArticle={handleEditArticle}
       />
     );
   }

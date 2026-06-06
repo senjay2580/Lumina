@@ -1,16 +1,21 @@
 // 文章编辑页（WYSIWYG，所见即所得 + 自动保存 + 离开保护）
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { ArrowLeft, Save, X, Tag, Loader2, Check, Upload } from 'lucide-react';
+import { ArrowLeft, Save, X, Tag, Loader2, Check, Upload, Image as ImageIcon } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import Image from '@tiptap/extension-image';
+import TiptapImage from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Typography from '@tiptap/extension-typography';
+import Highlight from '@tiptap/extension-highlight';
+import TaskItem from '@tiptap/extension-task-item';
+import TaskList from '@tiptap/extension-task-list';
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { Table } from '@tiptap/extension-table';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import TableRow from '@tiptap/extension-table-row';
+import { common, createLowlight } from 'lowlight';
 import {
   createArticle,
   updateArticle,
@@ -33,6 +38,7 @@ interface Props {
 
 const FIRST_IMG_RE = /<img[^>]+src=["']([^"']+)["']/i;
 const AUTOSAVE_DEBOUNCE_MS = 3000;
+const lowlight = createLowlight(common);
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
@@ -49,6 +55,23 @@ function hasMarkdownTable(text: string): boolean {
     }
   }
   return false;
+}
+
+function hasMarkdownSyntax(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length < 3) return false;
+  return /(^#{1,6}\s)|(^```)|(^~~~)|(^>\s)|(^[-*+]\s)|(^\d+\.\s)|(^[-*+]\s+\[[ xX]\]\s)|(\|.+\|\s*\n\s*\|?\s*:?-{3,}:?\s*\|)|(!?\[[^\]]+\]\([^)]+\))|(\*\*[^*]+\*\*)|(__[^_]+__)|(`[^`]+`)|(\$\$[\s\S]+?\$\$)|(\\\[[\s\S]+?\\\])/m.test(trimmed);
+}
+
+function pickImageFiles(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = () => resolve(Array.from(input.files || []));
+    input.click();
+  });
 }
 
 async function uploadInlineImage(userId: string, file: File): Promise<string> {
@@ -134,12 +157,19 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
-      Placeholder.configure({
-        placeholder: '开始写作…\n\n输入 # 创建标题，** 加粗，- 列表，> 引用；直接粘贴或拖拽图片即可上传'
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3, 4] },
+        codeBlock: false
       }),
-      Image.configure({ inline: false, allowBase64: false }),
+      Placeholder.configure({
+        placeholder: '开始写作…\n\n支持 Markdown：标题、列表、任务清单、表格、代码块、引用、公式、链接和图片；也可以直接粘贴或拖拽图片'
+      }),
+      TiptapImage.configure({ inline: false, allowBase64: false }),
       Link.configure({ openOnClick: false, autolink: true }),
+      CodeBlockLowlight.configure({ lowlight }),
+      Highlight,
+      TaskList,
+      TaskItem.configure({ nested: true }),
       Table.configure({ resizable: false }),
       TableRow,
       TableHeader,
@@ -158,7 +188,7 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
         if (!items || items.length === 0) return false;
 
         const plainText = event.clipboardData?.getData('text/plain') || '';
-        if (hasMarkdownTable(plainText)) {
+        if (hasMarkdownTable(plainText) || hasMarkdownSyntax(plainText)) {
           event.preventDefault();
           const editorAny = (view as any).editor;
           editorAny?.commands.insertContent(importedMarkdownToContent(plainText));
@@ -354,6 +384,15 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
     performSave();
   };
 
+  const handleInsertImages = async () => {
+    if (!editor) return;
+    const files = await pickImageFiles();
+    if (files.length === 0) return;
+    await handleImageFiles(files, (html) => {
+      editor.commands.insertContent(html);
+    });
+  };
+
   const handleImportMarkdown = async () => {
     if (!editor) return;
     const file = await pickMarkdownFile();
@@ -432,6 +471,15 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
 
           <div className="flex items-center gap-3 max-md:gap-1.5 max-md:overflow-x-auto max-md:flex-nowrap">
             {renderStatus()}
+            <button
+              onClick={handleInsertImages}
+              disabled={uploading > 0}
+              className="flex items-center gap-2 px-3 py-2 border-2 border-gray-300 hover:bg-gray-100 disabled:opacity-60 transition-colors text-sm max-md:px-2 max-md:gap-1 max-md:shrink-0"
+              title="插入图片"
+            >
+              <ImageIcon className="w-4 h-4" />
+              插入图片
+            </button>
             <button
               onClick={handleImportMarkdown}
               className="flex items-center gap-2 px-3 py-2 border-2 border-gray-300 hover:bg-gray-100 transition-colors text-sm max-md:px-2 max-md:gap-1 max-md:shrink-0"
@@ -531,14 +579,30 @@ export default function ArticleEditorPage({ userId, initial, onBack, onSaved }: 
         .article-prose ol { list-style: decimal; }
         .article-prose li { margin: 0.3rem 0; }
         .article-prose blockquote { border-left: 4px solid #111827; padding: 0.5rem 1rem; margin: 0.875rem 0; background: #f9fafb; color: #4b5563; }
+        .article-prose mark { background: #fff3a3; padding: 0.05rem 0.2rem; }
         .article-prose code { background: #f3f4f6; padding: 0.1rem 0.35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: #111827; }
         .article-prose pre { background: #111827; color: #f3f4f6; padding: 1rem; overflow-x: auto; margin: 0.875rem 0; border: 2px solid #111827; }
         .article-prose pre code { background: transparent; padding: 0; color: inherit; }
-        .article-prose img { max-width: 100%; height: auto; border: 2px solid #111827; margin: 1rem 0; display: block; }
+        .article-prose img {
+          width: auto;
+          max-width: min(100%, 680px);
+          max-height: 72vh;
+          height: auto;
+          object-fit: contain;
+          border: 2px solid #111827;
+          margin: 1.25rem auto;
+          display: block;
+        }
         .article-prose hr { border: none; border-top: 2px solid #111827; margin: 1.5rem 0; }
         .article-prose table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.95em; }
         .article-prose th, .article-prose td { border: 1px solid #d1d5db; padding: 0.45rem 0.65rem; vertical-align: top; }
         .article-prose th { background: #f3f4f6; font-weight: 700; }
+        .article-prose ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+        .article-prose li[data-type="taskItem"] { display: flex; align-items: flex-start; gap: 0.5rem; }
+        .article-prose li[data-type="taskItem"] > label { margin-top: 0.2rem; user-select: none; }
+        .article-prose li[data-type="taskItem"] > div { flex: 1; }
+        .article-prose li:has(> input[type="checkbox"]) { list-style: none; display: flex; align-items: flex-start; gap: 0.5rem; padding-left: 0; }
+        .article-prose li:has(> input[type="checkbox"]) > input[type="checkbox"] { margin-top: 0.55rem; accent-color: #111827; flex-shrink: 0; }
         .article-prose p.is-editor-empty:first-child::before {
           color: #d1d5db;
           content: attr(data-placeholder);

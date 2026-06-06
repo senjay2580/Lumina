@@ -51,6 +51,7 @@ const WIDTH_PRESETS: Record<WidthMode, { article: number; toc: number; label: st
 };
 
 const WIDTH_STORAGE_KEY = 'lumina:article:width';
+const SHOW_TTS_CONTROLS = false;
 
 // TTS 音色策略：lib/tts 自动锁定 Edge Online Neural（晓晓优先），
 // 不再让用户在多个不稳定 voice 之间手动切换。
@@ -733,7 +734,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
               </button>
 
               {/* TTS 朗读 */}
-              {ttsAvailable && (
+              {SHOW_TTS_CONTROLS && ttsAvailable && (
                 <div className="article-tts-group max-md:hidden" title="朗读">
                   {ttsState === 'idle' ? (
                     <button onClick={() => startTts()} className="article-icon-btn" aria-label="开始朗读">
@@ -795,7 +796,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                   disabled={exporting !== null}
                 >
                   <Download className="w-4 h-4" />
-                  <span className="hidden sm:inline">{exporting ? '导出中…' : '导出'}</span>
+                  <span className="hidden sm:inline">{exporting ? '处理中…' : '导入导出'}</span>
                   <ChevronDown className="w-3.5 h-3.5 ml-0.5" />
                 </button>
                 {showExportMenu && (
@@ -1134,7 +1135,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
       </button>
 
       {/* TTS 浮动进度条 */}
-      {ttsState !== 'idle' && ttsTotal > 0 && (
+      {SHOW_TTS_CONTROLS && ttsState !== 'idle' && ttsTotal > 0 && (
         <div className="article-tts-progress" role="progressbar" aria-label="朗读进度">
           <div className="article-tts-progress-info">
             <span>朗读中 {ttsIdx + 1} / {ttsTotal}</span>
@@ -1517,6 +1518,17 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
         .article-prose strong { font-weight: 700; color: var(--ink); }
         .article-prose em { font-style: italic; }
+        .article-prose mark {
+          background: #FFF1A8;
+          color: var(--ink);
+          padding: 0.02em 0.18em;
+          border-radius: 3px;
+        }
+        .article-prose del,
+        .article-prose s {
+          color: var(--ink-muted);
+          text-decoration-thickness: 1px;
+        }
 
         .article-prose ul, .article-prose ol {
           margin: 1.4em 0; padding-left: 1.5em;
@@ -1526,6 +1538,40 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         .article-prose ol { list-style: decimal; }
         .article-prose li { margin: 0.45em 0; padding-left: 0.25em; }
         .article-prose li::marker { color: var(--accent); }
+        .article-prose ul[data-type="taskList"],
+        .article-prose ul.contains-task-list {
+          list-style: none;
+          padding-left: 0;
+        }
+        .article-prose li[data-type="taskItem"],
+        .article-prose li.task-list-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.65em;
+          padding-left: 0;
+        }
+        .article-prose li[data-type="taskItem"] > label {
+          margin-top: 0.1em;
+        }
+        .article-prose li[data-type="taskItem"] > div {
+          flex: 1;
+        }
+        .article-prose li.task-list-item input[type="checkbox"] {
+          margin-top: 0.45em;
+          accent-color: var(--accent);
+        }
+        .article-prose li:has(> input[type="checkbox"]) {
+          list-style: none;
+          display: flex;
+          align-items: flex-start;
+          gap: 0.65em;
+          padding-left: 0;
+        }
+        .article-prose li:has(> input[type="checkbox"]) > input[type="checkbox"] {
+          margin-top: 0.45em;
+          accent-color: var(--accent);
+          flex-shrink: 0;
+        }
 
         .article-prose blockquote {
           margin: 1.8em 0;
@@ -1566,7 +1612,11 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         }
 
         .article-prose img {
-          max-width: 100%; height: auto;
+          width: auto;
+          max-width: min(100%, 760px);
+          max-height: 78vh;
+          height: auto;
+          object-fit: contain;
           border-radius: 12px;
           margin: 1.8em auto;
           display: block;
@@ -2389,12 +2439,14 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
             border-radius: 0;
           }
 
-          /* 图片：满宽贴边，0 圆角，0 阴影 */
+          /* 图片：移动端也保持居中和适中宽度 */
           .article-prose img {
-            max-width: calc(100% + 40px);
-            margin: 1.8em -20px;
-            border-radius: 0;
-            box-shadow: none;
+            width: auto;
+            max-width: 100%;
+            max-height: 72vh;
+            margin: 1.6em auto;
+            border-radius: 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 20px rgba(31,30,29,0.05);
           }
 
           /* 分隔线：与 PC 一致的细灰横线 */

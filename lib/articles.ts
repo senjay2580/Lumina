@@ -4,6 +4,29 @@ import type { Idea, CreateIdeaData, UpdateIdeaData } from '../types/idea';
 
 export type Article = Idea;
 
+export function sortArticles(items: Article[]): Article[] {
+  return [...items].sort((a, b) => {
+    const aPinned = !!a.is_pinned;
+    const bPinned = !!b.is_pinned;
+
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+
+    if (aPinned && bPinned) {
+      const aPinnedAt = Date.parse(a.pinned_at || a.created_at || '');
+      const bPinnedAt = Date.parse(b.pinned_at || b.created_at || '');
+      return (Number.isNaN(bPinnedAt) ? 0 : bPinnedAt) - (Number.isNaN(aPinnedAt) ? 0 : aPinnedAt);
+    }
+
+    const aCreatedAt = Date.parse(a.created_at || '');
+    const bCreatedAt = Date.parse(b.created_at || '');
+    return (Number.isNaN(bCreatedAt) ? 0 : bCreatedAt) - (Number.isNaN(aCreatedAt) ? 0 : aCreatedAt);
+  });
+}
+
+function filterActiveArticles(items: Article[]): Article[] {
+  return items.filter((item) => !item.deleted_at);
+}
+
 export async function getArticles(userId: string): Promise<Article[]> {
   const { data, error } = await supabase
     .from('ideas')
@@ -13,7 +36,7 @@ export async function getArticles(userId: string): Promise<Article[]> {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return sortArticles(filterActiveArticles(data || []));
 }
 
 export async function getArticle(articleId: string): Promise<Article | null> {
@@ -24,7 +47,7 @@ export async function getArticle(articleId: string): Promise<Article | null> {
     .single();
 
   if (error) throw error;
-  return data;
+  return data?.deleted_at ? null : data;
 }
 
 export async function createArticle(
@@ -64,11 +87,78 @@ export async function updateArticle(
   return article;
 }
 
+export async function togglePinArticle(article: Article, isPinned: boolean): Promise<Article> {
+  const { data, error } = await supabase
+    .from('ideas')
+    .update({
+      is_pinned: isPinned,
+      pinned_at: isPinned ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', article.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function deleteArticle(articleId: string): Promise<void> {
+  const { error } = await supabase
+    .from('ideas')
+    .update({
+      deleted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', articleId);
+
+  if (error) throw error;
+}
+
+export async function restoreArticle(articleId: string): Promise<void> {
+  const { error } = await supabase
+    .from('ideas')
+    .update({
+      deleted_at: null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', articleId);
+
+  if (error) throw error;
+}
+
+export async function permanentDeleteArticle(articleId: string): Promise<void> {
   const { error } = await supabase
     .from('ideas')
     .delete()
     .eq('id', articleId);
+
+  if (error) throw error;
+}
+
+export async function getDeletedArticles(userId: string): Promise<Article[]> {
+  const { data, error } = await supabase
+    .from('ideas')
+    .select('id, title, excerpt, deleted_at, created_at')
+    .eq('user_id', userId)
+    .eq('kind', 'article')
+    .not('deleted_at', 'is', null)
+    .order('deleted_at', { ascending: false });
+
+  if (error) {
+    if (error.code === '42703') return [];
+    throw error;
+  }
+  return data || [];
+}
+
+export async function emptyArticleTrash(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('ideas')
+    .delete()
+    .eq('user_id', userId)
+    .eq('kind', 'article')
+    .not('deleted_at', 'is', null);
 
   if (error) throw error;
 }
@@ -83,7 +173,7 @@ export async function searchArticles(userId: string, keyword: string): Promise<A
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data || [];
+  return sortArticles(filterActiveArticles(data || []));
 }
 
 // ============ 笔记/备注（评论区式） ============

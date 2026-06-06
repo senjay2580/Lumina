@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { getStoredUser } from '../lib/auth';
 import { preloadTrashData } from '../lib/usePreloadData';
 
-export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'RESOURCES' | 'RSS_SUBSCRIPTIONS' | 'CREATIONS' | 'SETTINGS' | 'TRASH' | 'FEISHU_GUIDE';
+export type ViewType = 'HOME' | 'WORKFLOW' | 'PROMPTS' | 'CRAWLER' | 'RESOURCES' | 'RSS_SUBSCRIPTIONS' | 'CREATIONS' | 'ARTICLES' | 'SETTINGS' | 'TRASH' | 'FEISHU_GUIDE';
 
 // 提示词采集图标（地球）
 const CrawlerIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -32,7 +32,7 @@ interface SidebarProps {
   onMobileClose?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, collapsed = false, onCollapsedChange, username, onLogout, mobileOpen = false, onMobileClose }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, collapsed = true, onCollapsedChange, username, onLogout, mobileOpen = false, onMobileClose }) => {
   const [isCollapsed, setIsCollapsed] = useState(collapsed);
   const [promptsExpanded, setPromptsExpanded] = useState(true);
   const user = getStoredUser();
@@ -106,9 +106,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
         aria-hidden="true"
       />
     <aside
-      className={`flex flex-col shrink-0 transition-all duration-300 ease-in-out
+      className={`flex flex-col shrink-0 transition-all duration-300 ease-in-out overflow-visible
         md:relative md:translate-x-0 ${isCollapsed ? 'md:w-16' : 'md:w-56'}
-        max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-72 max-md:h-[100dvh] max-md:z-50
+        md:z-30 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-72 max-md:h-[100dvh] max-md:z-50
         ${mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}`}
       style={{
         background: 'linear-gradient(180deg, rgba(255,107,0,0.03) 0%, rgba(255,255,255,0.8) 30%, rgba(147,197,253,0.05) 100%)',
@@ -312,6 +312,30 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
           {!isCollapsed && <span className="font-medium text-sm">我的创作</span>}
         </button>
 
+        {/* 文章 */}
+        <button
+          onClick={() => handleNavigate('ARTICLES')}
+          title={isCollapsed ? '文章' : undefined}
+          className={`w-full flex items-center gap-3 rounded-xl transition-all ${
+            isCollapsed ? 'px-0 py-2.5 justify-center' : 'px-3 py-2.5'
+          } ${
+            currentView === 'ARTICLES'
+              ? 'bg-white/80 shadow-sm text-gray-900 backdrop-blur-sm'
+              : 'text-gray-500 hover:bg-white/50 hover:text-gray-700'
+          }`}
+        >
+          {currentView === 'ARTICLES' && !isCollapsed && <div className="w-1 h-5 bg-primary rounded-full -ml-1" />}
+          <span className={currentView === 'ARTICLES' ? 'text-primary' : ''}>
+            <img
+              src="/icons/article-news-paper.svg"
+              alt="文章"
+              className="w-5 h-5"
+              style={{ filter: currentView === 'ARTICLES' ? 'none' : 'grayscale(100%) opacity(0.6)' }}
+            />
+          </span>
+          {!isCollapsed && <span className="font-medium text-sm">文章</span>}
+        </button>
+
         {/* RSS 订阅 */}
         <button 
           onClick={() => handleNavigate('RSS_SUBSCRIPTIONS')}
@@ -361,14 +385,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
       {/* 收缩按钮（仅桌面端） */}
       <button
         onClick={handleToggle}
-        className="hidden md:flex absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-full shadow-md border border-gray-200 items-center justify-center text-gray-400 hover:text-gray-600 hover:shadow-lg transition-all z-50"
+        aria-label={isCollapsed ? '展开侧边栏' : '收起侧边栏'}
+        title={isCollapsed ? '展开侧边栏' : '收起侧边栏'}
+        className="hidden md:flex absolute -right-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-white rounded-full shadow-lg border border-gray-200 items-center justify-center text-gray-500 hover:text-gray-900 hover:shadow-xl hover:scale-105 transition-all z-[80]"
       >
         <svg 
-          className={`w-3.5 h-3.5 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`} 
+          className={`w-5 h-5 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`} 
           viewBox="0 0 24 24" 
           fill="none" 
           stroke="currentColor" 
-          strokeWidth="2"
+          strokeWidth="2.4"
         >
           <path d="M15 18l-6-6 6-6" />
         </svg>

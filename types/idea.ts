@@ -12,6 +12,9 @@ export interface Idea {
   cover_url?: string;
   tags: string[];
   source: 'manual' | 'feishu';
+  is_pinned?: boolean;
+  pinned_at?: string | null;
+  deleted_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -24,6 +27,9 @@ export interface CreateIdeaData {
   cover_url?: string;
   tags?: string[];
   source?: 'manual' | 'feishu';
+  is_pinned?: boolean;
+  pinned_at?: string | null;
+  deleted_at?: string | null;
 }
 
 export interface UpdateIdeaData {
@@ -32,4 +38,7 @@ export interface UpdateIdeaData {
   excerpt?: string;
   cover_url?: string;
   tags?: string[];
+  is_pinned?: boolean;
+  pinned_at?: string | null;
+  deleted_at?: string | null;
 }

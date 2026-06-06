@@ -4,10 +4,11 @@ import * as workflowApi from '../lib/workflows';
 import * as promptApi from '../lib/prompts';
 import * as resourceApi from '../lib/resources';
 import * as folderApi from '../lib/resource-folders';
+import * as articleApi from '../lib/articles';
 import { FolderIcon } from '../shared/FolderIcon';
 import { ContextMenu, useContextMenu, useToast, ToastContainer, Confirm, LoadingSpinner } from '../shared';
 
-type TabType = 'workflows' | 'prompts' | 'resources';
+type TabType = 'workflows' | 'prompts' | 'articles' | 'resources';
 
 interface DeletedWorkflow {
   id: string;
@@ -20,6 +21,14 @@ interface DeletedPrompt {
   id: string;
   title: string;
   deleted_at: string;
+}
+
+interface DeletedArticle {
+  id: string;
+  title?: string;
+  excerpt?: string;
+  deleted_at?: string | null;
+  created_at: string;
 }
 
 interface DeletedResource {
@@ -46,6 +55,7 @@ export const TrashPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('workflows');
   const [workflows, setWorkflows] = useState<DeletedWorkflow[]>([]);
   const [prompts, setPrompts] = useState<DeletedPrompt[]>([]);
+  const [articles, setArticles] = useState<DeletedArticle[]>([]);
   const [resources, setResources] = useState<DeletedResource[]>([]);
   const [folders, setFolders] = useState<DeletedFolder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +63,7 @@ export const TrashPage: React.FC = () => {
     open: boolean; 
     type: 'restore' | 'delete' | 'empty'; 
     id?: string; 
-    itemType?: 'workflows' | 'prompts' | 'resource' | 'folder';
+    itemType?: 'workflows' | 'prompts' | 'articles' | 'resource' | 'folder';
   }>({ open: false, type: 'restore' });
   const contextMenu = useContextMenu();
   const { toasts, removeToast, success, error } = useToast();
@@ -62,14 +72,16 @@ export const TrashPage: React.FC = () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const [wfs, pts, res, flds] = await Promise.all([
+      const [wfs, pts, arts, res, flds] = await Promise.all([
         workflowApi.getDeletedWorkflows(user.id),
         promptApi.getDeletedPrompts(user.id),
+        articleApi.getDeletedArticles(user.id),
         resourceApi.getDeletedResources(user.id),
         folderApi.getDeletedFolders(user.id)
       ]);
       setWorkflows(wfs);
       setPrompts(pts);
+      setArticles(arts as DeletedArticle[]);
       setResources(res as DeletedResource[]);
       setFolders(flds as DeletedFolder[]);
     } catch (err) {
@@ -97,12 +109,14 @@ export const TrashPage: React.FC = () => {
   };
 
   // 乐观更新 - 恢复
-  const handleRestore = async (id: string, type: 'workflows' | 'prompts' | 'resource' | 'folder') => {
+  const handleRestore = async (id: string, type: 'workflows' | 'prompts' | 'articles' | 'resource' | 'folder') => {
     // 乐观更新 UI
     if (type === 'workflows') {
       setWorkflows(prev => prev.filter(w => w.id !== id));
     } else if (type === 'prompts') {
       setPrompts(prev => prev.filter(p => p.id !== id));
+    } else if (type === 'articles') {
+      setArticles(prev => prev.filter(a => a.id !== id));
     } else if (type === 'folder') {
       setFolders(prev => prev.filter(f => f.id !== id));
     } else {
@@ -114,6 +128,8 @@ export const TrashPage: React.FC = () => {
         await workflowApi.restoreWorkflow(id);
       } else if (type === 'prompts') {
         await promptApi.restorePrompt(id);
+      } else if (type === 'articles') {
+        await articleApi.restoreArticle(id);
       } else if (type === 'folder') {
         await folderApi.restoreFolder(id);
       } else {
@@ -128,7 +144,7 @@ export const TrashPage: React.FC = () => {
   };
 
   // 乐观更新 - 永久删除
-  const handlePermanentDelete = async (id: string, type: 'workflows' | 'prompts' | 'resource' | 'folder') => {
+  const handlePermanentDelete = async (id: string, type: 'workflows' | 'prompts' | 'articles' | 'resource' | 'folder') => {
     // 先关闭确认弹窗
     setConfirmState({ open: false, type: 'delete' });
     
@@ -137,6 +153,8 @@ export const TrashPage: React.FC = () => {
       setWorkflows(prev => prev.filter(w => w.id !== id));
     } else if (type === 'prompts') {
       setPrompts(prev => prev.filter(p => p.id !== id));
+    } else if (type === 'articles') {
+      setArticles(prev => prev.filter(a => a.id !== id));
     } else if (type === 'folder') {
       setFolders(prev => prev.filter(f => f.id !== id));
     } else {
@@ -148,6 +166,8 @@ export const TrashPage: React.FC = () => {
         await workflowApi.permanentDeleteWorkflow(id);
       } else if (type === 'prompts') {
         await promptApi.permanentDeletePrompt(id);
+      } else if (type === 'articles') {
+        await articleApi.permanentDeleteArticle(id);
       } else if (type === 'folder') {
         await folderApi.permanentDeleteFolder(id);
       } else {
@@ -172,6 +192,8 @@ export const TrashPage: React.FC = () => {
       setWorkflows([]);
     } else if (activeTab === 'prompts') {
       setPrompts([]);
+    } else if (activeTab === 'articles') {
+      setArticles([]);
     } else {
       setResources([]);
       setFolders([]);
@@ -182,6 +204,8 @@ export const TrashPage: React.FC = () => {
         await workflowApi.emptyWorkflowTrash(user.id);
       } else if (activeTab === 'prompts') {
         await promptApi.emptyPromptTrash(user.id);
+      } else if (activeTab === 'articles') {
+        await articleApi.emptyArticleTrash(user.id);
       } else {
         // 资源 tab 同时清空资源和文件夹
         await Promise.all([
@@ -206,9 +230,21 @@ export const TrashPage: React.FC = () => {
     return timeB - timeA;
   });
 
-  const currentItems = activeTab === 'workflows' ? workflows : activeTab === 'prompts' ? prompts : resourceItems;
+  const currentItems = activeTab === 'workflows'
+    ? workflows
+    : activeTab === 'prompts'
+      ? prompts
+      : activeTab === 'articles'
+        ? articles
+        : resourceItems;
   const isEmpty = currentItems.length === 0;
-  const tabLabel = activeTab === 'workflows' ? '工作流' : activeTab === 'prompts' ? '提示词' : '资源';
+  const tabLabel = activeTab === 'workflows'
+    ? '工作流'
+    : activeTab === 'prompts'
+      ? '提示词'
+      : activeTab === 'articles'
+        ? '文章'
+        : '资源';
 
   return (
     <div className="w-full h-full overflow-y-auto bg-[#FAFAFA]">
@@ -276,6 +312,14 @@ export const TrashPage: React.FC = () => {
             }`}
           >
             提示词 ({prompts.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('articles')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+              activeTab === 'articles' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            文章 ({articles.length})
           </button>
           <button
             onClick={() => setActiveTab('resources')}
@@ -360,6 +404,39 @@ export const TrashPage: React.FC = () => {
                     </button>
                     <button
                       onClick={() => setConfirmState({ open: true, type: 'delete', id: prompt.id, itemType: 'prompts' })}
+                      className="px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : activeTab === 'articles' ? (
+              articles.map(article => (
+                <div
+                  key={article.id}
+                  onContextMenu={(e) => contextMenu.open(e, { id: article.id, type: 'articles' })}
+                  className="flex items-center gap-4 p-4 hover:bg-gray-50 transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center shrink-0">
+                    <img src="/icons/article-news-paper.svg" alt="文章" className="w-6 h-6" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium text-gray-900 truncate">{article.title || '无标题文章'}</h3>
+                    <p className="text-sm text-gray-400 truncate">
+                      {article.excerpt ? `${article.excerpt} · ` : ''}
+                      {article.deleted_at ? formatDeletedTime(article.deleted_at) : '已删除'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => handleRestore(article.id, 'articles')}
+                      className="px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                    >
+                      恢复
+                    </button>
+                    <button
+                      onClick={() => setConfirmState({ open: true, type: 'delete', id: article.id, itemType: 'articles' })}
                       className="px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                     >
                       删除

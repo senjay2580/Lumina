@@ -31,6 +31,8 @@ export function htmlToMarkdown(html: string): string {
   md = md.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => '`' + decodeEntities(c) + '`');
 
   // 强调
+  md = md.replace(/<mark[^>]*>([\s\S]*?)<\/mark>/gi, '==$1==');
+  md = md.replace(/<(s|del|strike)[^>]*>([\s\S]*?)<\/\1>/gi, '~~$2~~');
   md = md.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
   md = md.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
   md = md.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
@@ -92,6 +94,26 @@ export function htmlToMarkdown(html: string): string {
     return '\n\n' + lines.join('\n') + '\n\n';
   });
 
+  // 任务清单（TipTap TaskList HTML → GFM task list）
+  md = md.replace(/<ul[^>]*data-type=["']taskList["'][^>]*>([\s\S]*?)<\/ul>/gi, (_, content) => {
+    const items: string[] = [];
+    const liRe = /<li[^>]*data-type=["']taskItem["'][^>]*data-checked=["'](true|false)["'][^>]*>([\s\S]*?)<\/li>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = liRe.exec(content)) !== null) {
+      const checked = m[1] === 'true' ? 'x' : ' ';
+      const text = decodeEntities(
+        m[2]
+          .replace(/<label[\s\S]*?<\/label>/gi, '')
+          .replace(/<br\s*\/?>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+      );
+      items.push(`- [${checked}] ${text}`);
+    }
+    return items.length ? '\n\n' + items.join('\n') + '\n\n' : '';
+  });
+
   // 列表
   md = md.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, content) => {
     return '\n\n' + content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n').trim() + '\n\n';
@@ -137,9 +159,24 @@ function decodeEntities(s: string): string {
 }
 
 // Markdown → HTML：编辑器与详情页统一渲染
+function preprocessMarkdown(md: string): string {
+  const lines = md.split(/\r?\n/);
+  let inFence = false;
+  return lines
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line.replace(/(^|[^=])==([^=\n]+)==(?=[^=]|$)/g, '$1<mark>$2</mark>');
+    })
+    .join('\n');
+}
+
 export function markdownToHtml(md: string): string {
   if (!md) return '';
-  return marked.parse(md, { async: false, gfm: true, breaks: false }) as string;
+  return marked.parse(preprocessMarkdown(md), { async: false, gfm: true, breaks: false }) as string;
 }
 
 function renderMathFormula(source: string, displayMode: boolean): string {
@@ -486,7 +523,7 @@ export function articleContentToHtml(content: string): string {
 
 // 内容看起来是 HTML 还是 Markdown
 export function looksLikeHtml(content: string): boolean {
-  return /<\/?(p|h[1-6]|ul|ol|li|blockquote|pre|code|img|strong|em|hr|br|a)[\s>]/i.test(content);
+  return /<\/?(p|h[1-6]|ul|ol|li|blockquote|pre|code|img|strong|em|mark|s|del|table|thead|tbody|tr|td|th|hr|br|a)[\s>]/i.test(content);
 }
 
 // 触发浏览器下载文本文件
