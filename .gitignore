@@ -37,3 +37,5 @@ auth.json
 
 # stray dir from %VAR% non-expansion bug
 %USERPROFILE%/
+
+*.stackdump
