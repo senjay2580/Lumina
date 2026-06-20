@@ -34,3 +34,6 @@ auth.json
 
 
 .vercel
+
+# stray dir from %VAR% non-expansion bug
+%USERPROFILE%/

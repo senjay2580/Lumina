@@ -1466,17 +1466,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         .article-prose p { margin: 1.6em 0; }
         .article-prose p:first-child { margin-top: 0; }
 
-        /* drop cap */
-        .article-prose > p:first-of-type::first-letter {
-          font-family: var(--serif);
-          font-weight: 600;
-          font-size: 4.4em;
-          line-height: 0.85;
-          float: left;
-          padding: 8px 12px 0 0;
-          color: var(--ink);
-        }
-
         .article-prose h1 {
           font-family: var(--serif); font-weight: 700;
           font-size: 34px; line-height: 1.18;
@@ -2333,15 +2322,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           }
           .article-prose p {
             margin: 1.4em 0;
-          }
-
-          /* 取消 drop cap —— 移动端窄屏不合适 */
-          .article-prose > p:first-of-type::first-letter {
-            font-size: inherit;
-            font-weight: inherit;
-            float: none;
-            padding: 0;
-            line-height: inherit;
           }
 
           /* 内部标题：sans 风格 */
