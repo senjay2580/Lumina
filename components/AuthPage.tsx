@@ -286,8 +286,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthSuccess }) => {
         whileHover={{ scale: 1.05, rotateY: 10 }}
         transition={{ type: "spring", stiffness: 300 }}
       >
-        {/* Shadow layer */}
-        <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-orange-600 rounded-2xl blur-lg opacity-40 translate-y-2" />
+        {/* 弥光 halo */}
+        <div className="lumina-bloom" />
         {/* Main logo box */}
         <div className="relative w-full h-full bg-gradient-to-br from-[#FF8C00] via-[#FF6B00] to-[#E85D00] rounded-2xl p-3 shadow-xl"
           style={{ boxShadow: '0 10px 30px -5px rgba(255, 107, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.3)' }}

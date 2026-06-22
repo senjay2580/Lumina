@@ -122,8 +122,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, col
       
       {/* Logo */}
       <div className={`h-14 flex items-center gap-2.5 border-b border-white/40 relative z-10 ${isCollapsed ? 'px-3 justify-center' : 'px-4'}`}>
-        <div className="w-8 h-8 shrink-0">
-          <svg className="w-full h-full" viewBox="0 0 24 24">
+        <div className="w-8 h-8 shrink-0 relative">
+          <div className="lumina-bloom" style={{ inset: '-20%', animation: 'none', opacity: 0.5 }} />
+          <svg className="w-full h-full relative lumina-mark" viewBox="0 0 24 24">
             <defs>
               <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#FF8C00" />

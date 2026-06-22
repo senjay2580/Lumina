@@ -51,6 +51,28 @@ body {
   }
 }
 
+/* ===== Lumina 弥光 glow（暖色光晕，非蓝紫） ===== */
+@keyframes luminaPulse {
+  0%, 100% { opacity: .5;  transform: scale(1); }
+  50%      { opacity: .85; transform: scale(1.14); }
+}
+.lumina-bloom {
+  position: absolute;
+  inset: -35%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255,184,92,.9) 0%, rgba(255,138,0,.5) 38%, rgba(255,107,0,0) 72%);
+  filter: blur(10px);
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: luminaPulse 3.6s ease-in-out infinite;
+}
+.lumina-mark {
+  filter: drop-shadow(0 0 2px rgba(255,176,71,.7)) drop-shadow(0 0 6px rgba(255,107,0,.4));
+}
+@media (prefers-reduced-motion: reduce) {
+  .lumina-bloom { animation: none; opacity: .7; }
+}
+
 /* ===== React Flow ===== */
 .react-flow__edge.selected .react-flow__edge-path {
   stroke: #FF6B00 !important;
