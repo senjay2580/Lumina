@@ -39,3 +39,8 @@ auth.json
 %USERPROFILE%/
 
 *.stackdump
+
+# local junk (repo-sync)
+.claude/settings.json
+.playwright-cli/
+forest/
