@@ -34,6 +34,7 @@ interface Props {
   onBack: () => void;
   onEdit: (article: Article) => void;
   onImported?: (article: Article) => void;
+  onOpenArticle?: (article: Article) => void;
 }
 
 interface TocItem {
@@ -66,7 +67,7 @@ function slugify(text: string, fallbackIdx: number): string {
   return base || `heading-${fallbackIdx}`;
 }
 
-export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, onImported }: Props) {
+export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, onImported, onOpenArticle }: Props) {
   const [article, setArticle] = useState<Article | null>(initial || null);
   const [loading, setLoading] = useState(!initial);
   const [progress, setProgress] = useState(0);
@@ -998,38 +999,23 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                     <Sparkles className="w-4 h-4" />
                     <span>更多文章</span>
                   </div>
-                  <div className="article-related-grid">
+                  <div className="article-related-list">
                     {related.map(({ article: a, score }) => (
                       <button
                         key={a.id}
-                        onClick={() => {
-                          // 简单刷新策略：通过路由跳到该文章详情
-                          window.location.hash = `#article/${a.id}`;
-                          window.location.reload();
-                        }}
-                        className="article-related-card"
+                        onClick={() => onOpenArticle?.(a)}
+                        className="article-related-row"
                         title={`匹配度 ${(score * 10).toFixed(1)}`}
                       >
-                        {a.cover_url ? (
-                          <div className="article-related-cover">
-                            <img src={a.cover_url} alt="" loading="lazy" />
-                          </div>
-                        ) : (
-                          <div className="article-related-cover article-related-cover-placeholder">
-                            <FileText className="w-6 h-6" />
+                        <div className="article-related-title">{a.title || '无标题'}</div>
+                        {a.excerpt && <div className="article-related-excerpt">{a.excerpt}</div>}
+                        {a.tags && a.tags.length > 0 && (
+                          <div className="article-related-tags">
+                            {a.tags.slice(0, 3).map((t) => (
+                              <span key={t} className="article-related-tag">{t}</span>
+                            ))}
                           </div>
                         )}
-                        <div className="article-related-body">
-                          <div className="article-related-title">{a.title || '无标题'}</div>
-                          {a.excerpt && <div className="article-related-excerpt">{a.excerpt}</div>}
-                          {a.tags && a.tags.length > 0 && (
-                            <div className="article-related-tags">
-                              {a.tags.slice(0, 3).map((t) => (
-                                <span key={t} className="article-related-tag">{t}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
                       </button>
                     ))}
                   </div>
@@ -1048,7 +1034,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
                     aria-expanded={!tocCollapsed}
                     title={tocCollapsed ? '展开目录' : '折叠目录'}
                   >
-                    <span className="article-toc-dot" />
                     <span>目录</span>
                     <span className="article-toc-count">{toc.length}</span>
                     <ChevronDown className={`article-toc-chevron ${tocCollapsed ? 'is-collapsed' : ''}`} />
@@ -1097,7 +1082,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
               onClick={() => setTocCollapsed((v) => !v)}
               aria-expanded={!tocCollapsed}
             >
-              <span className="article-toc-dot" />
               <span>目录</span>
               <span className="article-toc-count">{toc.length}</span>
               <ChevronDown className={`article-toc-chevron ${tocCollapsed ? 'is-collapsed' : ''}`} />
@@ -1176,19 +1160,15 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
 
           color: var(--ink);
           font-family: var(--sans);
-          background: linear-gradient(180deg, #FCFBF7 0%, #FAF8F2 60%, #F8F6EE 100%);
+          background: #FFFFFF;
           isolation: isolate;
         }
 
         .article-page ::selection { background: var(--selection); color: var(--ink); }
 
-        /* 背景层 */
+        /* 背景层（纯白背景，隐藏极光/圆环/流线/噪点装饰） */
         .article-bg-layer {
-          position: absolute;
-          inset: 0;
-          overflow: hidden;
-          pointer-events: none;
-          z-index: 0;
+          display: none;
         }
 
         .article-aurora-blob {
@@ -1270,7 +1250,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           z-index: 20;
           backdrop-filter: blur(16px);
           -webkit-backdrop-filter: blur(16px);
-          background: rgba(252, 251, 247, 0.78);
+          background: rgba(255, 255, 255, 0.85);
           border-bottom: 1px solid rgba(232, 230, 220, 0.6);
         }
 
@@ -1720,12 +1700,6 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
         .article-toc-chevron.is-collapsed {
           transform: rotate(-90deg);
         }
-        .article-toc-dot {
-          width: 6px; height: 6px;
-          border-radius: 50%;
-          background: var(--accent);
-          box-shadow: 0 0 0 3px rgba(217,119,87,0.2);
-        }
         .article-toc-scroll {
           min-height: 0;
           max-height: calc(100vh - 190px);
@@ -2099,47 +2073,25 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           padding-top: 40px;
           border-top: 1px solid var(--rule);
         }
-        .article-related-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-          gap: 16px;
-        }
-        .article-related-card {
+        .article-related-list {
           display: flex;
           flex-direction: column;
-          background: rgba(255,255,255,0.6);
-          border: 1px solid var(--rule);
-          border-radius: 12px;
-          overflow: hidden;
+        }
+        .article-related-row {
+          display: block;
+          width: 100%;
           text-align: left;
           cursor: pointer;
-          transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
-          padding: 0;
+          padding: 16px 6px;
+          border: none;
+          border-top: 1px solid var(--rule);
+          background: transparent;
+          transition: background 0.15s, padding-left 0.15s;
         }
-        .article-related-card:hover {
-          transform: translateY(-2px);
-          border-color: var(--rule-strong);
-          box-shadow: 0 8px 24px rgba(31,30,29,0.08);
-        }
-        .article-related-cover {
-          aspect-ratio: 16 / 9;
-          width: 100%;
+        .article-related-row:first-child { border-top: none; }
+        .article-related-row:hover {
           background: var(--bg-alt);
-          overflow: hidden;
-          border-bottom: 1px solid var(--rule);
-        }
-        .article-related-cover img {
-          width: 100%; height: 100%;
-          object-fit: cover;
-        }
-        .article-related-cover-placeholder {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: var(--ink-faint);
-        }
-        .article-related-body {
-          padding: 14px 16px 16px;
+          padding-left: 14px;
         }
         .article-related-title {
           font-family: var(--serif);
@@ -2147,7 +2099,7 @@ export default function ArticleDetailPage({ articleId, initial, onBack, onEdit, 
           font-weight: 600;
           line-height: 1.35;
           color: var(--ink);
-          margin-bottom: 6px;
+          margin-bottom: 4px;
           display: -webkit-box;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;

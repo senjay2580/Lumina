@@ -56,6 +56,7 @@ export default function ArticlesWorkspacePage({ userId }: Props) {
         }}
         onEdit={handleEditArticle}
         onImported={handleArticleSaved}
+        onOpenArticle={handleOpenArticle}
       />
     );
   }
